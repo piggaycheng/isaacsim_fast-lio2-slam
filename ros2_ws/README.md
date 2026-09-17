@@ -24,11 +24,15 @@ git submodule update --init --recursive
 ./ros2_ws/build_workspace.sh
 ```
 
-Run the GUI simulation, adapters, and FASTLIO2 together:
+Run the GUI simulation, adapters, FASTLIO2, and RViz together:
 
 ```bash
 ./run_slam.sh
 ```
+
+RViz opens with `lidar` as its fixed frame and displays
+`/fastlio2/world_cloud`. Its 10-second decay time keeps recent registered
+scans visible for easier inspection; this visual history is not a saved map.
 
 The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
