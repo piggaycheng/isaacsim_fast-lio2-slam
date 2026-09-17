@@ -18,3 +18,12 @@ venv/
 logs/
 output/
 outputs/
+
+# ROS 2 workspace output
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/livox_sdk_build/
+ros2_ws/livox_sdk_install/
+ros2_ws/sophus_build/
+ros2_ws/sophus_install/

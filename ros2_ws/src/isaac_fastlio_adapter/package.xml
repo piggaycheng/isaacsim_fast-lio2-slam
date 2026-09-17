@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>isaac_fastlio_adapter</name>
+  <version>0.1.0</version>
+  <description>Convert Isaac Sim PointCloud2 data to Livox CustomMsg for FASTLIO2_ROS2.</description>
+  <maintainer email="noreply@example.com">slam</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>livox_ros_driver2</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

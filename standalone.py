@@ -9,6 +9,8 @@ OFFICE_ASSET_PATH = "/Isaac/Environments/Office/office.usd"
 CARTER_ASSET_PATH = "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd"
 SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
 CARTER_PRIM_PATH = "/World/Carter"
+CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
+CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 LINEAR_JOG_SPEED = 0.5
 ANGULAR_JOG_SPEED = 1.2
@@ -20,6 +22,7 @@ KIT_EXTRA_ARGS = [
 
 parser = argparse.ArgumentParser(description="Launch Isaac Sim with the Office environment.")
 parser.add_argument("--headless", action="store_true", help="Run without the Isaac Sim GUI.")
+parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
 args, _ = parser.parse_known_args()
 
@@ -34,12 +37,19 @@ import carb
 import isaacsim.core.experimental.utils.app as app_utils
 import omni
 import omni.appwindow
+import omni.graph.core as og
+import usdrt
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.experimental.utils.stage import is_stage_loading
 from isaacsim.robot.experimental.wheeled_robots.controllers import DifferentialController
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
+from isaacsim.sensors.experimental.physics import IMU
+from isaacsim.sensors.experimental.rtx import LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from pxr import UsdGeom
+
+app_utils.enable_extension("isaacsim.ros2.bridge")
+simulation_app.update()
 
 
 pressed_keys = set()
@@ -69,6 +79,42 @@ def get_jog_command() -> list[float]:
         (forward - backward) * LINEAR_JOG_SPEED,
         (left - right) * ANGULAR_JOG_SPEED,
     ]
+
+
+def create_ros2_publishers() -> None:
+    graph_path = "/World/FASTLIO_ROS2"
+    keys = og.Controller.Keys
+    og.Controller.edit(
+        {"graph_path": graph_path, "evaluator_name": "execution"},
+        {
+            keys.CREATE_NODES: [
+                ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
+                ("ReadIMU", "isaacsim.sensors.physics.IsaacReadIMU"),
+                ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
+                ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
+                ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
+            ],
+            keys.CONNECT: [
+                ("OnPlaybackTick.outputs:tick", "ReadIMU.inputs:execIn"),
+                ("ReadIMU.outputs:execOut", "PublishIMU.inputs:execIn"),
+                ("ReadIMU.outputs:orientation", "PublishIMU.inputs:orientation"),
+                ("ReadIMU.outputs:angVel", "PublishIMU.inputs:angularVelocity"),
+                ("ReadIMU.outputs:linAcc", "PublishIMU.inputs:linearAcceleration"),
+                ("ReadIMU.outputs:sensorTime", "PublishIMU.inputs:timeStamp"),
+                ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
+                ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+            ],
+            keys.SET_VALUES: [
+                ("PublishIMU.inputs:topicName", "/isaac/imu"),
+                ("PublishIMU.inputs:frameId", "imu_link"),
+                ("PublishClock.inputs:topicName", "/clock"),
+            ],
+        },
+    )
+    og.Controller.set(
+        og.Controller.attribute(f"{graph_path}/ReadIMU.inputs:imuPrim"),
+        [usdrt.Sdf.Path(CARTER_IMU_PRIM_PATH)],
+    )
 
 
 try:
@@ -109,6 +155,25 @@ try:
     )
     controller = DifferentialController(wheel_radius=0.04295, wheel_base=0.4132)
 
+    lidar_prim = stage.GetPrimAtPath(CARTER_LIDAR_PRIM_PATH)
+    if not lidar_prim.IsValid():
+        raise RuntimeError(f"Nova Carter LiDAR prim was not found: {CARTER_LIDAR_PRIM_PATH}")
+    lidar_sensor = LidarSensor(CARTER_LIDAR_PRIM_PATH, annotators=[])
+    lidar_sensor.attach_writer(
+        "RtxLidarROS2PublishPointCloud",
+        topicName="/isaac/lidar_points",
+        frameId="lidar_link",
+    )
+
+    IMU.create(
+        CARTER_IMU_PRIM_PATH,
+        translations=[[0.0, 0.0, 0.0]],
+        linear_acceleration_filter_size=3,
+        angular_velocity_filter_size=3,
+        orientation_filter_size=3,
+    )
+    create_ros2_publishers()
+
     SimulationManager.setup_simulation(dt=1.0 / 60.0, device="cpu")
     physics_scenes = SimulationManager.get_physics_scenes()
     if not physics_scenes:
@@ -127,6 +192,9 @@ try:
     print(f"Loaded Office environment: {office_usd_path}")
     print(f"Hidden surrounding buildings: {SURROUNDING_BUILDINGS_PRIM_PATH}")
     print(f"Added Nova Carter: {CARTER_PRIM_PATH}")
+    print("ROS 2 LiDAR: /isaac/lidar_points [sensor_msgs/msg/PointCloud2]")
+    print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
+    print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
     if not args.headless:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
 
@@ -148,7 +216,8 @@ try:
         print(f"Nova Carter jog test passed: moved {distance_moved:.3f} m")
     else:
         while simulation_app.is_running():
-            carter.apply_wheel_actions(controller.forward(command=get_jog_command()))
+            command = [0.2, 0.15] if args.auto_jog else get_jog_command()
+            carter.apply_wheel_actions(controller.forward(command=command))
             simulation_app.update()
 finally:
     if input_interface is not None and keyboard_subscription is not None:
