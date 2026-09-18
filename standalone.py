@@ -11,6 +11,7 @@ SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
 CARTER_PRIM_PATH = "/World/Carter"
 CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
 CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
+LIDAR_MOTION_COMPENSATION_STATE = "NONCOMPENSATED"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 LINEAR_JOG_SPEED = 0.5
 ANGULAR_JOG_SPEED = 1.2
@@ -30,6 +31,7 @@ args, _ = parser.parse_known_args()
 simulation_app = SimulationApp(
     {
         "headless": args.headless,
+        "enable_motion_bvh": True,
         "extra_args": KIT_EXTRA_ARGS,
     }
 )
@@ -45,7 +47,7 @@ from isaacsim.core.experimental.utils.stage import is_stage_loading
 from isaacsim.robot.experimental.wheeled_robots.controllers import DifferentialController
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
 from isaacsim.sensors.experimental.physics import IMU
-from isaacsim.sensors.experimental.rtx import LidarSensor
+from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from pxr import UsdGeom
 
@@ -159,11 +161,32 @@ try:
     lidar_prim = stage.GetPrimAtPath(CARTER_LIDAR_PRIM_PATH)
     if not lidar_prim.IsValid():
         raise RuntimeError(f"Nova Carter LiDAR prim was not found: {CARTER_LIDAR_PRIM_PATH}")
-    lidar_sensor = LidarSensor(CARTER_LIDAR_PRIM_PATH, annotators=[])
+    lidar = Lidar(
+        CARTER_LIDAR_PRIM_PATH,
+        accumulate_outputs=None,
+        aux_output_level="BASIC",
+        attributes={
+            "omni:sensor:Core:outputMotionCompensationState":
+                LIDAR_MOTION_COMPENSATION_STATE,
+        },
+    )
+    motion_compensation_state = lidar.prims[0].GetAttribute(
+        "omni:sensor:Core:outputMotionCompensationState"
+    ).Get()
+    if motion_compensation_state != LIDAR_MOTION_COMPENSATION_STATE:
+        raise RuntimeError(
+            "RTX LiDAR motion compensation state mismatch: "
+            f"expected {LIDAR_MOTION_COMPENSATION_STATE}, got {motion_compensation_state}"
+        )
+    lidar_sensor = LidarSensor(lidar, annotators=[])
     lidar_sensor.attach_writer(
         "RtxLidarROS2PublishPointCloud",
         topicName="/isaac/lidar_points",
         frameId="lidar_link",
+        outputIntensity=True,
+        outputTimestamp=True,
+        outputEmitterId=True,
+        outputChannelId=True,
     )
 
     IMU.create(
@@ -193,6 +216,7 @@ try:
     print(f"Loaded Office environment: {office_usd_path}")
     print(f"Hidden surrounding buildings: {SURROUNDING_BUILDINGS_PRIM_PATH}")
     print(f"Added Nova Carter: {CARTER_PRIM_PATH}")
+    print(f"RTX LiDAR output motion compensation: {motion_compensation_state}")
     print("ROS 2 LiDAR: /isaac/lidar_points [sensor_msgs/msg/PointCloud2]")
     print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")

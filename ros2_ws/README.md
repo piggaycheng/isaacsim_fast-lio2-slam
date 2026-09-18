@@ -37,3 +37,12 @@ scans visible for easier inspection; this visual history is not a saved map.
 The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
 W/S/A/D or the arrow keys; press Space to stop.
+
+Motion BVH is enabled for RTX sensor motion tracking. The LiDAR publisher
+includes native per-point timestamps, intensity, emitter IDs, and channel IDs.
+The raw RTX output is explicitly set to `NONCOMPENSATED`, preserving motion
+distortion for FASTLIO to remove using the simulated IMU.
+The adapter uses the native timestamps for FASTLIO deskew instead of
+synthetically distributing points over a scan. XT-32 channel IDs are folded
+into FASTLIO's four accepted Livox line IDs, while preserving the original
+point order and timing.
