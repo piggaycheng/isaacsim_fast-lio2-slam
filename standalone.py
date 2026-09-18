@@ -16,6 +16,10 @@ CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 LINEAR_JOG_SPEED = 0.5
 ANGULAR_JOG_SPEED = 1.2
 CARTER_FORWARD_SIGN = -1.0
+FOLLOW_CAMERA_DISTANCE = 2.5
+FOLLOW_CAMERA_HEIGHT = 1.5
+FOLLOW_CAMERA_LOOK_AHEAD = 0.6
+FOLLOW_CAMERA_TARGET_HEIGHT = 0.5
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
     "--/app/renderer/skipGpuRenderProducts=false",
@@ -44,11 +48,13 @@ import omni.graph.core as og
 import usdrt
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.experimental.utils.stage import is_stage_loading
+from isaacsim.core.rendering_manager import ViewportManager
 from isaacsim.robot.experimental.wheeled_robots.controllers import DifferentialController
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
 from isaacsim.sensors.experimental.physics import IMU
 from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
+from omni.kit.viewport.utility import get_active_viewport
 from pxr import UsdGeom
 
 app_utils.enable_extension("isaacsim.ros2.bridge")
@@ -82,6 +88,39 @@ def get_jog_command() -> list[float]:
         (forward - backward) * LINEAR_JOG_SPEED * CARTER_FORWARD_SIGN,
         (left - right) * ANGULAR_JOG_SPEED,
     ]
+
+
+def rotate_vector_by_quaternion(vector, quaternion) -> list[float]:
+    vx, vy, vz = (float(value) for value in vector)
+    qw, qx, qy, qz = (float(value) for value in quaternion)
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+    return [
+        vx + qw * tx + qy * tz - qz * ty,
+        vy + qw * ty + qz * tx - qx * tz,
+        vz + qw * tz + qx * ty - qy * tx,
+    ]
+
+
+def update_follow_camera(carter, camera_path: str) -> None:
+    positions, orientations = carter.get_world_poses()
+    position = positions.numpy()[0]
+    forward = rotate_vector_by_quaternion(
+        [CARTER_FORWARD_SIGN, 0.0, 0.0],
+        orientations.numpy()[0],
+    )
+    eye = [
+        float(position[0] - forward[0] * FOLLOW_CAMERA_DISTANCE),
+        float(position[1] - forward[1] * FOLLOW_CAMERA_DISTANCE),
+        float(position[2] + FOLLOW_CAMERA_HEIGHT),
+    ]
+    target = [
+        float(position[0] + forward[0] * FOLLOW_CAMERA_LOOK_AHEAD),
+        float(position[1] + forward[1] * FOLLOW_CAMERA_LOOK_AHEAD),
+        float(position[2] + FOLLOW_CAMERA_TARGET_HEIGHT),
+    ]
+    ViewportManager.set_camera_view(camera_path, eye=eye, target=target)
 
 
 def create_ros2_publishers() -> None:
@@ -228,12 +267,23 @@ try:
     for _ in range(10):
         simulation_app.update()
 
+    follow_camera_path = None
+    if not args.headless:
+        active_viewport = get_active_viewport()
+        if active_viewport is None:
+            raise RuntimeError("Could not find the active viewport for the Carter follow camera")
+        follow_camera_path = str(active_viewport.camera_path)
+        update_follow_camera(carter, follow_camera_path)
+        print("Main viewport follows Nova Carter from behind")
+
     if args.test:
         start_position = carter.get_world_poses()[0].numpy()[0]
         for _ in range(60):
             carter.apply_wheel_actions(
                 controller.forward(command=[0.2 * CARTER_FORWARD_SIGN, 0.0])
             )
+            if follow_camera_path is not None:
+                update_follow_camera(carter, follow_camera_path)
             simulation_app.update()
         carter.apply_wheel_actions(controller.forward(command=[0.0, 0.0]))
         end_position = carter.get_world_poses()[0].numpy()[0]
@@ -257,6 +307,8 @@ try:
                 else get_jog_command()
             )
             carter.apply_wheel_actions(controller.forward(command=command))
+            if follow_camera_path is not None:
+                update_follow_camera(carter, follow_camera_path)
             simulation_app.update()
 finally:
     if input_interface is not None and keyboard_subscription is not None:

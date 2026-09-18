@@ -67,7 +67,8 @@ the earlier visit before ICP can verify a closure.
 
 The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
-W/S/A/D or the arrow keys; press Space to stop.
+W/S/A/D or the arrow keys; press Space to stop. The main Isaac Sim viewport
+automatically follows Carter from behind while jogging.
 
 Motion BVH is enabled for RTX sensor motion tracking. The LiDAR publisher
 includes native per-point timestamps, intensity, emitter IDs, and channel IDs.
