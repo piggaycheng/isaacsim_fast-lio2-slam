@@ -9,9 +9,30 @@ sophus_source="$workspace_dir/src/Sophus"
 sophus_build="$workspace_dir/sophus_build"
 sophus_install="$workspace_dir/sophus_install"
 livox_driver="$workspace_dir/src/livox_ros_driver2"
+gtsam_package="$workspace_dir/gtsam_package"
+gtsam_install="$workspace_dir/gtsam_install"
 
 source /opt/ros/humble/setup.bash
 set -u
+
+if [[ -f /opt/ros/humble/lib/cmake/GTSAM/GTSAMConfig.cmake ]]; then
+  gtsam_prefix="/opt/ros/humble"
+else
+  gtsam_prefix="$gtsam_install/opt/ros/humble"
+  if [[ ! -f "$gtsam_prefix/lib/cmake/GTSAM/GTSAMConfig.cmake" ]]; then
+    mkdir -p "$gtsam_package" "$gtsam_install"
+    (
+      cd "$gtsam_package"
+      apt download ros-humble-gtsam
+    )
+    gtsam_deb="$(find "$gtsam_package" -maxdepth 1 -name 'ros-humble-gtsam_*.deb' | sort | tail -1)"
+    if [[ -z "$gtsam_deb" ]]; then
+      echo "Failed to download ros-humble-gtsam" >&2
+      exit 1
+    fi
+    dpkg-deb -x "$gtsam_deb" "$gtsam_install"
+  fi
+fi
 
 cmake -S "$sdk_source" -B "$sdk_build" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -33,16 +54,18 @@ cp -r "$livox_driver/launch_ROS2" "$livox_driver/launch"
 
 rm -rf \
   "$workspace_dir/build/livox_ros_driver2" \
+  "$workspace_dir/build/interface" \
   "$workspace_dir/build/fastlio2" \
+  "$workspace_dir/build/pgo" \
   "$workspace_dir/build/isaac_fastlio_adapter"
 
 cd "$workspace_dir"
 colcon build \
-  --packages-up-to fastlio2 isaac_fastlio_adapter \
+  --packages-up-to fastlio2 pgo isaac_fastlio_adapter \
   --cmake-args \
   -DROS_EDITION=ROS2 \
   -DDISTRO_ROS=humble \
-  -DCMAKE_PREFIX_PATH="$sophus_install" \
+  -DCMAKE_PREFIX_PATH="$sophus_install;$gtsam_prefix" \
   -DCMAKE_CXX_FLAGS="-I$sophus_install/include" \
   -DCMAKE_LIBRARY_PATH="$sdk_install/lib" \
   -DCMAKE_INCLUDE_PATH="$sdk_install/include"

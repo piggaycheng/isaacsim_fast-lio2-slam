@@ -18,6 +18,7 @@ venv/
 logs/
 output/
 outputs/
+maps/
 
 # ROS 2 workspace output
 ros2_ws/build/
@@ -27,3 +28,5 @@ ros2_ws/livox_sdk_build/
 ros2_ws/livox_sdk_install/
 ros2_ws/sophus_build/
 ros2_ws/sophus_install/
+ros2_ws/gtsam_package/
+ros2_ws/gtsam_install/

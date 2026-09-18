@@ -9,6 +9,9 @@ source /opt/ros/humble/setup.bash
 source "$workspace_dir/install/setup.bash"
 set -u
 export LD_LIBRARY_PATH="$workspace_dir/livox_sdk_install/lib:${LD_LIBRARY_PATH:-}"
+if [[ -d "$workspace_dir/gtsam_install/opt/ros/humble/lib/x86_64-linux-gnu" ]]; then
+  export LD_LIBRARY_PATH="$workspace_dir/gtsam_install/opt/ros/humble/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+fi
 
 ros2 launch isaac_fastlio_adapter fastlio.launch.py &
 ros_pid=$!

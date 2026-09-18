@@ -5,8 +5,11 @@ from launch.substitutions import PathJoinSubstitution
 
 
 def generate_launch_description():
-    config_path = PathJoinSubstitution(
+    lio_config_path = PathJoinSubstitution(
         [FindPackageShare("isaac_fastlio_adapter"), "config", "isaac_lio.yaml"]
+    )
+    pgo_config_path = PathJoinSubstitution(
+        [FindPackageShare("pgo"), "config", "pgo.yaml"]
     )
 
     return LaunchDescription(
@@ -38,7 +41,20 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {
-                        "config_path": config_path,
+                        "config_path": lio_config_path,
+                        "use_sim_time": True,
+                    }
+                ],
+            ),
+            Node(
+                package="pgo",
+                executable="pgo_node",
+                namespace="pgo",
+                name="pgo_node",
+                output="screen",
+                parameters=[
+                    {
+                        "config_path": pgo_config_path,
                         "use_sim_time": True,
                     }
                 ],

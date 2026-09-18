@@ -12,6 +12,9 @@
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
 
+  <exec_depend>fastlio2</exec_depend>
+  <exec_depend>pgo</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

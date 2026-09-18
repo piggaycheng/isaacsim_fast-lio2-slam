@@ -20,19 +20,44 @@ publishes the corrected input on `/livox/imu`.
 Initialize submodules and build the local SDKs and ROS packages:
 
 ```bash
+sudo apt install ros-humble-gtsam
 git submodule update --init --recursive
 ./ros2_ws/build_workspace.sh
 ```
 
-Run the GUI simulation, adapters, FASTLIO2, and RViz together:
+Installing `ros-humble-gtsam` system-wide is recommended. If it is not
+installed and sudo is unavailable, `build_workspace.sh` automatically
+downloads the same Debian package and extracts it under
+`ros2_ws/gtsam_install/`.
+
+Run the GUI simulation, adapters, FASTLIO2, its existing PGO backend, and RViz
+together:
 
 ```bash
 ./run_slam.sh
 ```
 
 RViz opens with `lidar` as its fixed frame and displays
-`/fastlio2/world_cloud`. Its 10-second decay time keeps recent registered
-scans visible for easier inspection; this visual history is not a saved map.
+`/fastlio2/world_cloud`, the FASTLIO trajectory, and PGO loop-closure markers.
+The PGO node selects keyframes from `/fastlio2/body_cloud` and
+`/fastlio2/lio_odom`, searches prior poses with a KD-tree, verifies candidates
+against a local submap with ICP, and optimizes the pose graph with GTSAM iSAM2. The PGO node still publishes the
+`map` to `lidar` correction transform, but RViz keeps `lidar` as its fixed
+frame so delayed PGO transforms cannot block the live point cloud.
+
+Save the optimized PCD map and optional keyframe patches after mapping:
+
+```bash
+./save_map.sh
+```
+
+The optional arguments are `./save_map.sh [output_directory] [true|false]`.
+The defaults are `maps/office` and `true`.
+
+This writes `map.pcd`, `poses.txt`, and (when requested) a `patches/`
+directory. The PGO implementation uses pose-proximity loop candidates, so the
+current FASTLIO trajectory must remain within the configured search radius of
+the earlier visit before ICP can verify a closure.
 
 The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
