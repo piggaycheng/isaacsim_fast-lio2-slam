@@ -9,11 +9,23 @@ sophus_source="$workspace_dir/src/Sophus"
 sophus_build="$workspace_dir/sophus_build"
 sophus_install="$workspace_dir/sophus_install"
 livox_driver="$workspace_dir/src/livox_ros_driver2"
+fastlio_source="$workspace_dir/src/FASTLIO2_ROS2"
+pgo_patch="$workspace_dir/../patches/fastlio2-pgo-sync.patch"
 gtsam_package="$workspace_dir/gtsam_package"
 gtsam_install="$workspace_dir/gtsam_install"
+pgo_patch_applied=false
 
 source /opt/ros/humble/setup.bash
 set -u
+
+cleanup() {
+  rm -rf "$livox_driver/launch"
+  rm -f "$livox_driver/package.xml"
+  if [[ "$pgo_patch_applied" == true ]]; then
+    git -C "$fastlio_source" apply --reverse "$pgo_patch"
+  fi
+}
+trap cleanup EXIT
 
 if [[ -f /opt/ros/humble/lib/cmake/GTSAM/GTSAMConfig.cmake ]]; then
   gtsam_prefix="/opt/ros/humble"
@@ -52,6 +64,16 @@ cp "$livox_driver/package_ROS2.xml" "$livox_driver/package.xml"
 rm -rf "$livox_driver/launch"
 cp -r "$livox_driver/launch_ROS2" "$livox_driver/launch"
 
+if git -C "$fastlio_source" apply --reverse --check "$pgo_patch" 2>/dev/null; then
+  echo "FASTLIO2 PGO synchronization patch is already applied"
+elif git -C "$fastlio_source" apply --check "$pgo_patch"; then
+  git -C "$fastlio_source" apply "$pgo_patch"
+  pgo_patch_applied=true
+else
+  echo "FASTLIO2 PGO synchronization patch does not apply cleanly" >&2
+  exit 1
+fi
+
 rm -rf \
   "$workspace_dir/build/livox_ros_driver2" \
   "$workspace_dir/build/interface" \
@@ -69,6 +91,3 @@ colcon build \
   -DCMAKE_CXX_FLAGS="-I$sophus_install/include" \
   -DCMAKE_LIBRARY_PATH="$sdk_install/lib" \
   -DCMAKE_INCLUDE_PATH="$sdk_install/include"
-
-rm -rf "$livox_driver/launch"
-rm -f "$livox_driver/package.xml"

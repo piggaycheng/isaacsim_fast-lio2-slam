@@ -45,6 +45,12 @@ against a local submap with ICP, and optimizes the pose graph with GTSAM iSAM2. 
 `map` to `lidar` correction transform, but RViz keeps `lidar` as its fixed
 frame so delayed PGO transforms cannot block the live point cloud.
 
+`build_workspace.sh` applies `patches/fastlio2-pgo-sync.patch` while compiling
+the upstream PGO node. The patch uses exact cloud/odometry timestamp matching,
+recovers from simulation clock resets, atomically consumes the newest queued
+measurement, and logs accepted keyframes and loop closures. The external
+FASTLIO2 submodule is restored after the build so it remains clean.
+
 Save the optimized PCD map and optional keyframe patches after mapping:
 
 ```bash

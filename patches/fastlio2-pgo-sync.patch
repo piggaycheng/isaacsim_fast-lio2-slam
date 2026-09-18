@@ -1,0 +1,125 @@
+diff --git a/pgo/src/pgo_node.cpp b/pgo/src/pgo_node.cpp
+index 4f8a10f..d8f739b 100644
+--- a/pgo/src/pgo_node.cpp
++++ b/pgo/src/pgo_node.cpp
+@@ -6,7 +6,7 @@
+ #include <tf2_ros/transform_broadcaster.h>
+ #include <message_filters/subscriber.h>
+ #include <message_filters/synchronizer.h>
+-#include <message_filters/sync_policies/approximate_time.h>
++#include <message_filters/sync_policies/exact_time.h>
+ #include <pcl_conversions/pcl_conversions.h>
+ #include <visualization_msgs/msg/marker_array.hpp>
+ #include <visualization_msgs/msg/marker.hpp>
+@@ -33,7 +33,7 @@ struct NodeState
+ {
+     std::mutex message_mutex;
+     std::queue<CloudWithPose> cloud_buffer;
+-    double last_message_time;
++    double last_message_time = -1.0;
+ };
+
+ class PGONode : public rclcpp::Node
+@@ -44,13 +44,12 @@ public:
+         RCLCPP_INFO(this->get_logger(), "PGO node started");
+         loadParameters();
+         m_pgo = std::make_shared<SimplePGO>(m_pgo_config);
+-        rclcpp::QoS qos = rclcpp::QoS(10);
++        rclcpp::QoS qos = rclcpp::QoS(100);
+         m_cloud_sub.subscribe(this, m_node_config.cloud_topic, qos.get_rmw_qos_profile());
+         m_odom_sub.subscribe(this, m_node_config.odom_topic, qos.get_rmw_qos_profile());
+         m_loop_marker_pub = this->create_publisher<visualization_msgs::msg::MarkerArray>("/pgo/loop_markers", 10000);
+         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+-        m_sync = std::make_shared<message_filters::Synchronizer<message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>>>(message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>(10), m_cloud_sub, m_odom_sub);
+-        m_sync->setAgePenalty(0.1);
++        m_sync = std::make_shared<message_filters::Synchronizer<message_filters::sync_policies::ExactTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>>>(message_filters::sync_policies::ExactTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>(100), m_cloud_sub, m_odom_sub);
+         m_sync->registerCallback(std::bind(&PGONode::syncCB, this, std::placeholders::_1, std::placeholders::_2));
+         m_timer = this->create_wall_timer(50ms, std::bind(&PGONode::timerCB, this));
+         m_save_map_srv = this->create_service<interface::srv::SaveMaps>("/pgo/save_maps", std::bind(&PGONode::saveMapsCB, this, std::placeholders::_1, std::placeholders::_2));
+@@ -84,13 +83,25 @@ public:
+     }
+     void syncCB(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg, const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
+     {
+-
+         std::lock_guard<std::mutex>(m_state.message_mutex);
+         CloudWithPose cp;
+         cp.pose.setTime(cloud_msg->header.stamp.sec, cloud_msg->header.stamp.nanosec);
++        if (m_state.last_message_time >= 0.0 &&
++            cp.pose.second + 0.5 < m_state.last_message_time)
++        {
++            RCLCPP_WARN(this->get_logger(),
++                        "Simulation time moved backward from %.3f to %.3f; resetting the PGO graph",
++                        m_state.last_message_time, cp.pose.second);
++            while (!m_state.cloud_buffer.empty())
++            {
++                m_state.cloud_buffer.pop();
++            }
++            m_pgo = std::make_shared<SimplePGO>(m_pgo_config);
++            m_state.last_message_time = -1.0;
++        }
+         if (cp.pose.second < m_state.last_message_time)
+         {
+-            RCLCPP_WARN(this->get_logger(), "Received out of order message");
++            RCLCPP_WARN(this->get_logger(), "Received out-of-order synchronized message");
+             return;
+         }
+         m_state.last_message_time = cp.pose.second;
+@@ -103,6 +114,10 @@ public:
+         cp.pose.t = V3D(odom_msg->pose.pose.position.x, odom_msg->pose.pose.position.y, odom_msg->pose.pose.position.z);
+         cp.cloud = CloudType::Ptr(new CloudType);
+         pcl::fromROSMsg(*cloud_msg, *cp.cloud);
++        if (m_state.cloud_buffer.size() >= 100)
++        {
++            m_state.cloud_buffer.pop();
++        }
+         m_state.cloud_buffer.push(cp);
+     }
+
+@@ -190,12 +205,12 @@ public:
+
+     void timerCB()
+     {
+-        if (m_state.cloud_buffer.size() == 0)
+-            return;
+-        CloudWithPose cp = m_state.cloud_buffer.front();
+-        // 清理队列
++        CloudWithPose cp;
+         {
+             std::lock_guard<std::mutex>(m_state.message_mutex);
++            if (m_state.cloud_buffer.empty())
++                return;
++            cp = m_state.cloud_buffer.back();
+             while (!m_state.cloud_buffer.empty())
+             {
+                 m_state.cloud_buffer.pop();
+@@ -211,10 +226,20 @@ public:
+             return;
+         }
+
++        const size_t loop_count_before = m_pgo->historyPairs().size();
+         m_pgo->searchForLoopPairs();
+-
+         m_pgo->smoothAndUpdate();
+
++        const size_t keyframe_id = m_pgo->keyPoses().size() - 1;
++        if (m_pgo->historyPairs().size() > loop_count_before)
++        {
++            const auto &loop = m_pgo->historyPairs().back();
++            RCLCPP_INFO(this->get_logger(), "Loop closure accepted: keyframe %zu -> %zu",
++                        loop.second, loop.first);
++        }
++        RCLCPP_INFO(this->get_logger(), "PGO keyframe %zu accepted at %.3f",
++                    keyframe_id, cp.pose.second);
++
+         sendBroadCastTF(cur_time);
+
+         publishLoopMarkers(cur_time);
+@@ -295,7 +320,7 @@ private:
+     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> m_cloud_sub;
+     message_filters::Subscriber<nav_msgs::msg::Odometry> m_odom_sub;
+     std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
+-    std::shared_ptr<message_filters::Synchronizer<message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>>> m_sync;
++    std::shared_ptr<message_filters::Synchronizer<message_filters::sync_policies::ExactTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>>> m_sync;
+ };
+
+ int main(int argc, char **argv)
