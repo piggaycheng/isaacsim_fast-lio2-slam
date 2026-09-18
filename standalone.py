@@ -14,6 +14,7 @@ CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 LINEAR_JOG_SPEED = 0.5
 ANGULAR_JOG_SPEED = 1.2
+CARTER_FORWARD_SIGN = -1.0
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
     "--/app/renderer/skipGpuRenderProducts=false",
@@ -76,7 +77,7 @@ def get_jog_command() -> list[float]:
     left = int(bool(pressed_keys & {"A", "LEFT"}))
     right = int(bool(pressed_keys & {"D", "RIGHT"}))
     return [
-        (forward - backward) * LINEAR_JOG_SPEED,
+        (forward - backward) * LINEAR_JOG_SPEED * CARTER_FORWARD_SIGN,
         (left - right) * ANGULAR_JOG_SPEED,
     ]
 
@@ -206,17 +207,31 @@ try:
     if args.test:
         start_position = carter.get_world_poses()[0].numpy()[0]
         for _ in range(60):
-            carter.apply_wheel_actions(controller.forward(command=[0.2, 0.0]))
+            carter.apply_wheel_actions(
+                controller.forward(command=[0.2 * CARTER_FORWARD_SIGN, 0.0])
+            )
             simulation_app.update()
         carter.apply_wheel_actions(controller.forward(command=[0.0, 0.0]))
         end_position = carter.get_world_poses()[0].numpy()[0]
-        distance_moved = float(((end_position - start_position) ** 2).sum() ** 0.5)
+        displacement = end_position - start_position
+        distance_moved = float((displacement**2).sum() ** 0.5)
         if distance_moved < 0.01:
             raise RuntimeError(f"Nova Carter jog test failed; moved only {distance_moved:.4f} m")
-        print(f"Nova Carter jog test passed: moved {distance_moved:.3f} m")
+        if displacement[0] >= -0.01:
+            raise RuntimeError(
+                f"Nova Carter forward jog moved in the wrong direction: displacement={displacement.tolist()}"
+            )
+        print(
+            f"Nova Carter jog test passed: displacement={displacement.tolist()}, "
+            f"distance={distance_moved:.3f} m"
+        )
     else:
         while simulation_app.is_running():
-            command = [0.2, 0.15] if args.auto_jog else get_jog_command()
+            command = (
+                [0.2 * CARTER_FORWARD_SIGN, 0.15]
+                if args.auto_jog
+                else get_jog_command()
+            )
             carter.apply_wheel_actions(controller.forward(command=command))
             simulation_app.update()
 finally:
