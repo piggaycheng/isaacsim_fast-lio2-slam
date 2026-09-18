@@ -65,6 +65,28 @@ directory. The PGO implementation uses pose-proximity loop candidates, so the
 current FASTLIO trajectory must remain within the configured search radius of
 the earlier visit before ICP can verify a closure.
 
+Convert the optimized 3D PCD into a Nav2-compatible 2D occupancy map:
+
+```bash
+./pcd2pgm.py
+```
+
+The defaults read `maps/office/map.pcd` and write
+`maps/office/map_2d.pgm` plus `maps/office/map_2d.yaml`. The converter projects
+points between 0.1 m and 2.0 m at 0.05 m resolution. For example:
+
+```bash
+./pcd2pgm.py maps/office/map.pcd maps/office/map_2d \
+  --z-min 0.1 --z-max 2.0 --resolution 0.05
+```
+
+Use `--min-points` to reject sparsely populated cells, `--inflation` to widen
+obstacles, or `--background unknown` to leave unoccupied cells unknown.
+Obstacle inflation is normally better handled by the Nav2 costmap. Because a
+merged PCD contains obstacle returns but not the original LiDAR rays, the
+converter cannot reconstruct observed free and unknown space exactly; its
+default free background matches common PCD-to-PGM tools.
+
 The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
 W/S/A/D or the arrow keys; press Space to stop. The main Isaac Sim viewport
