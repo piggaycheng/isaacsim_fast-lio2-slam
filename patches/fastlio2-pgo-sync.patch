@@ -1,17 +1,64 @@
+diff --git a/README.md b/README.md
+index 379ec38..1f9a2a1 100644
+--- a/README.md
++++ b/README.md
+@@ -76,6 +76,8 @@ ros2 bag play your_bag_file
+ ```shell
+ ros2 service call /pgo/save_maps interface/srv/SaveMaps "{file_path: 'your_save_dir', save_patches: true}"
+ ```
++`pgo/config/pgo.yaml` 中的 `save_map_resolution` 控制输出 `map.pcd`
++的体素降采样尺寸（单位为米）；设为 `0` 可禁用。关键帧 patches 不受影响。
+
+ ### 3.里程计加重定位
+ #### 启动重定位节点
+@@ -109,4 +111,3 @@ ros2 service call /hba/refine_map interface/srv/RefineMap "{"maps_path": "your m
+ 3. [HBA](https://github.com/hku-mars/HBA)
+ ## 性能相关的问题
+ 该代码主要使用timerCB作为频率触发主函数，由于ROS2中的timer、subscriber以及service的回调实际上运行在同一个线程上，在电脑性能不是好的时候，会出现调用阻塞的情况，建议使用线程并发的方式将耗时的回调独立出来(如timerCB)来提升性能
+-
+diff --git a/pgo/config/pgo.yaml b/pgo/config/pgo.yaml
+index 4fc9087..e6ac2ab 100644
+--- a/pgo/config/pgo.yaml
++++ b/pgo/config/pgo.yaml
+@@ -2,6 +2,7 @@ cloud_topic: /fastlio2/body_cloud
+ odom_topic: /fastlio2/lio_odom
+ map_frame: map
+ local_frame: lidar
++save_map_resolution: 0.1
+
+ key_pose_delta_deg: 10
+ key_pose_delta_trans: 0.5
 diff --git a/pgo/src/pgo_node.cpp b/pgo/src/pgo_node.cpp
-index 4f8a10f..d8f739b 100644
+index 4f8a10f..2cc5db8 100644
 --- a/pgo/src/pgo_node.cpp
 +++ b/pgo/src/pgo_node.cpp
-@@ -6,7 +6,7 @@
+@@ -6,8 +6,9 @@
  #include <tf2_ros/transform_broadcaster.h>
  #include <message_filters/subscriber.h>
  #include <message_filters/synchronizer.h>
 -#include <message_filters/sync_policies/approximate_time.h>
 +#include <message_filters/sync_policies/exact_time.h>
  #include <pcl_conversions/pcl_conversions.h>
++#include <pcl/filters/voxel_grid.h>
  #include <visualization_msgs/msg/marker_array.hpp>
  #include <visualization_msgs/msg/marker.hpp>
-@@ -33,7 +33,7 @@ struct NodeState
+ #include <queue>
+@@ -17,6 +18,7 @@
+ #include "interface/srv/save_maps.hpp"
+ #include <pcl/io/io.h>
+ #include <fstream>
++#include <stdexcept>
+ #include <yaml-cpp/yaml.h>
+
+ using namespace std::chrono_literals;
+@@ -27,13 +29,14 @@ struct NodeConfig
+     std::string odom_topic = "/lio/odom";
+     std::string map_frame = "map";
+     std::string local_frame = "lidar";
++    double save_map_resolution = 0.1;
+ };
+
+ struct NodeState
  {
      std::mutex message_mutex;
      std::queue<CloudWithPose> cloud_buffer;
@@ -20,9 +67,11 @@ index 4f8a10f..d8f739b 100644
  };
 
  class PGONode : public rclcpp::Node
-@@ -44,13 +44,12 @@ public:
+@@ -43,14 +46,14 @@ public:
+     {
          RCLCPP_INFO(this->get_logger(), "PGO node started");
          loadParameters();
++        this->declare_parameter<double>("save_map_resolution", m_node_config.save_map_resolution);
          m_pgo = std::make_shared<SimplePGO>(m_pgo_config);
 -        rclcpp::QoS qos = rclcpp::QoS(10);
 +        rclcpp::QoS qos = rclcpp::QoS(100);
@@ -36,7 +85,22 @@ index 4f8a10f..d8f739b 100644
          m_sync->registerCallback(std::bind(&PGONode::syncCB, this, std::placeholders::_1, std::placeholders::_2));
          m_timer = this->create_wall_timer(50ms, std::bind(&PGONode::timerCB, this));
          m_save_map_srv = this->create_service<interface::srv::SaveMaps>("/pgo/save_maps", std::bind(&PGONode::saveMapsCB, this, std::placeholders::_1, std::placeholders::_2));
-@@ -84,13 +83,25 @@ public:
+@@ -72,6 +75,14 @@ public:
+         m_node_config.odom_topic = config["odom_topic"].as<std::string>();
+         m_node_config.map_frame = config["map_frame"].as<std::string>();
+         m_node_config.local_frame = config["local_frame"].as<std::string>();
++        if (config["save_map_resolution"])
++        {
++            m_node_config.save_map_resolution = config["save_map_resolution"].as<double>();
++        }
++        if (m_node_config.save_map_resolution < 0.0)
++        {
++            throw std::invalid_argument("save_map_resolution must be non-negative");
++        }
+
+         m_pgo_config.key_pose_delta_deg = config["key_pose_delta_deg"].as<double>();
+         m_pgo_config.key_pose_delta_trans = config["key_pose_delta_trans"].as<double>();
+@@ -84,13 +95,25 @@ public:
      }
      void syncCB(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg, const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
      {
@@ -64,7 +128,7 @@ index 4f8a10f..d8f739b 100644
              return;
          }
          m_state.last_message_time = cp.pose.second;
-@@ -103,6 +114,10 @@ public:
+@@ -103,6 +126,10 @@ public:
          cp.pose.t = V3D(odom_msg->pose.pose.position.x, odom_msg->pose.pose.position.y, odom_msg->pose.pose.position.z);
          cp.cloud = CloudType::Ptr(new CloudType);
          pcl::fromROSMsg(*cloud_msg, *cp.cloud);
@@ -75,7 +139,7 @@ index 4f8a10f..d8f739b 100644
          m_state.cloud_buffer.push(cp);
      }
 
-@@ -190,12 +205,12 @@ public:
+@@ -190,12 +217,12 @@ public:
 
      void timerCB()
      {
@@ -92,7 +156,7 @@ index 4f8a10f..d8f739b 100644
              while (!m_state.cloud_buffer.empty())
              {
                  m_state.cloud_buffer.pop();
-@@ -211,10 +226,20 @@ public:
+@@ -211,10 +238,20 @@ public:
              return;
          }
 
@@ -114,7 +178,42 @@ index 4f8a10f..d8f739b 100644
          sendBroadCastTF(cur_time);
 
          publishLoopMarkers(cur_time);
-@@ -295,7 +320,7 @@ private:
+@@ -222,6 +259,14 @@ public:
+
+     void saveMapsCB(const std::shared_ptr<interface::srv::SaveMaps::Request> request, std::shared_ptr<interface::srv::SaveMaps::Response> response)
+     {
++        const double save_map_resolution = this->get_parameter("save_map_resolution").as_double();
++        if (save_map_resolution < 0.0)
++        {
++            response->success = false;
++            response->message = "save_map_resolution must be non-negative";
++            return;
++        }
++
+         if (!std::filesystem::exists(request->file_path))
+         {
+             response->success = false;
+@@ -279,6 +324,19 @@ public:
+             *ret += *world_cloud;
+         }
+         txt_file.close();
++        if (save_map_resolution > 0.0)
++        {
++            const size_t original_point_count = ret->size();
++            pcl::VoxelGrid<PointType> voxel_grid;
++            voxel_grid.setLeafSize(save_map_resolution,
++                                   save_map_resolution,
++                                   save_map_resolution);
++            voxel_grid.setInputCloud(ret);
++            voxel_grid.filter(*ret);
++            RCLCPP_INFO(this->get_logger(),
++                        "Downsampled map from %zu to %zu points with %.3f m voxels",
++                        original_point_count, ret->size(), save_map_resolution);
++        }
+         pcl::io::savePCDFileBinary(map_path.string(), *ret);
+         response->success = true;
+         response->message = "SAVE SUCCESS!";
+@@ -295,7 +353,7 @@ private:
      message_filters::Subscriber<sensor_msgs::msg::PointCloud2> m_cloud_sub;
      message_filters::Subscriber<nav_msgs::msg::Odometry> m_odom_sub;
      std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;

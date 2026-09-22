@@ -57,13 +57,33 @@ Save the optimized PCD map and optional keyframe patches after mapping:
 ./save_map.sh
 ```
 
-The optional arguments are `./save_map.sh [output_directory] [true|false]`.
-The defaults are `maps/office` and `true`.
+Run `./save_map.sh --help` to list the named options. The output directory
+defaults to `maps/office`, keyframe patch saving defaults to `true`, and the
+voxel size defaults to the PGO configuration. For example, save with 5 cm
+voxels using:
+
+```bash
+./save_map.sh --voxel-size 0.05
+```
+
+To select every option explicitly:
+
+```bash
+./save_map.sh \
+  --output-dir maps/office \
+  --save-patches false \
+  --voxel-size 0.1
+```
 
 This writes `map.pcd`, `poses.txt`, and (when requested) a `patches/`
-directory. The PGO implementation uses pose-proximity loop candidates, so the
-current FASTLIO trajectory must remain within the configured search radius of
-the earlier visit before ICP can verify a closure.
+directory. Before writing `map.pcd`, PGO applies the voxel size configured by
+`save_map_resolution` in `src/FASTLIO2_ROS2/pgo/config/pgo.yaml` (default:
+`0.1` m). The `--voxel-size` option overrides it for that running PGO node;
+set it to `0` to disable final-map downsampling. Individual files in
+`patches/` retain their original keyframe resolution. The PGO implementation
+uses pose-proximity loop candidates, so the current FASTLIO trajectory must
+remain within the configured search radius of the earlier visit before ICP can
+verify a closure.
 
 Convert the optimized 3D PCD into a Nav2-compatible 2D occupancy map:
 
