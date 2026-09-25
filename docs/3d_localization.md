@@ -11,6 +11,12 @@
 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2)
 的 PCD 配準結果轉為品質閘控後的全域 pose，改由全域融合節點獨自發布
 `map -> odom`。**兩種模式不能同時發布這條 TF。**
+獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./run_3d_localization.sh`
+提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的
+`map -> camera_init -> body -> base_link` TF 只在配準被接受後發布
+`map -> camera_init`，**不與**現行 2D 導航同時啟動；它不代表以下
+PGM + PCD 導航全域融合已實作。操作方式見
+[`ros2_ws/README.md`](../ros2_ws/README.md)。
 
 ## 規劃中的 PGM + PCD 模式（尚未實作）
 

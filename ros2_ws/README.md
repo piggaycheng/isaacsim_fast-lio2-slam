@@ -17,6 +17,20 @@ The upstream FASTLIO2 fork multiplies incoming standard IMU acceleration by
 `10`. The included `imu_scale_adapter` compensates for that behavior and
 publishes the corrected input on `/livox/imu`.
 
+`src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
+`src/isaac_localization_3d` contains the separate 3D localization launch,
+ROS pose/TF publisher, and RViz configuration. Neither package is started by
+`run_nav.sh`. Build the existing workspace first, then run
+`./ros2_ws/install_nav_dependencies.sh` and `./ros2_ws/setup_3d_localization.sh`
+to build the 3D packages and their private dependencies. Launch the Office
+simulator and RViz together with `./run_3d_localization.sh` (use `--help` for
+map, headless, and initialization options). The Office spawn near `(0, 0)` is
+sent as an approximate initial pose by default; use RViz's **2D Pose Estimate**
+to reinitialize at the robot's current location, or `--manual-initial-pose`
+to require a manual estimate. RViz displays the PGM map, registered scan,
+map-frame Carter arrow, and path. This mode owns `map -> camera_init` only;
+do not run it alongside `run_nav.sh`, whose AMCL owns `map -> odom`.
+
 Initialize submodules and build the local SDKs and ROS packages:
 
 ```bash

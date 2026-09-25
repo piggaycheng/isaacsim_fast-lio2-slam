@@ -10,3 +10,6 @@
 [submodule "ros2_ws/src/Sophus"]
 	path = ros2_ws/src/Sophus
 	url = https://github.com/strasdat/Sophus.git
+[submodule "ros2_ws/src/FAST_LIO_LOCALIZATION2"]
+	path = ros2_ws/src/FAST_LIO_LOCALIZATION2
+	url = https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2.git
