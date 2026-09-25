@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
@@ -23,7 +24,14 @@ ament_target_dependencies(imu_scale_adapter
   sensor_msgs
 )
 
-install(TARGETS pointcloud2_to_livox imu_scale_adapter
+add_executable(wheel_encoder_odometry src/wheel_encoder_odometry.cpp)
+ament_target_dependencies(wheel_encoder_odometry
+  nav_msgs
+  rclcpp
+  sensor_msgs
+)
+
+install(TARGETS pointcloud2_to_livox imu_scale_adapter wheel_encoder_odometry
   DESTINATION lib/${PROJECT_NAME}
 )
 

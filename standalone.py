@@ -9,9 +9,9 @@ OFFICE_ASSET_PATH = "/Isaac/Environments/Office/office.usd"
 CARTER_ASSET_PATH = "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd"
 SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
 CARTER_PRIM_PATH = "/World/Carter"
+CARTER_ARTICULATION_PATH = f"{CARTER_PRIM_PATH}/chassis_link"
 CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
 CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
-LIDAR_MOTION_COMPENSATION_STATE = "NONCOMPENSATED"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 LINEAR_JOG_SPEED = 0.5
 ANGULAR_JOG_SPEED = 1.2
@@ -30,7 +30,14 @@ parser = argparse.ArgumentParser(description="Launch Isaac Sim with the Office e
 parser.add_argument("--headless", action="store_true", help="Run without the Isaac Sim GUI.")
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
+parser.add_argument(
+    "--lidar-motion-compensation",
+    choices=("noncompensated", "compensated"),
+    default="noncompensated",
+    help="Select RTX LiDAR motion compensation; navigation uses compensated clouds.",
+)
 args, _ = parser.parse_known_args()
+lidar_motion_compensation_state = args.lidar_motion_compensation.upper()
 
 simulation_app = SimulationApp(
     {
@@ -134,6 +141,7 @@ def create_ros2_publishers() -> None:
                 ("ReadIMU", "isaacsim.sensors.physics.IsaacReadIMU"),
                 ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
                 ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
+                ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
                 ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
             ],
             keys.CONNECT: [
@@ -143,12 +151,19 @@ def create_ros2_publishers() -> None:
                 ("ReadIMU.outputs:angVel", "PublishIMU.inputs:angularVelocity"),
                 ("ReadIMU.outputs:linAcc", "PublishIMU.inputs:linearAcceleration"),
                 ("ReadIMU.outputs:sensorTime", "PublishIMU.inputs:timeStamp"),
+                ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
+                ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
                 ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
                 ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
             ],
             keys.SET_VALUES: [
                 ("PublishIMU.inputs:topicName", "/isaac/imu"),
                 ("PublishIMU.inputs:frameId", "imu_link"),
+                ("PublishJointState.inputs:topicName", "/isaac/joint_states"),
+                (
+                    "PublishJointState.inputs:targetPrim",
+                    [usdrt.Sdf.Path(CARTER_ARTICULATION_PATH)],
+                ),
                 ("PublishClock.inputs:topicName", "/clock"),
             ],
         },
@@ -206,16 +221,16 @@ try:
         aux_output_level="BASIC",
         attributes={
             "omni:sensor:Core:outputMotionCompensationState":
-                LIDAR_MOTION_COMPENSATION_STATE,
+                lidar_motion_compensation_state,
         },
     )
     motion_compensation_state = lidar.prims[0].GetAttribute(
         "omni:sensor:Core:outputMotionCompensationState"
     ).Get()
-    if motion_compensation_state != LIDAR_MOTION_COMPENSATION_STATE:
+    if motion_compensation_state != lidar_motion_compensation_state:
         raise RuntimeError(
             "RTX LiDAR motion compensation state mismatch: "
-            f"expected {LIDAR_MOTION_COMPENSATION_STATE}, got {motion_compensation_state}"
+            f"expected {lidar_motion_compensation_state}, got {motion_compensation_state}"
         )
     lidar_sensor = LidarSensor(lidar, annotators=[])
     lidar_sensor.attach_writer(
@@ -258,6 +273,7 @@ try:
     print(f"RTX LiDAR output motion compensation: {motion_compensation_state}")
     print("ROS 2 LiDAR: /isaac/lidar_points [sensor_msgs/msg/PointCloud2]")
     print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
+    print("ROS 2 joint states: /isaac/joint_states [sensor_msgs/msg/JointState]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
     if not args.headless:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")

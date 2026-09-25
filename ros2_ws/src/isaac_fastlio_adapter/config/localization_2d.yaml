@@ -1,0 +1,129 @@
+wheel_encoder_odometry:
+  ros__parameters:
+    use_sim_time: true
+    joint_topic: /isaac/joint_states
+    odom_topic: /wheel/odom
+    left_joint: joint_wheel_right
+    right_joint: joint_wheel_left
+    odom_frame: odom
+    base_frame: base_link
+    wheel_radius: 0.04295
+    wheel_base: 0.4132
+    encoder_ticks_per_revolution: 2048
+    left_distance_scale: 1.002
+    right_distance_scale: 0.998
+    left_direction: -1.0
+    right_direction: -1.0
+    distance_noise_ratio: 0.005
+    random_seed: 42
+
+nav_imu_adapter:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /isaac/imu
+    output_topic: /nav/imu
+    acceleration_scale: 1.0
+    orientation_variance: 0.01
+    angular_velocity_variance: 0.0025
+    linear_acceleration_variance: 0.04
+
+pointcloud_to_laserscan:
+  ros__parameters:
+    use_sim_time: true
+    target_frame: base_link
+    transform_tolerance: 0.05
+    min_height: 0.1
+    max_height: 2.0
+    angle_min: -3.141592654
+    angle_max: 3.141592654
+    angle_increment: 0.008726646
+    scan_time: 0.1
+    range_min: 0.5
+    range_max: 30.0
+    use_inf: true
+    inf_epsilon: 1.0
+    concurrency_level: 1
+
+local_ekf:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    publish_tf: true
+    publish_acceleration: false
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    odom0: /wheel/odom
+    odom0_config:
+      [false, false, false,
+       false, false, false,
+       true,  false, false,
+       false, false, true,
+       false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    odom0_nodelay: true
+
+    imu0: /nav/imu
+    imu0_config:
+      [false, false, false,
+       false, false, false,
+       false, false, false,
+       false, false, true,
+       false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    imu0_nodelay: true
+
+amcl:
+  ros__parameters:
+    use_sim_time: true
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: base_link
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    global_frame_id: map
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 30.0
+    laser_min_range: 0.5
+    laser_model_type: likelihood_field
+    max_beams: 180
+    max_particles: 2000
+    min_particles: 500
+    odom_frame_id: odom
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    save_pose_rate: 0.5
+    scan_topic: /scan
+    set_initial_pose: true
+    sigma_hit: 0.2
+    tf_broadcast: true
+    transform_tolerance: 0.5
+    update_min_a: 0.1
+    update_min_d: 0.1
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    initial_pose:
+      x: 0.2317
+      y: 0.0
+      z: 0.0
+      yaw: 3.141592654

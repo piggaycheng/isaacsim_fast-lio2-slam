@@ -1,8 +1,16 @@
-# 2D / 3D 定位與導航架構
+# 2D 定位現況與 3D 定位目標架構
 
-AMCL 是主要全域定位來源；當啟動時有提供與 PGM 同座標系的 PCD，
-才額外啟動 `hdl_localization`。AMCL 與 HDL 都不發布 TF，而是將位姿交給
-Global EKF 融合，確保 `map -> odom` 只有一個發布者。
+目前 `run_nav.sh` 僅實作 2D 定位：輪式里程計與 IMU 進 Local EKF，
+由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，
+由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 HDL。
+停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF
+在缺少全域校正時繼續預測出不合理的位移。
+
+未來若加入與 PGM 同座標系的 PCD，才考慮以下目標架構：
+關閉 AMCL 的 TF broadcast、HDL 只發布 pose，改由品質閘控後的全域融合節點
+獨自發布 `map -> odom`。**兩種模式不能同時發布這條 TF。**
+
+## 規劃中的 PGM + PCD 模式（尚未實作）
 
 ```mermaid
 flowchart TD
@@ -107,19 +115,21 @@ flowchart TD
 
 | TF | 唯一發布者 |
 |---|---|
-| `map -> odom` | Global `robot_localization` |
+| `map -> odom` | 目前 2D：AMCL；規劃中 PGM + PCD：Global `robot_localization`（AMCL 關閉 TF） |
 | `odom -> base_link` | Local `robot_localization` |
 | `base_link -> lidar`、`base_link -> imu` | `robot_state_publisher` 或 static TF |
 
-AMCL 必須設定 `tf_broadcast: false`。`hdl_localization` 也必須關閉 TF
-發布功能；實際參數名稱依採用的 ROS 2 port 而定。
+目前 `run_nav.sh` 的 AMCL 使用 `tf_broadcast: true`。僅在啟動 Global EKF
+且要由其接管 TF 的規劃中 PGM + PCD 模式，才將 AMCL 設為
+`tf_broadcast: false`。`hdl_localization` 也必須關閉 TF 發布功能；
+實際參數名稱依採用的 ROS 2 port 而定。
 
 ## 運作模式
 
-- **只有 PGM：**啟動 AMCL；Local EKF 與 Global EKF 各自使用輪式里程計和 IMU，
-  Global EKF 再額外融合 AMCL 的全域位姿。
-- **PGM + PCD：**AMCL 仍負責主要全域定位；HDL 通過品質 Adapter 後，提供額外的
-  3D 精密修正。
+- **只有 PGM（目前已實作）：**Local EKF 融合輪式里程計和 IMU；AMCL
+  使用 `/scan` 和 PGM 定位，直接發布 `map -> odom`。
+- **PGM + PCD（尚未實作）：**AMCL 仍負責主要全域定位；HDL 通過品質 Adapter
+  後提供額外的 3D 精密修正，由唯一的全域融合節點發布 `map -> odom`。
 - **HDL 品質不佳：**Adapter 停止發布或提高 covariance，Global EKF 自然退回以
   AMCL 為主要全域定位來源。
 - **地面車限制：**導航主要使用 `x/y/yaw`；`roll/pitch` 以 IMU 為主，`z` 應固定

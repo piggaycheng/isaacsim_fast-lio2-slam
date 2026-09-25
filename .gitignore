@@ -30,3 +30,5 @@ ros2_ws/sophus_build/
 ros2_ws/sophus_install/
 ros2_ws/gtsam_package/
 ros2_ws/gtsam_install/
+ros2_ws/nav_packages/
+ros2_ws/nav_install/

@@ -120,3 +120,48 @@ The adapter uses the native timestamps for FASTLIO deskew instead of
 synthetically distributing points over a scan. XT-32 channel IDs are folded
 into FASTLIO's four accepted Livox line IDs, while preserving the original
 point order and timing.
+# 2D Localization
+
+Install the project-local ROS 2 navigation dependencies and build the workspace:
+
+```bash
+./ros2_ws/install_nav_dependencies.sh
+./ros2_ws/build_workspace.sh
+```
+
+Start Isaac Sim and the 2D localization stack with the default Office map:
+
+```bash
+./run_nav.sh
+```
+
+The default map is `maps/office/map_2d.yaml`; that YAML loads
+`maps/office/map_2d.pgm`. Select another Nav2 map YAML with:
+
+```bash
+./run_nav.sh --map maps/warehouse/map.yaml
+```
+
+For a headless automatic localization test:
+
+```bash
+./run_nav.sh --headless --auto-jog --no-rviz
+```
+
+The localization stack:
+
+- publishes Carter wheel joint angles from Isaac Sim;
+- generates `/wheel/odom` from simulated encoder ticks, calibration bias, and noise;
+- converts `/isaac/lidar_points` into `/scan` using a height-filtered
+  `pointcloud_to_laserscan`;
+- runs a Local EKF for `odom -> base_link`;
+- runs AMCL against the selected PGM map as the only publisher of `map -> odom`.
+
+The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
+previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
+local odometry remained nearly stationary. Letting AMCL own this transform
+prevents that drift; its `map -> odom` correction remains fixed between AMCL
+updates. With an additional 3D localizer, switch TF ownership to a validated
+global fusion node and disable AMCL's TF broadcast before enabling it.
+
+Use `./run_nav.sh --help` for all options.
