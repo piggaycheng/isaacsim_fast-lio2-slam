@@ -22,7 +22,6 @@ nav_imu_adapter:
     use_sim_time: true
     input_topic: /isaac/imu
     output_topic: /nav/imu
-    acceleration_scale: 1.0
     orientation_variance: 0.01
     angular_velocity_variance: 0.0025
     linear_acceleration_variance: 0.04

@@ -122,6 +122,10 @@ into FASTLIO's four accepted Livox line IDs, while preserving the original
 point order and timing.
 # 2D Localization
 
+The `isaac_nav` ROS package contains the wheel encoder odometry, navigation
+IMU covariance adapter, and localization launch/config/RViz files. The
+`isaac_fastlio_adapter` package remains dedicated to FAST-LIO mapping inputs.
+
 Install the project-local ROS 2 navigation dependencies and build the workspace:
 
 ```bash

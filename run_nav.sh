@@ -111,7 +111,7 @@ source "$workspace_dir/install/setup.bash"
 set -u
 
 required_packages=(
-  isaac_fastlio_adapter
+  isaac_nav
   nav2_amcl
   nav2_lifecycle_manager
   nav2_map_server
@@ -126,7 +126,7 @@ for package in "${required_packages[@]}"; do
   fi
 done
 
-ros2 launch isaac_fastlio_adapter localization_2d.launch.py \
+ros2 launch isaac_nav localization_2d.launch.py \
   map:="$map_file" \
   rviz:="$rviz" &
 ros_pid=$!

@@ -9,7 +9,7 @@ import os
 
 
 def generate_launch_description():
-    package_share = get_package_share_directory("isaac_fastlio_adapter")
+    package_share = get_package_share_directory("isaac_nav")
     config_file = os.path.join(package_share, "config", "localization_2d.yaml")
     rviz_config = os.path.join(package_share, "config", "localization_2d.rviz")
 
@@ -57,15 +57,15 @@ def generate_launch_description():
                 parameters=[{"use_sim_time": use_sim_time}],
             ),
             Node(
-                package="isaac_fastlio_adapter",
+                package="isaac_nav",
                 executable="wheel_encoder_odometry",
                 name="wheel_encoder_odometry",
                 output="screen",
                 parameters=common_parameters,
             ),
             Node(
-                package="isaac_fastlio_adapter",
-                executable="imu_scale_adapter",
+                package="isaac_nav",
+                executable="imu_covariance_adapter",
                 name="nav_imu_adapter",
                 output="screen",
                 parameters=common_parameters,
