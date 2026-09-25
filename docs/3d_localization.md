@@ -2,13 +2,15 @@
 
 目前 `run_nav.sh` 僅實作 2D 定位：輪式里程計與 IMU 進 Local EKF，
 由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，
-由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 HDL。
+由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
 停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF
 在缺少全域校正時繼續預測出不合理的位移。
 
 未來若加入與 PGM 同座標系的 PCD，才考慮以下目標架構：
-關閉 AMCL 的 TF broadcast、HDL 只發布 pose，改由品質閘控後的全域融合節點
-獨自發布 `map -> odom`。**兩種模式不能同時發布這條 TF。**
+關閉 AMCL 的 TF broadcast，將
+[FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2)
+的 PCD 配準結果轉為品質閘控後的全域 pose，改由全域融合節點獨自發布
+`map -> odom`。**兩種模式不能同時發布這條 TF。**
 
 ## 規劃中的 PGM + PCD 模式（尚未實作）
 
@@ -43,8 +45,9 @@ flowchart TD
     %% -------------------- 可選 3D 全域定位 --------------------
     subgraph Localization3D ["可選精密定位 Optional 3D Localization"]
         PCD["3D 地圖<br/>map.pcd"]
-        HDL["hdl_localization<br/>不發布 TF"]
-        HDLAdapter["HDL 品質 Adapter<br/>收斂、fitness、時間戳、跳動檢查<br/>設定 covariance"]
+        FastLIO["FAST-LIO 里程計<br/>LiDAR + IMU；不接管導航 TF"]
+        FastLIOLocalization["FAST_LIO_LOCALIZATION2<br/>既有 PCD 地圖 ICP 配準"]
+        FastLIOAdapter["3D 定位品質 Adapter<br/>位姿組合、fitness、時間戳、跳動檢查<br/>設定 covariance；不發布 TF"]
     end
 
     %% -------------------- 全域融合 --------------------
@@ -81,14 +84,16 @@ flowchart TD
     ScanProjection -->|"/scan"| AMCL
     AMCL -->|"PoseWithCovariance<br/>不發布 TF"| GlobalEKF
 
-    %% 有 PCD 時才啟動的 HDL 分支
-    PCD -.->|"有提供 PCD 才啟動"| HDL
+    %% 有 PCD 時才啟動的 FAST-LIO 全域定位分支
+    PCD -.->|"有提供 PCD 才啟動"| FastLIOLocalization
     Lidar3D --> Deskew
-    Deskew -.->|"deskewed PointCloud2"| HDL
-    LocalEKF -.->|"initial guess"| HDL
-    AMCL -.->|"全域初始化 / 重新定位"| HDL
-    HDL -.->|"pose + matching quality"| HDLAdapter
-    HDLAdapter -.->|"通過品質檢查的 pose"| GlobalEKF
+    Lidar3D -.->|"含逐點時間的原始掃描"| FastLIO
+    IMU -.-> FastLIO
+    FastLIO -.->|"局部里程計 + 配準點雲"| FastLIOLocalization
+    AMCL -.->|"map 座標初始位姿 / 重新定位"| FastLIOLocalization
+    FastLIOLocalization -.->|"map 到 LIO 起點的配準結果<br/>需擴充 fitness 輸出"| FastLIOAdapter
+    FastLIO -.->|"LIO 里程計"| FastLIOAdapter
+    FastLIOAdapter -.->|"map 座標 pose"| GlobalEKF
 
     %% Global EKF 是 map -> odom 的唯一發布者
     GlobalEKF -->|"唯一 TF: map -> odom"| GlobalCostmap
@@ -121,24 +126,33 @@ flowchart TD
 
 目前 `run_nav.sh` 的 AMCL 使用 `tf_broadcast: true`。僅在啟動 Global EKF
 且要由其接管 TF 的規劃中 PGM + PCD 模式，才將 AMCL 設為
-`tf_broadcast: false`。`hdl_localization` 也必須關閉 TF 發布功能；
-實際參數名稱依採用的 ROS 2 port 而定。
+`tf_broadcast: false`。`FAST_LIO_LOCALIZATION2` 原版
+`transform_fusion.py` 會發布 `map -> camera_init` TF，不能不修改就與目前
+`odom -> base_link` 的導航 TF 鏈並用；規劃模式不啟動原版 TF 發布路徑，
+由 Adapter 組合 `/map_to_odom` 配準結果與 `/Odometry` LIO 里程計，
+轉成 `map` 座標的 `base_link` pose，僅交給 Global EKF 發布 `map -> odom`。
+原版 fitness 只供內部閾值判斷和日誌使用，須另外提供品質資訊供 Adapter 閘控。
+這個整合尚未實作或驗證。
 
 ## 運作模式
 
 - **只有 PGM（目前已實作）：**Local EKF 融合輪式里程計和 IMU；AMCL
   使用 `/scan` 和 PGM 定位，直接發布 `map -> odom`。
-- **PGM + PCD（尚未實作）：**AMCL 仍負責主要全域定位；HDL 通過品質 Adapter
-  後提供額外的 3D 精密修正，由唯一的全域融合節點發布 `map -> odom`。
-- **HDL 品質不佳：**Adapter 停止發布或提高 covariance，Global EKF 自然退回以
-  AMCL 為主要全域定位來源。
+- **PGM + PCD（尚未實作）：**AMCL 仍負責主要全域定位；
+  FAST_LIO_LOCALIZATION2 以自己的 LiDAR–IMU 里程計和既有 PCD 配準，
+  經品質 Adapter 提供額外的 3D 修正，由唯一的全域融合節點發布 `map -> odom`。
+- **3D 配準品質不佳：**Adapter 停止發布或提高 covariance，Global EKF 退回以
+  AMCL 為主要全域定位來源；停車時的 Global EKF 漂移仍須先查明。
 - **地面車限制：**導航主要使用 `x/y/yaw`；`roll/pitch` 以 IMU 為主，`z` 應固定
   或嚴格限制，避免平坦環境中的 3D 配準漂移。
 
 PGM 應由同一份 PCD 投影產生，並保留一致的 `map` 原點、方向與尺度，否則 AMCL
-與 HDL 的位姿不能直接融合。產生 PGM 與即時虛擬 LaserScan 時，也應使用一致的
-高度裁切範圍，確保 AMCL 看到的牆面與 2D 地圖相符。
+與 FAST_LIO_LOCALIZATION2 的位姿不能直接融合。產生 PGM 與即時虛擬
+LaserScan 時，也應使用一致的高度裁切範圍，確保 AMCL 看到的牆面與
+2D 地圖相符。
 
 Local EKF 與 Global EKF 可訂閱相同的輪式里程計和 IMU 原始資料，但 Global EKF
 不應直接融合 Local EKF 的完整 pose 輸出。這可避免 Global EKF 為了轉換
 `odom` frame 的 pose 而依賴自己發布的 `map -> odom`，形成 TF 循環。
+FAST-LIO 的局部里程計只供該 3D 定位分支使用，不再當成另一筆獨立的
+Global EKF 里程計輸入。
