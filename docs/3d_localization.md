@@ -1,29 +1,16 @@
-# 2D 定位現況與 3D 定位目標架構
+# 2D 與 3D 定位及導航架構
 
-`run_nav.sh --mode 2d` 使用 2D 定位：輪式里程計與 IMU 進 Local EKF，
-由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，
-由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
-停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF
-在缺少全域校正時繼續預測出不合理的位移。
-此入口將 2D 啟動交給可單獨執行的 `run_2d_localization.sh`。
+`run_nav.sh --mode 2d` 使用 2D 定位：輪式里程計與 IMU 進 Local EKF，由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
 
-未來若提供與 PGM 同座標系的 PCD，規劃切換到以下目標架構：
-停用 AMCL（PGM 只供 Nav2 costmap 使用），將
-[FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2)
-的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，
-由全域融合節點獨自發布 `map -> odom`。**兩種模式不能同時發布這條 TF。**
-獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./run_3d_localization.sh`
-提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的
-`map -> camera_init -> body -> base_link` TF 只在配準被接受後發布
-`map -> camera_init`，**不與**現行 2D 導航同時啟動；它不代表以下
-PGM + PCD 導航全域融合已實作。操作方式見
-[`ros2_ws/README.md`](../ros2_ws/README.md)。
+停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF 在缺少全域校正時繼續預測出不合理的位移。此入口將 2D 啟動交給可單獨執行的 `run_2d_localization.sh`。
+
+3D 融合導航需使用與 PGM 同座標系的 PCD：停用 AMCL（PGM 只供 Nav2 costmap 使用），將 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2) 的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，由校正時效閘控節點獨自發布 `map -> odom`。**2D AMCL 與 3D 融合模式不能同時發布這條 TF。**
+
+獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作方式見 [`ros2_ws/README.md`](../ros2_ws/README.md)。
 
 ## 只有 PGM：純 2D 定位（目前已實作）
 
-以下是 `run_nav.sh --mode 2d` 的定位資料流；PGM 同時可供後續 Nav2 的
-global costmap 使用。此模式不載入 PCD、不啟動 FAST_LIO_LOCALIZATION2
-或 Global EKF。
+以下是 `run_nav.sh --mode 2d` 的定位資料流；PGM 同時可供後續 Nav2 的 global costmap 使用。此模式不載入 PCD、不啟動 FAST_LIO_LOCALIZATION2 或 Global EKF。
 
 ```mermaid
 flowchart TD
@@ -48,7 +35,9 @@ flowchart TD
     MapServer --> RViz
 ```
 
-## PGM + PCD 模式（全域融合、costmap 及受限單點導航）
+## PGM + PCD 模式（全域融合與導航資料流）
+
+下圖為資料流示意；獨立 deskew、Patchwork++ 等方塊為規劃項目，不是目前全部已啟動的節點。實際組合見下方「選擇啟動方式」。
 
 ```mermaid
 flowchart TD
@@ -86,7 +75,7 @@ flowchart TD
     %% -------------------- 全域融合 --------------------
     subgraph GlobalFusion ["全域融合 Global Fusion"]
         GlobalEKF["Global robot_localization<br/>world_frame: map"]
-        TFGate["校正時效閘控<br/>唯一發布 map → odom"]
+        TFGate["校正時效閘控<br/>唯一發布 map -> odom"]
     end
 
     %% -------------------- 3D 障礙物處理 --------------------
@@ -149,102 +138,45 @@ flowchart TD
 
 ## TF 發布權責
 
-| TF | 唯一發布者 |
-|---|---|
-| `map -> odom` | 只有 PGM：AMCL；PCD 全域融合測試：校正時效閘控節點（Global EKF 不發布 TF，不啟動 AMCL） |
-| `odom -> base_link` | Local `robot_localization` |
-| `base_link -> lidar`、`base_link -> imu` | `robot_state_publisher` 或 static TF |
+| 模式                   | `map -> odom` 唯一發布者     | `odom -> base_link` |
+| :--------------------- | :--------------------------- | :------------------ |
+| `run_nav.sh --mode 2d` | AMCL（`tf_broadcast: true`） | Local EKF           |
+| `run_nav.sh --mode 3d` | 校正時效閘控節點             | Local EKF           |
 
-`run_nav.sh --mode 2d` 的 AMCL 使用 `tf_broadcast: true`。PCD
-融合測試模式不啟動 AMCL，由校正時效閘控節點接管 `map -> odom`。
-`FAST_LIO_LOCALIZATION2` 原版
-`transform_fusion.py` 會發布 `map -> camera_init` TF，不能不修改就與目前
-`odom -> base_link` 的導航 TF 鏈並用；規劃模式不啟動原版 TF 發布路徑，
-由 Adapter 組合 `/map_to_odom` 配準結果與 `/Odometry` LIO 里程計，
-轉成 `map` 座標的 `base_link` pose，交給 Global EKF 作為觀測。
-原版 fitness 只供內部閾值判斷和日誌使用；要讓 Adapter
-依分數設定可信 covariance，仍須擴充上游品質輸出。
-目前已新增**隔離測試用** `./run_3d_localization.sh --global-fusion`：
-3D 位姿 Adapter 使用上游內建的 ICP fitness 門檻，以及掃描／里程計
-新鮮度、位姿跳動檢查，將 `map` 座標的 2D 車體位姿送入 Global EKF；
-輪速及 IMU 同時供 Local／Global EKF 預測。為避免缺少全域校正時
-Global EKF 不斷發布漂移 TF，Global EKF 設為 `publish_tf: false`，
-另由閘控節點在收到近期校正時發布**唯一**的 `map -> odom`，
-Local EKF 發布 `odom -> base_link`。此模式不啟動 AMCL，預設不啟動 Nav2 costmap，
-不與 `run_nav.sh`／原本的獨立 3D 展示模式同時執行。
-Nova Carter 驅動輪的 USD 接地碰撞體半徑為 0.14 m（輪距 0.4132 m）；
-控制器與輪速里程計須使用相同幾何，否則移動時輪速低估、
-`map -> odom` 必須持續補償，掃描會相對地圖漂移。
-目前也沿用 2D 模式的 `pointcloud_to_laserscan`，對 `/isaac/lidar_points`
-以 `base_link` 高度 0.1–2.0 m 裁切後發布 `/scan`，供 RViz 對照 PGM
-檢查障礙物投影。低於 0.1 m 的障礙物可能被此 `/scan` 濾掉，
-須驗證使用場景與高度設定後再用於自主避障。
-可選的 `--obstacle-cloud`（須與 `--global-fusion` 同用）會將 LiDAR
-點雲依訊息時間轉到 `base_link`，在近地點上以 RANSAC 偵測近水平地面，
-去除地面、裁切高度與距離，再以 8 cm 體素降採樣，發布
-`/perception/obstacles`（`PointCloud2`，`base_link` frame）。
-若找不到近 `base_link` 原點的地面平面或 TF 無效，會警告並**不發布**
-該圈障礙物點雲，絕不將未分割的地面偽裝成障礙物；RViz 的「3D
-ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
-目前僅供 Office 的水平地面驗證，尚未處理斜坡、動態物追蹤、
-逐點運動補償、動態障礙物清除驗證或失效時停車安全機制。
-選用 `./run_3d_localization.sh --global-fusion --costmaps` 可同時啟用
-`--obstacle-cloud`，並在收到 `/map` 及近期 `map -> base_link` TF 後
-啟動獨立的 Nav2 global/local costmap；不啟動 planner、controller
-或自主駕駛。Global costmap 使用 PGM 靜態層和膨脹層，
-local costmap 使用 8 m 滾動視窗、`/perception/obstacles` 標記、
-`/scan` 射線清除及膨脹層。
-另外，`./run_nav.sh --mode 3d --navigate` 可選擇啟動 Nav2 planner、
-controller 和 `NavigateToPose` 導航；此時由 Nav2 內部管理兩張
-costmap。Nav2 發布 `/nav2/cmd_vel`，由 ROS 2 安全節點檢查 PCD 校正
-時效、速度與平面運動後發布標準 `/cmd_vel`，Isaac Sim 原生 ROS 2
-Subscribe Twist 節點直接接收並驅動 Carter（不使用 Unix socket）。
-此模式不會與鍵盤或 auto-jog
-同時控制。啟動後在 RViz 使用「2D Goal Pose」於地圖上點選目標並
-拖曳設定朝向；`/goal_pose` 直接由 Nav2 接收，沒有先前短距離測試的
-前方角度／距離限制。Nav2 每秒重新規劃路徑，但未配置自動 recovery。
-沒有指定 `--navigate` 時仍只觀察 costmap。
-手動 W/S 線速度和 Nav2 控制路徑的線速度上限均為 0.75 m/s，
-Nav2 的 `desired_linear_vel` 則設定為 0.5 m/s（進彎、接近終點或
-碰撞預測時控制器仍可能降速），並使用固定 0.8 m 前視距離減少直線
-行駛時左右修正；狹窄路線及轉彎仍須確認跟隨路徑與障礙物間距。
-命令中斷超過 0.5 秒或 PCD 校正超過 4 秒未更新會讓 Carter 停車，
-但此模式尚未驗證足以安全避障或用於真實車輛。
-也可用統一入口 `./run_nav.sh --mode 3d` 啟動相同的全域融合與
-costmap 觀察流程；`run_nav.sh` 一律須指定 `--mode 2d` 或 `--mode 3d`，
-兩種模式不可同時執行。`run_nav.sh` 分別呼叫
-`run_2d_localization.sh` 和 `run_3d_localization.sh`；後者仍支援
-獨立的 3D 展示模式。
-在 RViz 疊加的「Global costmap (optional)」
-及「Local costmap (optional)」Map 顯示中可觀察佔據格和膨脹區，
-亦可切換 Office PGM 及 3D 點雲圖層對照。`robot_radius: 0.65 m`
-及 `inflation_radius: 0.9 m` 僅供觀測，尚非量測及驗證過的導航安全參數；
-低於 `/scan` 高度裁切的障礙物未必能被射線清除。
-上游尚未輸出 ICP fitness 數值或可信 covariance；目前使用可調的保守
-測量 covariance，並未完成真值精度驗證或導航失效安全驗證，
-不能將本模式視為可上線的自主導航。
+LiDAR 與 IMU 的固定座標轉換由 `robot_state_publisher` 或 static TF 提供。
 
-## 運作模式
+3D 融合模式不啟動 AMCL。`FAST_LIO_LOCALIZATION2` 原版 `transform_fusion.py` 發布的是另一條 `map -> camera_init` TF，不接入上述導航 TF 鏈；原版獨立 3D 展示模式也不能與融合導航同時啟動。
 
-- **只有 PGM（目前已實作）：**Local EKF 融合輪式里程計和 IMU；AMCL
-  使用 `/scan` 和 PGM 定位，直接發布 `map -> odom`。
-- **提供 PCD（全域融合隔離測試及可選 costmap 觀察）：**不啟動
-  AMCL；PGM 用於 RViz，選用 `--costmaps` 時亦供 Nav2 global costmap。FAST_LIO_LOCALIZATION2
-  以 LiDAR–IMU 里程計和 PCD 配準提供經 Adapter 檢查的全域位姿；
-  輪速與 IMU 供局部／全域 EKF 預測，經校正時效閘控發布
-  `map -> odom`。
-- **3D 配準品質不佳：**不能在沒有全域觀測時無限依賴輪速／IMU 預測；
-  需偵測修正逾時、限制漂移並停止或降級導航，停車時的 Global EKF
-  漂移仍須先查明；不會自動退回 AMCL。
-- **地面車限制：**導航主要使用 `x/y/yaw`；`roll/pitch` 以 IMU 為主，`z` 應固定
-  或嚴格限制，避免平坦環境中的 3D 配準漂移。
+LiDAR／IMU 經 FAST-LIO 與 PCD 配準，上游先依 ICP fitness 門檻篩選校正。Adapter 再結合 `/map_to_odom` 和 `/Odometry`，檢查掃描與里程計的新鮮度及位姿跳動，產生 `map` 座標的 `base_link` 位姿供 Global EKF 融合。輪速與 IMU 同時供 Local／Global EKF 預測。
 
-PGM 應由同一份 PCD 投影產生，並保留一致的 `map` 原點、方向與尺度，
-否則 3D 定位的車體位姿與 Nav2 的 2D costmap 無法正確對齊。
+Global EKF 設為 `publish_tf: false`；閘控節點只在近期有有效 PCD 校正時，依 `/odometry/global` 和局部 TF 發布 `map -> odom`。不要同時啟動 2D AMCL、3D 融合或獨立 3D 展示模式。
+
+## 選擇啟動方式
+
+| 入口                                | 功能                                                                             |
+| :---------------------------------- | :------------------------------------------------------------------------------- |
+| `./run_3d_localization.sh`          | 獨立 3D 配準展示，不啟動融合導航                                                 |
+| `./run_nav.sh --mode 2d`            | PGM + AMCL 定位                                                                  |
+| `./run_nav.sh --mode 3d`            | PCD 融合與 costmap 觀察，不啟動自動導航                                          |
+| `./run_nav.sh --mode 3d --navigate` | 再啟動 Nav2 planner、controller 與導航，從 RViz「2D Goal Pose」發送 `/goal_pose` |
+
+`run_nav.sh --mode 3d` 會以 `--global-fusion --costmaps` 呼叫 `run_3d_localization.sh`；若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
+
+導航時 Nav2 以 PGM 為 global costmap、以 `/perception/obstacles` 標記及 `/scan` 清除局部障礙物，約每秒重新規劃。`/scan` 由 `/isaac/lidar_points` 投影而來，裁切高度為 `base_link` 上方 0.1–2.0 m。Nav2 的 `/nav2/cmd_vel` 經 ROS 2 安全節點檢查後發布 `/cmd_vel`，由 Isaac Sim 原生 ROS 2 訂閱器驅動 Carter；導航時不能同時使用鍵盤或 auto-jog。
+
+## 參數與限制
+
+- **控制**：手動 W/S 與導航線速度上限為 0.75 m/s；Nav2 目標速度 0.5 m/s，固定前視距離 0.8 m，必要時依曲率、接近目標及碰撞預測降速。命令中斷 0.5 秒或 PCD 校正逾時 4 秒時停車。
+- **輪速**：Nova Carter 驅動輪接地碰撞體半徑 0.14 m、輪距 0.4132 m；控制器與輪速里程計須使用一致幾何，否則定位校正會持續補償里程誤差。
+- **障礙物**：低於 `/scan` 裁切高度的障礙物可能被濾掉。`--obstacle-cloud` 以 RANSAC 分割近水平地面並以 8 cm 體素降採樣；地面或 TF 無效時警告且不發布該圈點雲。斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
+- **定位品質**：上游 ICP fitness 只供內部門檻判斷，未輸出數值供 covariance 定標；目前使用保守的固定測量 covariance。PCD 校正失效時不會自動切換 AMCL。車體定位以 `x/y/yaw` 為主，尚未完成真值精度及真實車輛安全驗證。
+
+## 地圖與融合設定原則
+
+PGM 應由同一份 PCD 投影產生，並保留一致的 `map` 原點、方向與尺度，否則 3D 定位的車體位姿與 Nav2 的 2D costmap 無法正確對齊。
+
 即時虛擬 LaserScan 的高度裁切範圍也應與 PGM 地圖的障礙物相符。
 
-Local EKF 與 Global EKF 可訂閱相同的輪式里程計和 IMU 原始資料，但 Global EKF
-不應直接融合 Local EKF 的完整 pose 輸出。這可避免 Global EKF 為了轉換
-`odom` frame 的 pose 而依賴自己發布的 `map -> odom`，形成 TF 循環。
-FAST-LIO 的局部里程計只供該 3D 定位分支使用，不再當成另一筆獨立的
-Global EKF 里程計輸入。
+Local EKF 與 Global EKF 可訂閱相同的輪式里程計和 IMU 原始資料，但 Global EKF 不應直接融合 Local EKF 的完整 pose 輸出。這可避免 Global EKF 為了轉換 `odom` frame 的 pose 而依賴自己發布的 `map -> odom`，形成 TF 循環。
+
+FAST-LIO 的局部里程計只供該 3D 定位分支使用，不再當成另一筆獨立的 Global EKF 里程計輸入。
