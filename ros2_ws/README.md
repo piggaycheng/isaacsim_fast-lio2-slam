@@ -256,7 +256,10 @@ The safety node rejects non-finite or nonplanar commands and limits speed to
 0.5 s command timeout if ROS messages stop; stale PCD corrections suppress
 movement. Nav2's regulated pure pursuit controller targets 0.5 m/s
 (`desired_linear_vel` in `config/navigation.yaml`), subject to its approach,
-curvature, and collision speed reductions. Manual W/S keyboard jogging commands
+curvature, and collision speed reductions. It uses a fixed 0.8 m lookahead
+to reduce side-to-side corrections on straight paths; check corner tracking
+and clearance before using longer or tighter routes. Manual W/S keyboard
+jogging commands
 0.75 m/s in either direction; auto-jog remains at 0.2 m/s. Higher navigation
 speeds require controller, footprint, and stopping-distance validation.
 `--navigate` cannot be combined with

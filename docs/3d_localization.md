@@ -206,8 +206,9 @@ Subscribe Twist 節點直接接收並驅動 Carter（不使用 Unix socket）。
 沒有指定 `--navigate` 時仍只觀察 costmap。
 手動 W/S 線速度和 Nav2 控制路徑的線速度上限均為 0.75 m/s，
 Nav2 的 `desired_linear_vel` 則設定為 0.5 m/s（進彎、接近終點或
-碰撞預測時控制器仍可能降速）。命令中斷超過
-0.5 秒或 PCD 校正超過 4 秒未更新會讓 Carter 停車，
+碰撞預測時控制器仍可能降速），並使用固定 0.8 m 前視距離減少直線
+行駛時左右修正；狹窄路線及轉彎仍須確認跟隨路徑與障礙物間距。
+命令中斷超過 0.5 秒或 PCD 校正超過 4 秒未更新會讓 Carter 停車，
 但此模式尚未驗證足以安全避障或用於真實車輛。
 也可用統一入口 `./run_nav.sh --mode 3d` 啟動相同的全域融合與
 costmap 觀察流程；`run_nav.sh` 一律須指定 `--mode 2d` 或 `--mode 3d`，
