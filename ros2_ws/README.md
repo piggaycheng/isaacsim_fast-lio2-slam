@@ -265,7 +265,7 @@ speeds require controller, footprint, and stopping-distance validation.
 `--navigate` cannot be combined with
 `--auto-jog`. Unlike observation-only costmaps, Nav2's planner and controller
 own both costmaps. This configuration replans periodically, but has no
-automatic recovery behavior. Carter's footprint and inflation are estimates,
+automatic recovery behavior. Carter's rectangular footprint and inflation are estimates,
 and dynamic obstacle clearing and localization failure response are not yet
 validated for safe autonomous operation. Test only in a clear Office
 simulation and inspect the costmaps and planned path before longer drives.
@@ -279,9 +279,12 @@ the occupied, inflated, and free areas; enable "3D ground-filtered obstacles
 the map and a recent localization TF before activation. With the default
 Office map, the 3D pose adapter automatically sends an initial pose near
 Carter's spawn; no RViz click is needed. `--manual-initial-pose` is for
-other maps or a different starting location. The 0.65 m robot
-radius and 0.9 m inflation radius are unvalidated estimates, not
-validated Carter safety clearances. Low obstacles absent from the height-filtered
+other maps or a different starting location. Both costmaps use the same
+`base_link`-relative rectangular footprint (front 0.65 m, rear 0.20 m, left
+and right 0.32 m). It approximates the Nova Carter USD body and wheels with
+about 6 cm of clearance; replace it when changing robots. The 0.9 m inflation
+radius remains an estimate, and neither setting is a validated safety clearance.
+Low obstacles absent from the height-filtered
 `/scan` might not clear reliably after moving; verify marking and clearing
 in your scene before using these layers for navigation. Without `--navigate`,
 this mode does not publish driving commands or start autonomous navigation.
