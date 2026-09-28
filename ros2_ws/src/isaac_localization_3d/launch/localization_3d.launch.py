@@ -37,8 +37,8 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="fast_lio_localization",
-                executable="global_localization.py",
+                package="isaac_localization_3d",
+                executable="global_localization_xyz.py",
                 name="global_localization",
                 output="screen",
                 parameters=[
