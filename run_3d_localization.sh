@@ -12,6 +12,7 @@ headless=false
 rviz=true
 auto_jog=false
 auto_initial_pose=true
+global_fusion=false
 
 usage() {
   cat <<'EOF'
@@ -29,6 +30,8 @@ Options:
                       Wait for RViz's 2D Pose Estimate instead of using the
                       Office spawn near (0, 0). Required for other maps.
       --no-rviz       Run without RViz.
+      --global-fusion Run isolated PCD + wheel/IMU dual-EKF fusion instead of
+                      the original 3D-only visualization (no AMCL or Nav2).
   -h, --help          Show this help.
 EOF
 }
@@ -47,6 +50,7 @@ while (($# > 0)); do
     --auto-jog) auto_jog=true; shift ;;
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
+    --global-fusion) global_fusion=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -94,7 +98,7 @@ source /opt/ros/humble/setup.bash
 if [[ -d "$nav_prefix" ]]; then
   export AMENT_PREFIX_PATH="$nav_prefix:${AMENT_PREFIX_PATH:-}"
   export CMAKE_PREFIX_PATH="$nav_prefix:${CMAKE_PREFIX_PATH:-}"
-  export PATH="$nav_prefix/bin:$nav_prefix/lib/nav2_map_server:$nav_prefix/lib/nav2_lifecycle_manager:$PATH"
+  export PATH="$nav_prefix/bin:$nav_prefix/lib/nav2_map_server:$nav_prefix/lib/nav2_lifecycle_manager:$nav_prefix/lib/robot_localization:$PATH"
   export LD_LIBRARY_PATH="$nav_prefix/lib:$nav_prefix/lib/x86_64-linux-gnu:$nav_root/usr/lib:$nav_root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
   export PYTHONPATH="$nav_prefix/lib/python3.10/site-packages:${PYTHONPATH:-}"
 fi
@@ -105,7 +109,11 @@ export PYTHONPATH="$base/debs/opt/ros/humble/lib/python3.10/site-packages:${PYTH
 export LD_LIBRARY_PATH="$base/debs/opt/ros/humble/lib:${LD_LIBRARY_PATH:-}"
 set -u
 
-for package in isaac_localization_3d fast_lio_localization isaac_fastlio_adapter nav2_map_server nav2_lifecycle_manager; do
+required_packages=(isaac_localization_3d fast_lio_localization isaac_fastlio_adapter nav2_map_server nav2_lifecycle_manager)
+if [[ "$global_fusion" == true ]]; then
+  required_packages+=(isaac_nav robot_localization)
+fi
+for package in "${required_packages[@]}"; do
   if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then
     echo "Missing ROS package: $package. Run ros2_ws/install_nav_dependencies.sh and ros2_ws/setup_3d_localization.sh." >&2
     exit 1
@@ -116,12 +124,20 @@ if ! "$base/venv/bin/python" -c 'import open3d, ros2_numpy, tf_transformations';
   exit 1
 fi
 
-ros2 launch isaac_localization_3d localization_3d.launch.py \
+launch_file=localization_3d.launch.py
+if [[ "$global_fusion" == true ]]; then launch_file=global_fusion.launch.py; fi
+ros2 launch isaac_localization_3d "$launch_file" \
   map_pcd:="$map_pcd" map_pgm:="$map_pgm" rviz:="$rviz" \
   auto_initial_pose:="$auto_initial_pose" &
 ros_pid=$!
 
 cleanup() {
+  trap - EXIT INT TERM
+  while read -r child_pid; do
+    if [[ "$child_pid" =~ ^[0-9]+$ ]]; then
+      kill "$child_pid" 2>/dev/null || true
+    fi
+  done < <(ps -o pid= --ppid "$ros_pid")
   kill "$ros_pid" 2>/dev/null || true
   wait "$ros_pid" 2>/dev/null || true
 }

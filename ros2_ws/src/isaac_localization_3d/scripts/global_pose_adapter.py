@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Gate fresh 3D registrations into planar global pose observations.
+
+/map_to_odom is published only after upstream ICP passes its configured fitness
+threshold (normally 0.8). Fitness is not present in that message; this node
+cannot independently verify it or infer measurement covariance from it.
+"""
+
+import math
+
+import rclpy
+from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+from std_msgs.msg import Header
+
+if __package__:
+    from .localization_3d_pose import BODY_TO_BASE, compose_pose, pose_values, seconds, valid_pose
+else:
+    from localization_3d_pose import BODY_TO_BASE, compose_pose, pose_values, seconds, valid_pose
+
+
+def valid_stamp(stamp):
+    return stamp.sec >= 0 and 0 <= stamp.nanosec < 1_000_000_000 and (
+        stamp.sec > 0 or stamp.nanosec > 0
+    )
+
+
+def yaw_of(quaternion):
+    x, y, z, w = quaternion
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def angle_difference(first, second):
+    return math.atan2(math.sin(first - second), math.cos(first - second))
+
+
+def planar_base(correction, lio):
+    position, quaternion = compose_pose(
+        compose_pose(pose_values(correction), pose_values(lio)), BODY_TO_BASE
+    )
+    return position[0], position[1], yaw_of(quaternion)
+
+
+class GlobalPoseAdapter(Node):
+    def __init__(self):
+        super().__init__("global_pose_adapter")
+        self.auto_initial_pose = self.declare_parameter("auto_initial_pose", False).value
+        self.upstream_node_name = self.declare_parameter(
+            "upstream_node_name", "global_localization"
+        ).value
+        self.max_correction_age = self.declare_parameter("max_correction_age", 1.0).value
+        self.max_lio_age = self.declare_parameter("max_lio_age", 0.5).value
+        self.max_scan_age = self.declare_parameter("max_scan_age", 3.0).value
+        self.max_alignment = self.declare_parameter("max_alignment", 3.0).value
+        self.max_translation_jump = self.declare_parameter("max_translation_jump", 1.0).value
+        self.jump_per_meter = self.declare_parameter("jump_per_meter", 0.2).value
+        self.max_yaw_jump = self.declare_parameter("max_yaw_jump", 0.35).value
+        self.jump_per_radian = self.declare_parameter("jump_per_radian", 0.2).value
+        self.covariance_xy = self.declare_parameter("covariance_xy", 0.25).value
+        self.covariance_yaw = self.declare_parameter("covariance_yaw", 0.09).value
+        self.covariance_unobserved = self.declare_parameter(
+            "covariance_unobserved", 1_000_000.0
+        ).value
+        for name in (
+            "max_correction_age", "max_lio_age", "max_scan_age", "max_alignment",
+            "max_translation_jump", "max_yaw_jump", "covariance_xy",
+            "covariance_yaw", "covariance_unobserved",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+        for name in ("jump_per_meter", "jump_per_radian"):
+            value = getattr(self, name)
+            if not isinstance(value, (float, int)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
+
+        self.lio = None
+        self.scan_time = None
+        self.last_correction_time = None
+        self.last_accepted_scan_time = None
+        self.last_accepted_lio = None
+        self.last_accepted_correction = None
+        self.last_now = None
+        self.initial_pose_received = False
+        self.warned = set()
+        self.pose_publisher = self.create_publisher(
+            PoseWithCovarianceStamped, "/localization_3d/global_pose", 10
+        )
+        self.accepted_publisher = self.create_publisher(
+            Header, "/localization_3d/accepted_correction", 10
+        )
+        self.initial_pose_publisher = self.create_publisher(
+            PoseWithCovarianceStamped, "/initialpose", 10
+        )
+        self.create_subscription(PoseWithCovarianceStamped, "/initialpose", self.on_initial_pose, 10)
+        self.create_subscription(Odometry, "/Odometry", self.on_odometry, 10)
+        self.create_subscription(PointCloud2, "/cloud_registered", self.on_scan, 10)
+        self.create_subscription(Odometry, "/map_to_odom", self.on_correction, 10)
+
+    def reject(self, reason):
+        if reason not in self.warned:
+            self.get_logger().warning(f"3D global pose rejected: {reason}")
+            self.warned.add(reason)
+
+    def reset_for_clock(self):
+        self.lio = None
+        self.scan_time = None
+        self.last_correction_time = None
+        self.last_accepted_scan_time = None
+        self.last_accepted_lio = None
+        self.last_accepted_correction = None
+        self.initial_pose_received = False
+        self.warned.clear()
+        self.get_logger().warning("Simulation clock reset; waiting for fresh 3D inputs")
+
+    def now(self):
+        current = self.get_clock().now().nanoseconds * 1e-9
+        if self.last_now is not None and current < self.last_now - 0.1:
+            self.reset_for_clock()
+        self.last_now = current
+        return current
+
+    def on_initial_pose(self, message):
+        if (
+            message.header.frame_id == "map"
+            and valid_stamp(message.header.stamp)
+            and valid_pose(message.pose.pose)
+        ):
+            self.initial_pose_received = True
+            self.last_accepted_lio = None
+            self.last_accepted_correction = None
+        else:
+            self.reject("invalid initial pose")
+
+    def on_odometry(self, message):
+        now = self.now()
+        if (
+            message.header.frame_id != "camera_init"
+            or message.child_frame_id != "body"
+            or not valid_stamp(message.header.stamp)
+            or not valid_pose(message.pose.pose)
+        ):
+            self.reject("invalid LIO odometry")
+            return
+        timestamp = seconds(message.header.stamp)
+        if self.lio is not None and timestamp < seconds(self.lio.header.stamp) - 0.1:
+            self.reject("out-of-order LIO odometry")
+            return
+        if now < timestamp or now - timestamp > self.max_lio_age:
+            self.reject("stale or future LIO odometry")
+            return
+        self.lio = message
+        if (
+            self.auto_initial_pose
+            and not self.initial_pose_received
+            and self.initial_pose_publisher.get_subscription_count() > 1
+            and any(
+                endpoint.node_name == self.upstream_node_name
+                for endpoint in self.get_subscriptions_info_by_topic("/initialpose")
+            )
+        ):
+            initial = PoseWithCovarianceStamped()
+            initial.header.stamp = message.header.stamp
+            initial.header.frame_id = "map"
+            initial.pose.pose.orientation.w = 1.0
+            self.initial_pose_received = True
+            self.initial_pose_publisher.publish(initial)
+            self.get_logger().info("Sent Office origin initial pose to 3D localizer")
+
+    def on_scan(self, message):
+        now = self.now()
+        if message.header.frame_id != "camera_init" or not valid_stamp(message.header.stamp):
+            self.reject("invalid scan header")
+            return
+        timestamp = seconds(message.header.stamp)
+        if timestamp > now or now - timestamp > self.max_scan_age:
+            self.reject("stale or future scan")
+            return
+        if self.scan_time is not None and timestamp <= self.scan_time:
+            self.reject("out-of-order scan")
+            return
+        self.scan_time = timestamp
+
+    def on_correction(self, message):
+        now = self.now()
+        if (
+            message.header.frame_id != "map"
+            or message.child_frame_id not in ("", "camera_init")
+            or not valid_stamp(message.header.stamp)
+            or not valid_pose(message.pose.pose)
+        ):
+            self.reject("invalid map-to-camera_init correction")
+            return
+        timestamp = seconds(message.header.stamp)
+        if self.last_correction_time is not None and timestamp <= self.last_correction_time:
+            self.reject("duplicate or out-of-order correction")
+            return
+        if timestamp > now or now - timestamp > self.max_correction_age:
+            self.reject("stale or future correction")
+            return
+        if self.lio is None or self.scan_time is None:
+            self.reject("missing LIO odometry or scan")
+            return
+        lio_time = seconds(self.lio.header.stamp)
+        if (
+            now - lio_time > self.max_lio_age
+            or now - self.scan_time > self.max_scan_age
+            or abs(timestamp - lio_time) > self.max_alignment
+            or timestamp - self.scan_time < 0
+            or timestamp - self.scan_time > self.max_alignment
+        ):
+            self.reject("LIO/scan/correction time misalignment")
+            return
+        if (
+            self.last_accepted_scan_time is not None
+            and (
+                self.scan_time <= self.last_accepted_scan_time
+                or self.scan_time <= self.last_correction_time
+            )
+        ):
+            self.reject("no new scan since previous correction")
+            return
+        if self.last_accepted_lio is not None:
+            old_lio = self.last_accepted_lio
+            old_pose = planar_base(self.last_accepted_correction, old_lio.pose.pose)
+            expected = planar_base(self.last_accepted_correction, self.lio.pose.pose)
+            proposed = planar_base(message.pose.pose, self.lio.pose.pose)
+            distance = math.hypot(expected[0] - old_pose[0], expected[1] - old_pose[1])
+            turn = abs(angle_difference(expected[2], old_pose[2]))
+            jump = math.hypot(proposed[0] - expected[0], proposed[1] - expected[1])
+            yaw_jump = abs(angle_difference(proposed[2], expected[2]))
+            if (
+                jump > self.max_translation_jump + self.jump_per_meter * distance
+                or yaw_jump > self.max_yaw_jump + self.jump_per_radian * turn
+            ):
+                self.reject("registration innovation jump")
+                return
+
+        x, y, yaw = planar_base(message.pose.pose, self.lio.pose.pose)
+        observation = PoseWithCovarianceStamped()
+        observation.header.frame_id = "map"
+        observation.header.stamp = message.header.stamp
+        observation.pose.pose.position.x = x
+        observation.pose.pose.position.y = y
+        observation.pose.pose.orientation.z = math.sin(yaw / 2)
+        observation.pose.pose.orientation.w = math.cos(yaw / 2)
+        for index, variance in zip(
+            (0, 7, 14, 21, 28, 35),
+            (self.covariance_xy, self.covariance_xy, self.covariance_unobserved,
+             self.covariance_unobserved, self.covariance_unobserved, self.covariance_yaw),
+        ):
+            observation.pose.covariance[index] = variance
+        self.last_correction_time = timestamp
+        self.last_accepted_scan_time = self.scan_time
+        self.last_accepted_lio = self.lio
+        self.last_accepted_correction = message.pose.pose
+        self.warned.clear()
+        self.pose_publisher.publish(observation)
+        accepted = Header()
+        accepted.frame_id = "map"
+        accepted.stamp = message.header.stamp
+        self.accepted_publisher.publish(accepted)
+
+
+def main():
+    rclpy.init()
+    node = GlobalPoseAdapter()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

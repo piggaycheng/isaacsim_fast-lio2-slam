@@ -47,7 +47,7 @@ flowchart TD
     MapServer --> RViz
 ```
 
-## 規劃中的 PGM + PCD 模式（尚未實作）
+## PGM + PCD 模式（全域融合測試已實作；Nav2 尚未整合）
 
 ```mermaid
 flowchart TD
@@ -76,7 +76,7 @@ flowchart TD
         PCD["3D 地圖<br/>map.pcd"]
         FastLIO["FAST-LIO 里程計<br/>LiDAR + IMU；不接管導航 TF"]
         FastLIOLocalization["FAST_LIO_LOCALIZATION2<br/>既有 PCD 地圖 ICP 配準"]
-        FastLIOAdapter["3D 定位品質 Adapter<br/>位姿組合、fitness、時間戳、跳動檢查<br/>設定 covariance；不發布 TF"]
+        FastLIOAdapter["3D 定位 Adapter<br/>位姿組合、掃描／里程計新鮮度與跳動檢查<br/>使用上游內建 fitness 門檻；設定 covariance"]
     end
 
     %% -------------------- 2D 導航地圖 --------------------
@@ -85,6 +85,7 @@ flowchart TD
     %% -------------------- 全域融合 --------------------
     subgraph GlobalFusion ["全域融合 Global Fusion"]
         GlobalEKF["Global robot_localization<br/>world_frame: map"]
+        TFGate["校正時效閘控<br/>唯一發布 map → odom"]
     end
 
     %% -------------------- 3D 障礙物處理 --------------------
@@ -122,9 +123,11 @@ flowchart TD
     FastLIO -.->|"LIO 里程計"| FastLIOAdapter
     FastLIOAdapter -.->|"map 座標 pose"| GlobalEKF
 
-    %% Global EKF 是 map -> odom 的唯一發布者
-    GlobalEKF -->|"唯一 TF: map -> odom"| GlobalCostmap
-    GlobalEKF -->|"唯一 TF: map -> odom"| GlobalPlanner
+    %% Global EKF 不直接發布 TF；閘控節點阻止過期校正時的 TF 更新
+    FastLIOAdapter -.->|"校正心跳"| TFGate
+    GlobalEKF -->|"/odometry/global；不發布 TF"| TFGate
+    TFGate -->|"唯一 TF: map -> odom"| GlobalCostmap
+    TFGate -->|"唯一 TF: map -> odom"| GlobalPlanner
 
     %% Nav2 地圖與即時障礙物
     PGM -->|"靜態 occupancy grid"| GlobalCostmap
@@ -147,28 +150,40 @@ flowchart TD
 
 | TF | 唯一發布者 |
 |---|---|
-| `map -> odom` | 目前只有 PGM：AMCL；規劃中提供 PCD：Global `robot_localization`（不啟動 AMCL） |
+| `map -> odom` | 只有 PGM：AMCL；PCD 全域融合測試：校正時效閘控節點（Global EKF 不發布 TF，不啟動 AMCL） |
 | `odom -> base_link` | Local `robot_localization` |
 | `base_link -> lidar`、`base_link -> imu` | `robot_state_publisher` 或 static TF |
 
 目前 `run_nav.sh` 的 AMCL 使用 `tf_broadcast: true`。規劃中的 PCD
-導航模式不啟動 AMCL，由 Global EKF 接管 `map -> odom`。
+融合測試模式不啟動 AMCL，由校正時效閘控節點接管 `map -> odom`。
 `FAST_LIO_LOCALIZATION2` 原版
 `transform_fusion.py` 會發布 `map -> camera_init` TF，不能不修改就與目前
 `odom -> base_link` 的導航 TF 鏈並用；規劃模式不啟動原版 TF 發布路徑，
 由 Adapter 組合 `/map_to_odom` 配準結果與 `/Odometry` LIO 里程計，
-轉成 `map` 座標的 `base_link` pose，僅交給 Global EKF 發布 `map -> odom`。
-原版 fitness 只供內部閾值判斷和日誌使用，須另外提供品質資訊供 Adapter 閘控。
-這個整合尚未實作或驗證。
+轉成 `map` 座標的 `base_link` pose，交給 Global EKF 作為觀測。
+原版 fitness 只供內部閾值判斷和日誌使用；要讓 Adapter
+依分數設定可信 covariance，仍須擴充上游品質輸出。
+目前已新增**隔離測試用** `./run_3d_localization.sh --global-fusion`：
+3D 位姿 Adapter 使用上游內建的 ICP fitness 門檻，以及掃描／里程計
+新鮮度、位姿跳動檢查，將 `map` 座標的 2D 車體位姿送入 Global EKF；
+輪速及 IMU 同時供 Local／Global EKF 預測。為避免缺少全域校正時
+Global EKF 不斷發布漂移 TF，Global EKF 設為 `publish_tf: false`，
+另由閘控節點在收到近期校正時發布**唯一**的 `map -> odom`，
+Local EKF 發布 `odom -> base_link`。此模式不啟動 AMCL 或 Nav2，
+不與 `run_nav.sh`／原本的獨立 3D 展示模式同時執行。
+上游尚未輸出 ICP fitness 數值或可信 covariance；目前使用可調的保守
+測量 covariance，並未完成真值精度驗證或導航失效安全驗證，
+不能將本模式視為可上線的自主導航。
 
 ## 運作模式
 
 - **只有 PGM（目前已實作）：**Local EKF 融合輪式里程計和 IMU；AMCL
   使用 `/scan` 和 PGM 定位，直接發布 `map -> odom`。
-- **提供 PCD（尚未實作導航整合）：**不啟動 AMCL；PGM 只供 Nav2
-  costmap 使用。FAST_LIO_LOCALIZATION2 以 LiDAR–IMU 里程計和 PCD
-  配準提供經品質 Adapter 檢查的 3D 全域位姿；輪速與 IMU 供局部／全域
-  EKF 預測，由唯一的全域融合節點發布 `map -> odom`。
+- **提供 PCD（全域融合隔離測試已新增；Nav2 尚未整合）：**不啟動
+  AMCL；PGM 用於 RViz，未來供 Nav2 costmap。FAST_LIO_LOCALIZATION2
+  以 LiDAR–IMU 里程計和 PCD 配準提供經 Adapter 檢查的全域位姿；
+  輪速與 IMU 供局部／全域 EKF 預測，經校正時效閘控發布
+  `map -> odom`。
 - **3D 配準品質不佳：**不能在沒有全域觀測時無限依賴輪速／IMU 預測；
   需偵測修正逾時、限制漂移並停止或降級導航，停車時的 Global EKF
   漂移仍須先查明；不會自動退回 AMCL。

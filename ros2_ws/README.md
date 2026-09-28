@@ -179,9 +179,24 @@ The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
 local odometry remained nearly stationary. Letting AMCL own this transform
 prevents that drift; its `map -> odom` correction remains fixed between AMCL
-updates. In the planned PCD-based navigation mode, do not start AMCL:
-keep the PGM for Nav2's costmap, and give a validated global fusion node sole
-ownership of `map -> odom` using quality-gated 3D localization plus wheel/IMU
-data. This integration is not implemented yet.
+updates. To test PCD-based **global fusion without Nav2**, first run
+`./ros2_ws/install_nav_dependencies.sh`, `./ros2_ws/build_workspace.sh`, and
+`./ros2_ws/setup_3d_localization.sh`, then use:
+
+```bash
+./run_3d_localization.sh --global-fusion
+```
+
+This isolated mode uses 3D map registration as a gated global pose observation
+and wheel/IMU inputs in both Local and Global EKFs. Local EKF owns
+`odom -> base_link`; the Global EKF publishes `/odometry/global` with TF disabled,
+and a freshness gate alone publishes `map -> odom` while PCD corrections remain
+recent. It does **not** start AMCL or Nav2; the PGM is displayed in RViz.
+Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
+maps require `--manual-initial-pose` and an approximate position from RViz.
+The upstream ICP node enforces its fitness threshold internally but does not
+publish a quality score or calibrated covariance; global pose covariance is
+configurable, not experimentally calibrated. This is not yet validated for
+autonomous navigation or positioning accuracy against simulation ground truth.
 
 Use `./run_nav.sh --help` for all options.

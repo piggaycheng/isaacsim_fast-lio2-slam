@@ -4,6 +4,7 @@ project(isaac_localization_3d)
 find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS scripts/localization_3d_pose.py
+  scripts/global_pose_adapter.py scripts/global_tf_gate.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch
