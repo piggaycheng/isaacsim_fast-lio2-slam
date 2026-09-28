@@ -47,7 +47,7 @@ flowchart TD
     MapServer --> RViz
 ```
 
-## PGM + PCD 模式（全域融合測試已實作；Nav2 尚未整合）
+## PGM + PCD 模式（全域融合及可選 costmap 觀察已實作；導航尚未整合）
 
 ```mermaid
 flowchart TD
@@ -169,16 +169,15 @@ flowchart TD
 輪速及 IMU 同時供 Local／Global EKF 預測。為避免缺少全域校正時
 Global EKF 不斷發布漂移 TF，Global EKF 設為 `publish_tf: false`，
 另由閘控節點在收到近期校正時發布**唯一**的 `map -> odom`，
-Local EKF 發布 `odom -> base_link`。此模式不啟動 AMCL 或 Nav2，
+Local EKF 發布 `odom -> base_link`。此模式不啟動 AMCL，預設不啟動 Nav2 costmap，
 不與 `run_nav.sh`／原本的獨立 3D 展示模式同時執行。
 Nova Carter 驅動輪的 USD 接地碰撞體半徑為 0.14 m（輪距 0.4132 m）；
 控制器與輪速里程計須使用相同幾何，否則移動時輪速低估、
 `map -> odom` 必須持續補償，掃描會相對地圖漂移。
 目前也沿用 2D 模式的 `pointcloud_to_laserscan`，對 `/isaac/lidar_points`
 以 `base_link` 高度 0.1–2.0 m 裁切後發布 `/scan`，供 RViz 對照 PGM
-檢查障礙物投影。這只是 Nav2 local costmap 的**候選輸入**，還沒有
-地面分割、3D 障礙物體素化或已啟動的 Nav2 costmap；低於 0.1 m 的
-障礙物可能被濾掉，須驗證使用場景與高度設定後再用於自主避障。
+檢查障礙物投影。低於 0.1 m 的障礙物可能被此 `/scan` 濾掉，
+須驗證使用場景與高度設定後再用於自主避障。
 可選的 `--obstacle-cloud`（須與 `--global-fusion` 同用）會將 LiDAR
 點雲依訊息時間轉到 `base_link`，在近地點上以 RANSAC 偵測近水平地面，
 去除地面、裁切高度與距離，再以 8 cm 體素降採樣，發布
@@ -187,7 +186,18 @@ Nova Carter 驅動輪的 USD 接地碰撞體半徑為 0.14 m（輪距 0.4132 m�
 該圈障礙物點雲，絕不將未分割的地面偽裝成障礙物；RViz 的「3D
 ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
 目前僅供 Office 的水平地面驗證，尚未處理斜坡、動態物追蹤、
-逐點運動補償或 Nav2 的 voxel/costmap 接線及失效時停車安全機制。
+逐點運動補償、動態障礙物清除驗證或失效時停車安全機制。
+選用 `./run_3d_localization.sh --global-fusion --costmaps` 可同時啟用
+`--obstacle-cloud`，並在收到 `/map` 及近期 `map -> base_link` TF 後
+啟動獨立的 Nav2 global/local costmap；不啟動 planner、controller
+或自主駕駛。Global costmap 使用 PGM 靜態層和膨脹層，
+local costmap 使用 8 m 滾動視窗、`/perception/obstacles` 標記、
+`/scan` 射線清除及膨脹層。
+在 RViz 疊加的「Global costmap (optional)」
+及「Local costmap (optional)」Map 顯示中可觀察佔據格和膨脹區，
+亦可切換 Office PGM 及 3D 點雲圖層對照。`robot_radius: 0.65 m`
+及 `inflation_radius: 0.9 m` 僅供觀測，尚非量測及驗證過的導航安全參數；
+低於 `/scan` 高度裁切的障礙物未必能被射線清除。
 上游尚未輸出 ICP fitness 數值或可信 covariance；目前使用可調的保守
 測量 covariance，並未完成真值精度驗證或導航失效安全驗證，
 不能將本模式視為可上線的自主導航。
@@ -196,8 +206,8 @@ ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
 
 - **只有 PGM（目前已實作）：**Local EKF 融合輪式里程計和 IMU；AMCL
   使用 `/scan` 和 PGM 定位，直接發布 `map -> odom`。
-- **提供 PCD（全域融合隔離測試已新增；Nav2 尚未整合）：**不啟動
-  AMCL；PGM 用於 RViz，未來供 Nav2 costmap。FAST_LIO_LOCALIZATION2
+- **提供 PCD（全域融合隔離測試及可選 costmap 觀察）：**不啟動
+  AMCL；PGM 用於 RViz，選用 `--costmaps` 時亦供 Nav2 global costmap。FAST_LIO_LOCALIZATION2
   以 LiDAR–IMU 里程計和 PCD 配準提供經 Adapter 檢查的全域位姿；
   輪速與 IMU 供局部／全域 EKF 預測，經校正時效閘控發布
   `map -> odom`。

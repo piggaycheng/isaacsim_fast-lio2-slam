@@ -8,6 +8,7 @@ declare -a queue=(
   ros-humble-nav2-map-server
   ros-humble-nav2-amcl
   ros-humble-nav2-lifecycle-manager
+  ros-humble-nav2-costmap-2d
   ros-humble-pointcloud-to-laserscan
   ros-humble-robot-localization
 )

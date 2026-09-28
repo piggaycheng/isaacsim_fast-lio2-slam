@@ -14,6 +14,7 @@ auto_jog=false
 auto_initial_pose=true
 global_fusion=false
 obstacle_cloud=false
+costmaps=false
 
 usage() {
   cat <<'EOF'
@@ -36,6 +37,8 @@ Options:
       --obstacle-cloud
                       With --global-fusion, filter ground from the 3D LiDAR
                       and publish /perception/obstacles (not a Nav2 costmap).
+      --costmaps      With --global-fusion, observe PGM-based global and
+                      3D-obstacle local Nav2 costmaps (no autonomous driving).
   -h, --help          Show this help.
 EOF
 }
@@ -56,12 +59,13 @@ while (($# > 0)); do
     --no-rviz) rviz=false; shift ;;
     --global-fusion) global_fusion=true; shift ;;
     --obstacle-cloud) obstacle_cloud=true; shift ;;
+    --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
-  echo "--obstacle-cloud requires --global-fusion" >&2
+  echo "--obstacle-cloud and --costmaps require --global-fusion" >&2
   exit 2
 fi
 
@@ -122,6 +126,7 @@ required_packages=(isaac_localization_3d fast_lio_localization isaac_fastlio_ada
 if [[ "$global_fusion" == true ]]; then
   required_packages+=(isaac_nav robot_localization pointcloud_to_laserscan)
 fi
+if [[ "$costmaps" == true ]]; then required_packages+=(nav2_costmap_2d); fi
 for package in "${required_packages[@]}"; do
   if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then
     echo "Missing ROS package: $package. Run ros2_ws/install_nav_dependencies.sh and ros2_ws/setup_3d_localization.sh." >&2
@@ -138,7 +143,7 @@ launch_args=(map_pcd:="$map_pcd" map_pgm:="$map_pgm" rviz:="$rviz"
   auto_initial_pose:="$auto_initial_pose")
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
-  launch_args+=(obstacle_cloud:="$obstacle_cloud")
+  launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps")
 fi
 ros2 launch isaac_localization_3d "$launch_file" "${launch_args[@]}" &
 ros_pid=$!

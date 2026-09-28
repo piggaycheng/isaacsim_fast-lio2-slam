@@ -2,8 +2,10 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, RegisterEventHandler
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -16,8 +18,27 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
     auto_initial_pose = LaunchConfiguration("auto_initial_pose")
     obstacle_cloud = LaunchConfiguration("obstacle_cloud")
+    costmaps = LaunchConfiguration("costmaps")
     sim = {"use_sim_time": True}
     nav_parameters = [os.path.join(nav, "config", "localization_2d.yaml"), sim]
+    readiness = Node(
+        condition=IfCondition(costmaps),
+        package="isaac_localization_3d", executable="wait_for_costmap_tf.py",
+        output="screen", parameters=[sim],
+    )
+    costmap_manager = Node(
+        package="nav2_lifecycle_manager", executable="lifecycle_manager",
+        name="lifecycle_manager_fusion_costmaps", output="screen",
+        # Standalone Costmap2DROS activates without creating a Nav2 lifecycle bond.
+        parameters=[{
+            "use_sim_time": True, "autostart": True,
+            "bond_timeout": 0.0,
+            "node_names": [
+                "local_costmap/local_costmap",
+                "global_costmap/global_costmap",
+            ],
+        }],
+    )
     return LaunchDescription(
         [
             DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
@@ -25,6 +46,7 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
+            DeclareLaunchArgument("costmaps", default_value="false"),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",
@@ -133,6 +155,36 @@ def generate_launch_description():
                 parameters=[{
                     "use_sim_time": True, "autostart": True, "node_names": ["map_server"]
                 }],
+            ),
+            Node(
+                condition=IfCondition(costmaps),
+                package="isaac_localization_3d", executable="costmap_observer",
+                namespace="global_costmap", name="global_costmap",
+                output="screen",
+                parameters=[
+                    os.path.join(package, "config", "observation_costmaps.yaml"), sim
+                ],
+            ),
+            Node(
+                condition=IfCondition(costmaps),
+                package="isaac_localization_3d", executable="costmap_observer",
+                namespace="local_costmap", name="local_costmap",
+                output="screen",
+                parameters=[
+                    os.path.join(package, "config", "observation_costmaps.yaml"), sim
+                ],
+            ),
+            readiness,
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=readiness,
+                    on_exit=lambda event, _: (
+                        [costmap_manager] if event.returncode == 0 else [
+                            LogInfo(msg="ERROR: Costmaps not started: map or localization TF unavailable"),
+                            EmitEvent(event=Shutdown(reason="Costmap readiness failed")),
+                        ]
+                    ),
+                )
             ),
             Node(
                 condition=IfCondition(rviz), package="rviz2", executable="rviz2",

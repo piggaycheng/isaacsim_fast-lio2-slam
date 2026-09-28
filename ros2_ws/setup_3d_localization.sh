@@ -5,6 +5,7 @@ workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(dirname "$workspace_dir")"
 base="$workspace_dir/localization_3d_install"
 prefix="$base/debs/opt/ros/humble"
+nav_prefix="$workspace_dir/nav_install/opt/ros/humble"
 
 if [[ ! -f "$workspace_dir/install/setup.bash" ]]; then
   echo "Build the existing ROS workspace with ros2_ws/build_workspace.sh first." >&2
@@ -31,7 +32,11 @@ fi
 
 source /opt/ros/humble/setup.bash
 source "$workspace_dir/install/setup.bash"
-export CMAKE_PREFIX_PATH="$prefix:${CMAKE_PREFIX_PATH:-}"
+if [[ ! -f "$nav_prefix/share/nav2_costmap_2d/cmake/nav2_costmap_2dConfig.cmake" ]]; then
+  echo "Nav2 costmap dependency missing; run ros2_ws/install_nav_dependencies.sh first." >&2
+  exit 1
+fi
+export CMAKE_PREFIX_PATH="$nav_prefix:$prefix:${CMAKE_PREFIX_PATH:-}"
 colcon --log-base "$base/log" build \
   --base-paths "$workspace_dir/src/FAST_LIO_LOCALIZATION2" "$workspace_dir/src/isaac_localization_3d" \
   --packages-select fast_lio_localization isaac_localization_3d \

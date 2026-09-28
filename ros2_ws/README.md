@@ -179,7 +179,7 @@ The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
 local odometry remained nearly stationary. Letting AMCL own this transform
 prevents that drift; its `map -> odom` correction remains fixed between AMCL
-updates. To test PCD-based **global fusion without Nav2**, first run
+updates. To test PCD-based **global fusion without Nav2 costmaps**, first run
 `./ros2_ws/install_nav_dependencies.sh`, `./ros2_ws/build_workspace.sh`, and
 `./ros2_ws/setup_3d_localization.sh`, then use:
 
@@ -191,7 +191,7 @@ This isolated mode uses 3D map registration as a gated global pose observation
 and wheel/IMU inputs in both Local and Global EKFs. Local EKF owns
 `odom -> base_link`; the Global EKF publishes `/odometry/global` with TF disabled,
 and a freshness gate alone publishes `map -> odom` while PCD corrections remain
-recent. It does **not** start AMCL or Nav2; the PGM is displayed in RViz.
+recent. It does **not** start AMCL or Nav2 costmaps by default; the PGM is displayed in RViz.
 Nova Carter's USD drive-wheel contact radius is 0.14 m (0.4132 m wheelbase);
 both the simulator controller and wheel odometry use these dimensions. Using
 the smaller controller-only radius for wheel odometry makes the moving scan
@@ -208,9 +208,29 @@ The optional ground filter transforms the raw LiDAR cloud into `base_link`,
 fits a near-horizontal ground plane with RANSAC, and publishes height-limited,
 8 cm voxelized `/perception/obstacles` as a `PointCloud2`. It warns and
 withholds a scan if the ground or timestamped TF is unavailable. The RViz 3D
-obstacle display is off by default to avoid additional rendering load. This
-Office-floor prototype does not track moving objects, compensate each point's
-motion, handle ramps, or feed a Nav2 costmap; it is not safe obstacle avoidance.
+obstacle display is off by default to avoid additional rendering load. This Office-floor prototype does not track moving objects, compensate each point's
+motion, or handle ramps; it is not safe obstacle avoidance.
+To observe Nav2 costmaps without starting a planner or controller:
+
+```bash
+./run_3d_localization.sh --global-fusion --costmaps
+```
+
+`--costmaps` also enables `--obstacle-cloud`. RViz overlays the Office PGM
+with `/global_costmap/costmap` (static PGM and inflation) and
+`/local_costmap/costmap` (rolling 8 m window, 3D obstacle marking, `/scan`
+ray clearing, and inflation). Toggle the Map displays in RViz to compare
+the occupied, inflated, and free areas; enable "3D ground-filtered obstacles
+(optional)" to compare the local obstacle inputs. Both costmaps wait for
+the map and a recent localization TF before activation. With the default
+Office map, the 3D pose adapter automatically sends an initial pose near
+Carter's spawn; no RViz click is needed. `--manual-initial-pose` is for
+other maps or a different starting location. The 0.65 m robot
+radius and 0.9 m inflation radius are observation-only estimates, not
+validated Carter safety clearances. Low obstacles absent from the height-filtered
+`/scan` might not clear reliably after moving; verify marking and clearing
+in your scene before using these layers for navigation. This mode does not
+publish driving commands or start autonomous navigation.
 Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
 The upstream ICP node enforces its fitness threshold internally but does not

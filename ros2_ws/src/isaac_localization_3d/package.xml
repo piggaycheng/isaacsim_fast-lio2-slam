@@ -7,6 +7,15 @@
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>map_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>nav2_msgs</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>rclcpp_lifecycle</build_depend>
+  <build_depend>tf2</build_depend>
+  <build_depend>tf2_geometry_msgs</build_depend>
+  <build_depend>tf2_ros</build_depend>
   <exec_depend>fast_lio_localization</exec_depend>
   <exec_depend>isaac_fastlio_adapter</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
@@ -16,6 +25,8 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>rclcpp</depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>isaac_nav</exec_depend>
