@@ -184,6 +184,14 @@ The localization stack:
 - runs a Local EKF for `odom -> base_link`;
 - runs AMCL against the selected PGM map as the only publisher of `map -> odom`.
 
+The Local EKF fuses the wheel encoder's yaw pose and forward speed with the
+navigation IMU's angular rate. Wheel yaw anchors the heading when the robot
+stops, so a small nonzero simulated gyro rate cannot accumulate indefinitely;
+the IMU still contributes during turns. The same Local EKF configuration is
+used by 2D and 3D fusion. Wheel yaw is dead-reckoned and can drift if the
+wheels slip: calibrate its uncertainty for a real robot rather than assuming
+the simulated covariance applies.
+
 The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
 local odometry remained nearly stationary. Letting AMCL own this transform
@@ -251,6 +259,10 @@ freshness, planar command validation and speed limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
 RViz shows Nav2's `/plan` path alongside both costmap layers.
+The local costmap is intentionally in `odom`, not `map`, so its entire grid
+can appear rotated in RViz's `map` fixed frame by the current `map -> odom`
+correction. This is not a footprint rotation; inspect that TF and compare
+wheel and Local EKF heading before changing the costmap frame.
 The safety node rejects non-finite or nonplanar commands and limits speed to
 0.75 m/s and 0.7 rad/s. Isaac Sim also checks command bounds and stops on a
 0.5 s command timeout if ROS messages stop; stale PCD corrections suppress
