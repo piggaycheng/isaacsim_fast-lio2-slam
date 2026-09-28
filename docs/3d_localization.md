@@ -152,6 +152,12 @@ LiDAR／IMU 經 FAST-LIO 與 PCD 配準，上游先依 ICP fitness 門檻篩選�
 Global EKF 設為 `publish_tf: false`；閘控節點只在近期有有效 PCD 校正時，
 依 `/odometry/global` 和同時間的局部 TF 發布 `map -> odom`。
 若局部 TF 晚到，最多等待 0.1 秒；仍無 TF 則不發布該筆轉換。
+合成位姿仍使用里程計原時間戳；發布時將 `map -> odom` TF 前推
+`tf_future_tolerance`（預設 0.1 秒，最多 0.5 秒），讓 Nav2 在下一筆局部
+TF 先到時仍可查詢轉換。前推只涵蓋短暫時序差，不延長 PCD 校正時效；
+校正過期或局部 TF 缺失仍停止發布，命令安全節點也不放寬校正時效。
+Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速並重試，
+最多容忍 1 秒；持續失敗則中止目標。
 不要同時啟動 2D AMCL、3D 融合或獨立 3D 展示模式。
 
 ## 選擇啟動方式

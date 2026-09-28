@@ -44,6 +44,15 @@ class GlobalTfGate(Node):
         ).value
         if self.max_correction_age <= 0:
             raise ValueError("max_correction_age must be positive")
+        self.tf_future_tolerance = self.declare_parameter(
+            "tf_future_tolerance", 0.1
+        ).value
+        if (
+            type(self.tf_future_tolerance) not in (int, float)
+            or not math.isfinite(self.tf_future_tolerance)
+            or not 0 <= self.tf_future_tolerance <= 0.5
+        ):
+            raise ValueError("tf_future_tolerance must be between 0 and 0.5 seconds")
         self.last_correction = None
         self.warned_stale = False
         self.last_tf_warning = None
@@ -127,6 +136,11 @@ class GlobalTfGate(Node):
         x, y, yaw = map_to_odom(message.pose.pose, local.transform)
         transform = TransformStamped()
         transform.header = message.header
+        # Keep the measured pose, but leave a short TF validity window for Nav2.
+        transform.header.stamp = (
+            Time.from_msg(message.header.stamp)
+            + Duration(seconds=self.tf_future_tolerance)
+        ).to_msg()
         transform.child_frame_id = "odom"
         transform.transform.translation.x = x
         transform.transform.translation.y = y

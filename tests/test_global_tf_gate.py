@@ -2,13 +2,16 @@ import math
 import sys
 import threading
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
+from rclpy.time import Time
 from std_msgs.msg import Header
+from tf2_ros import Buffer, TransformException
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/scripts")
@@ -60,6 +63,8 @@ class TestGlobalTfGate(unittest.TestCase):
         self.assertEqual((transform.header.frame_id, transform.child_frame_id),
                          ("map", "odom"))
         self.assertAlmostEqual(transform.transform.translation.x, 3.0)
+        self.assertEqual((transform.header.stamp.sec, transform.header.stamp.nanosec),
+                         (10, 100_000_000))
         lookup = self.node.tf_buffer.lookup_transform.call_args
         self.assertEqual(lookup.args[:2], ("odom", "base_link"))
         self.assertEqual(lookup.args[2].nanoseconds, 10_000_000_000)
@@ -98,8 +103,35 @@ class TestGlobalTfGate(unittest.TestCase):
         finally:
             delayed.join()
         transform = self.node.broadcaster.sendTransform.call_args.args[0]
-        self.assertEqual(transform.header.stamp.sec, 10)
+        self.assertEqual((transform.header.stamp.sec, transform.header.stamp.nanosec),
+                         (10, 100_000_000))
         self.assertAlmostEqual(transform.transform.translation.x, 3.0)
+
+    def test_future_tf_window_covers_next_local_odom_stamp(self):
+        header = Header(frame_id="map")
+        header.stamp.sec = 9
+        self.node.on_correction(header)
+        self.node.on_global_odometry(odometry(10))
+        future_map = self.node.broadcaster.sendTransform.call_args.args[0]
+        previous_map = deepcopy(future_map)
+        previous_map.header.stamp.sec = 9
+        previous_map.header.stamp.nanosec = 900_000_000
+        unfuture_map = deepcopy(future_map)
+        unfuture_map.header.stamp.sec = 10
+        unfuture_map.header.stamp.nanosec = 0
+        query_stamp = Time(seconds=10, nanoseconds=33_333_333)
+
+        old_buffer = Buffer()
+        old_buffer.set_transform(previous_map, "test")
+        old_buffer.set_transform(unfuture_map, "test")
+        with self.assertRaises(TransformException):
+            old_buffer.lookup_transform("map", "odom", query_stamp)
+
+        new_buffer = Buffer()
+        new_buffer.set_transform(previous_map, "test")
+        new_buffer.set_transform(future_map, "test")
+        result = new_buffer.lookup_transform("map", "odom", query_stamp)
+        self.assertEqual(result.header.stamp.nanosec, 33_333_333)
 
     def test_rotation_and_translation_compose(self):
         global_pose = odometry(10).pose.pose
