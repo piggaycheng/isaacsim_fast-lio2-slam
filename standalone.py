@@ -2,6 +2,7 @@
 
 import argparse
 
+from cmd_vel_control import receiver
 from isaacsim import SimulationApp
 
 
@@ -13,7 +14,7 @@ CARTER_ARTICULATION_PATH = f"{CARTER_PRIM_PATH}/chassis_link"
 CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
 CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
-LINEAR_JOG_SPEED = 0.5
+LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 1.2
 CARTER_FORWARD_SIGN = -1.0
 FOLLOW_CAMERA_DISTANCE = 2.5
@@ -31,12 +32,18 @@ parser.add_argument("--headless", action="store_true", help="Run without the Isa
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
 parser.add_argument(
+    "--ros-cmd-vel", action="store_true",
+    help="Subscribe to ROS 2 /cmd_vel instead of keyboard or auto-jog.",
+)
+parser.add_argument(
     "--lidar-motion-compensation",
     choices=("noncompensated", "compensated"),
     default="noncompensated",
     help="Select RTX LiDAR motion compensation; navigation uses compensated clouds.",
 )
 args, _ = parser.parse_known_args()
+if args.ros_cmd_vel and (args.auto_jog or args.test):
+    parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
 lidar_motion_compensation_state = args.lidar_motion_compensation.upper()
 
 simulation_app = SimulationApp(
@@ -72,6 +79,7 @@ pressed_keys = set()
 input_interface = None
 keyboard = None
 keyboard_subscription = None
+command_receiver = receiver if args.ros_cmd_vel else None
 
 
 def on_keyboard_event(event, *_) -> bool:
@@ -174,6 +182,48 @@ def create_ros2_publishers() -> None:
     )
 
 
+def create_ros2_drive_subscriber() -> None:
+    graph_path = "/World/CarterROS2Drive"
+    keys = og.Controller.Keys
+    _, nodes, _, _ = og.Controller.edit(
+        {"graph_path": graph_path, "evaluator_name": "execution"},
+        {
+            keys.CREATE_NODES: [
+                ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
+                ("SubscribeTwist", "isaacsim.ros2.bridge.ROS2SubscribeTwist"),
+                ("RecordCommand", "omni.graph.scriptnode.ScriptNode"),
+            ],
+            keys.CONNECT: [
+                ("OnPlaybackTick.outputs:tick", "SubscribeTwist.inputs:execIn"),
+                ("SubscribeTwist.outputs:execOut", "RecordCommand.inputs:execIn"),
+            ],
+            keys.SET_VALUES: [
+                ("SubscribeTwist.inputs:topicName", "/cmd_vel"),
+                ("SubscribeTwist.inputs:queueSize", 1),
+            ],
+        },
+    )
+    script_node = nodes[2]
+    for name in ("linearVelocity", "angularVelocity"):
+        og.Controller.create_attribute(
+            script_node, f"inputs:{name}",
+            og.Type(og.BaseDataType.DOUBLE, 3, 0, og.AttributeRole.VECTOR),
+            og.AttributePortType.ATTRIBUTE_PORT_TYPE_INPUT,
+        )
+        og.Controller.connect(
+            og.Controller.attribute(f"{graph_path}/SubscribeTwist.outputs:{name}"),
+            script_node.get_attribute(f"inputs:{name}"),
+        )
+    script_node.get_attribute("inputs:script").set(
+        "def compute(db):\n"
+        "    from cmd_vel_control import receiver\n"
+        "    try:\n"
+        "        receiver.accept_twist(db.inputs.linearVelocity, db.inputs.angularVelocity)\n"
+        "    except ValueError as error:\n"
+        "        db.log_error(str(error))\n"
+    )
+
+
 try:
     assets_root_path = get_assets_root_path()
     if assets_root_path is None:
@@ -251,6 +301,8 @@ try:
         orientation_filter_size=3,
     )
     create_ros2_publishers()
+    if command_receiver is not None:
+        create_ros2_drive_subscriber()
 
     SimulationManager.setup_simulation(dt=1.0 / 60.0, device="cpu")
     physics_scenes = SimulationManager.get_physics_scenes()
@@ -258,7 +310,7 @@ try:
         raise RuntimeError("Isaac Sim did not create a physics scene")
     physics_scenes[0].set_enabled_gpu_dynamics(False)
 
-    if not args.headless:
+    if not args.headless and command_receiver is None:
         app_window = omni.appwindow.get_default_app_window()
         input_interface = carb.input.acquire_input_interface()
         keyboard = app_window.get_keyboard()
@@ -275,7 +327,9 @@ try:
     print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
     print("ROS 2 joint states: /isaac/joint_states [sensor_msgs/msg/JointState]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
-    if not args.headless:
+    if command_receiver is not None:
+        print("Carter command source: native ROS 2 /cmd_vel (0.5 s watchdog; keyboard disabled)")
+    if not args.headless and command_receiver is None:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
 
     timeline = omni.timeline.get_timeline_interface()
@@ -322,16 +376,26 @@ try:
         )
     else:
         while simulation_app.is_running():
-            command = (
-                [0.2 * CARTER_FORWARD_SIGN, 0.15]
-                if args.auto_jog
-                else get_jog_command()
-            )
+            if command_receiver is not None:
+                try:
+                    linear, angular = command_receiver.command()
+                except ValueError as error:
+                    carb.log_error(f"Rejected simulator drive command: {error}")
+                    linear, angular = 0.0, 0.0
+                command = [linear * CARTER_FORWARD_SIGN, angular]
+            else:
+                command = (
+                    [0.2 * CARTER_FORWARD_SIGN, 0.15]
+                    if args.auto_jog
+                    else get_jog_command()
+                )
             carter.apply_wheel_actions(controller.forward(command=command))
             if follow_camera_path is not None:
                 update_follow_camera(carter, follow_camera_path)
             simulation_app.update()
 finally:
+    if command_receiver is not None:
+        carter.apply_wheel_actions(controller.forward(command=[0.0, 0.0]))
     if input_interface is not None and keyboard_subscription is not None:
         input_interface.unsubscribe_to_keyboard_events(keyboard, keyboard_subscription)
     timeline = omni.timeline.get_timeline_interface()

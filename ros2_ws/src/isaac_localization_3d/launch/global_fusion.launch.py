@@ -6,7 +6,7 @@ from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, RegisterEv
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -19,8 +19,14 @@ def generate_launch_description():
     auto_initial_pose = LaunchConfiguration("auto_initial_pose")
     obstacle_cloud = LaunchConfiguration("obstacle_cloud")
     costmaps = LaunchConfiguration("costmaps")
+    navigate = LaunchConfiguration("navigate")
     sim = {"use_sim_time": True}
     nav_parameters = [os.path.join(nav, "config", "localization_2d.yaml"), sim]
+    observation_config = os.path.join(package, "config", "observation_costmaps.yaml")
+    navigation_config = os.path.join(package, "config", "navigation.yaml")
+    observing = IfCondition(PythonExpression([
+        "'", costmaps, "' == 'true' and '", navigate, "' == 'false'",
+    ]))
     readiness = Node(
         condition=IfCondition(costmaps),
         package="isaac_localization_3d", executable="wait_for_costmap_tf.py",
@@ -39,6 +45,18 @@ def generate_launch_description():
             ],
         }],
     )
+    navigation_manager = Node(
+        package="nav2_lifecycle_manager", executable="lifecycle_manager",
+        name="lifecycle_manager_navigation", output="screen",
+        parameters=[{
+            "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
+            "node_names": ["planner_server", "controller_server", "bt_navigator"],
+        }],
+    )
+    navigation_readiness = Node(
+        package="isaac_localization_3d", executable="wait_for_navigation.py",
+        output="screen", parameters=[sim],
+    )
     return LaunchDescription(
         [
             DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
@@ -47,6 +65,7 @@ def generate_launch_description():
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             DeclareLaunchArgument("costmaps", default_value="false"),
+            DeclareLaunchArgument("navigate", default_value="false"),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",
@@ -157,33 +176,75 @@ def generate_launch_description():
                 }],
             ),
             Node(
-                condition=IfCondition(costmaps),
+                condition=observing,
                 package="isaac_localization_3d", executable="costmap_observer",
                 namespace="global_costmap", name="global_costmap",
                 output="screen",
                 parameters=[
-                    os.path.join(package, "config", "observation_costmaps.yaml"), sim
+                    observation_config, sim
                 ],
             ),
             Node(
-                condition=IfCondition(costmaps),
+                condition=observing,
                 package="isaac_localization_3d", executable="costmap_observer",
                 namespace="local_costmap", name="local_costmap",
                 output="screen",
                 parameters=[
-                    os.path.join(package, "config", "observation_costmaps.yaml"), sim
+                    observation_config, sim
                 ],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="nav2_planner", executable="planner_server",
+                name="planner_server", output="screen",
+                parameters=[navigation_config, observation_config, sim],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="nav2_controller", executable="controller_server",
+                name="controller_server", output="screen",
+                parameters=[navigation_config, observation_config, sim],
+                remappings=[("/cmd_vel", "/nav2/cmd_vel")],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="nav2_bt_navigator", executable="bt_navigator",
+                name="bt_navigator", output="screen",
+                parameters=[
+                    navigation_config,
+                    {"default_nav_to_pose_bt_xml": os.path.join(
+                        package, "config", "navigate_to_pose.xml"
+                    ), "default_nav_through_poses_bt_xml": os.path.join(
+                        package, "config", "navigate_through_poses.xml"
+                    )}, sim,
+                ],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="isaac_localization_3d", executable="cmd_vel_safety.py",
+                name="cmd_vel_safety", output="screen", parameters=[sim],
             ),
             readiness,
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=readiness,
-                    on_exit=lambda event, _: (
-                        [costmap_manager] if event.returncode == 0 else [
+                    on_exit=lambda event, context: (
+                        ([navigation_manager, navigation_readiness]
+                         if navigate.perform(context).lower() == "true"
+                         else [costmap_manager]) if event.returncode == 0 else [
                             LogInfo(msg="ERROR: Costmaps not started: map or localization TF unavailable"),
                             EmitEvent(event=Shutdown(reason="Costmap readiness failed")),
                         ]
                     ),
+                )
+            ),
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=navigation_readiness,
+                    on_exit=lambda event, _: [] if event.returncode == 0 else [
+                        LogInfo(msg="ERROR: Nav2 navigation stack failed to activate"),
+                        EmitEvent(event=Shutdown(reason="Navigation activation failed")),
+                    ],
                 )
             ),
             Node(

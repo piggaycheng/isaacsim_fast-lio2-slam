@@ -19,8 +19,8 @@ publishes the corrected input on `/livox/imu`.
 
 `src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
 `src/isaac_localization_3d` contains the separate 3D localization launch,
-ROS pose/TF publisher, and RViz configuration. Neither package is started by
-`run_nav.sh`. Build the existing workspace first, then run
+ROS pose/TF publisher, and RViz configuration. `run_nav.sh --mode 3d` starts
+this package; `--mode 2d` uses `isaac_nav`. Build the existing workspace first, then run
 `./ros2_ws/install_nav_dependencies.sh` and `./ros2_ws/setup_3d_localization.sh`
 to build the 3D packages and their private dependencies. Launch the Office
 simulator and RViz together with `./run_3d_localization.sh` (use `--help` for
@@ -228,6 +228,40 @@ and `--manual-initial-pose` apply only to `3d`. The separate
 `run_3d_localization.sh` remains available directly for its visualization-only and
 fusion-without-costmaps variants. Never run the modes concurrently.
 
+To navigate with Nav2 in the Office simulation, start:
+
+```bash
+./run_nav.sh --mode 3d --navigate
+```
+
+After the planner, controller and navigator report active, click RViz's
+**2D Goal Pose** tool on the map and drag to set the target heading. RViz
+publishes `/goal_pose` directly to Nav2's `NavigateToPose` navigator; there
+is no short-distance or forward-only goal test. In observation-only mode,
+this RViz tool does not drive Carter.
+
+Nav2 plans on the PGM global costmap and follows paths using the local obstacle
+costmap. Its `/nav2/cmd_vel` passes through a ROS 2 safety node (PCD correction
+freshness, planar command validation and speed limiting) to `/cmd_vel`, which
+Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
+is no Unix socket or separate command transport.
+RViz shows Nav2's `/plan` path alongside both costmap layers.
+The safety node rejects non-finite or nonplanar commands and limits speed to
+0.75 m/s and 0.7 rad/s. Isaac Sim also checks command bounds and stops on a
+0.5 s command timeout if ROS messages stop; stale PCD corrections suppress
+movement. Nav2's regulated pure pursuit controller targets 0.5 m/s
+(`desired_linear_vel` in `config/navigation.yaml`), subject to its approach,
+curvature, and collision speed reductions. Manual W/S keyboard jogging commands
+0.75 m/s in either direction; auto-jog remains at 0.2 m/s. Higher navigation
+speeds require controller, footprint, and stopping-distance validation.
+`--navigate` cannot be combined with
+`--auto-jog`. Unlike observation-only costmaps, Nav2's planner and controller
+own both costmaps. This configuration replans periodically, but has no
+automatic recovery behavior. Carter's footprint and inflation are estimates,
+and dynamic obstacle clearing and localization failure response are not yet
+validated for safe autonomous operation. Test only in a clear Office
+simulation and inspect the costmaps and planned path before longer drives.
+
 `--costmaps` also enables `--obstacle-cloud`. RViz overlays the Office PGM
 with `/global_costmap/costmap` (static PGM and inflation) and
 `/local_costmap/costmap` (rolling 8 m window, 3D obstacle marking, `/scan`
@@ -238,11 +272,11 @@ the map and a recent localization TF before activation. With the default
 Office map, the 3D pose adapter automatically sends an initial pose near
 Carter's spawn; no RViz click is needed. `--manual-initial-pose` is for
 other maps or a different starting location. The 0.65 m robot
-radius and 0.9 m inflation radius are observation-only estimates, not
+radius and 0.9 m inflation radius are unvalidated estimates, not
 validated Carter safety clearances. Low obstacles absent from the height-filtered
 `/scan` might not clear reliably after moving; verify marking and clearing
-in your scene before using these layers for navigation. This mode does not
-publish driving commands or start autonomous navigation.
+in your scene before using these layers for navigation. Without `--navigate`,
+this mode does not publish driving commands or start autonomous navigation.
 Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
 The upstream ICP node enforces its fitness threshold internally but does not

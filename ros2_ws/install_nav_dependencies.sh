@@ -9,6 +9,11 @@ declare -a queue=(
   ros-humble-nav2-amcl
   ros-humble-nav2-lifecycle-manager
   ros-humble-nav2-costmap-2d
+  ros-humble-nav2-planner
+  ros-humble-nav2-controller
+  ros-humble-nav2-bt-navigator
+  ros-humble-nav2-navfn-planner
+  ros-humble-nav2-regulated-pure-pursuit-controller
   ros-humble-pointcloud-to-laserscan
   ros-humble-robot-localization
 )

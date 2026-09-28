@@ -26,7 +26,7 @@ class TestRunNavModes(unittest.TestCase):
                 self.assertEqual(launch(*args).returncode, 2)
 
     def test_2d_rejects_3d_only_options(self):
-        for option in ("--pcd", "--manual-initial-pose"):
+        for option in ("--pcd", "--manual-initial-pose", "--navigate"):
             with self.subTest(option=option):
                 args = (option, "map.pcd") if option == "--pcd" else (option,)
                 result = launch("--mode", "2d", *args)
@@ -55,6 +55,11 @@ class TestRunNavModes(unittest.TestCase):
         result = launch("--mode", "3d", "--pcd", "missing.pcd")
         self.assertEqual(result.returncode, 1)
         self.assertIn("PCD map does not exist", result.stderr)
+
+    def test_navigation_cannot_compete_with_auto_jog(self):
+        result = launch("--mode", "3d", "--navigate", "--auto-jog")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--auto-jog cannot be combined with --navigate", result.stderr)
 
 
 if __name__ == "__main__":

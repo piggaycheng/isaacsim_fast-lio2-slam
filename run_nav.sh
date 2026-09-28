@@ -9,6 +9,7 @@ headless=false
 auto_jog=false
 rviz=true
 manual_initial_pose=false
+navigate=false
 
 usage() {
   cat <<'EOF'
@@ -22,6 +23,7 @@ Options:
       --pcd FILE       3d only: PCD map (default: maps/office/map.pcd).
       --manual-initial-pose
                        3d only: set initial pose in RViz instead of Office spawn.
+      --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
@@ -60,6 +62,7 @@ while (($# > 0)); do
       shift 2
       ;;
     --manual-initial-pose) manual_initial_pose=true; shift ;;
+    --navigate) navigate=true; shift ;;
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
     --no-rviz) rviz=false; shift ;;
@@ -78,13 +81,14 @@ if [[ "$headless" == true ]]; then args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then args+=(--auto-jog); fi
 if [[ "$rviz" == false ]]; then args+=(--no-rviz); fi
 if [[ "$mode" == 2d ]]; then
-  if [[ -n "$map_pcd" || "$manual_initial_pose" == true ]]; then
-    echo "--pcd and --manual-initial-pose require --mode 3d" >&2
+  if [[ -n "$map_pcd" || "$manual_initial_pose" == true || "$navigate" == true ]]; then
+    echo "--pcd, --manual-initial-pose and --navigate require --mode 3d" >&2
     exit 2
   fi
   exec "$project_dir/run_2d_localization.sh" --map "$map_file" "${args[@]}"
 fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
+if [[ "$navigate" == true ]]; then args+=(--navigate); fi
 exec "$project_dir/run_3d_localization.sh" --global-fusion --costmaps \
   --pgm "$map_file" "${args[@]}"

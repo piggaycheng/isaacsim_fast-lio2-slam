@@ -48,7 +48,7 @@ flowchart TD
     MapServer --> RViz
 ```
 
-## PGM + PCD 模式（全域融合及可選 costmap 觀察已實作；導航尚未整合）
+## PGM + PCD 模式（全域融合、costmap 及受限單點導航）
 
 ```mermaid
 flowchart TD
@@ -194,6 +194,21 @@ ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
 或自主駕駛。Global costmap 使用 PGM 靜態層和膨脹層，
 local costmap 使用 8 m 滾動視窗、`/perception/obstacles` 標記、
 `/scan` 射線清除及膨脹層。
+另外，`./run_nav.sh --mode 3d --navigate` 可選擇啟動 Nav2 planner、
+controller 和 `NavigateToPose` 導航；此時由 Nav2 內部管理兩張
+costmap。Nav2 發布 `/nav2/cmd_vel`，由 ROS 2 安全節點檢查 PCD 校正
+時效、速度與平面運動後發布標準 `/cmd_vel`，Isaac Sim 原生 ROS 2
+Subscribe Twist 節點直接接收並驅動 Carter（不使用 Unix socket）。
+此模式不會與鍵盤或 auto-jog
+同時控制。啟動後在 RViz 使用「2D Goal Pose」於地圖上點選目標並
+拖曳設定朝向；`/goal_pose` 直接由 Nav2 接收，沒有先前短距離測試的
+前方角度／距離限制。Nav2 每秒重新規劃路徑，但未配置自動 recovery。
+沒有指定 `--navigate` 時仍只觀察 costmap。
+手動 W/S 線速度和 Nav2 控制路徑的線速度上限均為 0.75 m/s，
+Nav2 的 `desired_linear_vel` 則設定為 0.5 m/s（進彎、接近終點或
+碰撞預測時控制器仍可能降速）。命令中斷超過
+0.5 秒或 PCD 校正超過 4 秒未更新會讓 Carter 停車，
+但此模式尚未驗證足以安全避障或用於真實車輛。
 也可用統一入口 `./run_nav.sh --mode 3d` 啟動相同的全域融合與
 costmap 觀察流程；`run_nav.sh` 一律須指定 `--mode 2d` 或 `--mode 3d`，
 兩種模式不可同時執行。`run_nav.sh` 分別呼叫
