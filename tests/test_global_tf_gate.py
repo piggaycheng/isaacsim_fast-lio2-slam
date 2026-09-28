@@ -1,5 +1,6 @@
 import math
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -43,6 +44,7 @@ class TestGlobalTfGate(unittest.TestCase):
         local = TransformStamped()
         local.transform.translation.x = 2.0
         local.transform.rotation.w = 1.0
+        self.real_lookup = self.node.tf_buffer.lookup_transform
         self.node.tf_buffer.lookup_transform = Mock(return_value=local)
 
     def tearDown(self):
@@ -58,6 +60,10 @@ class TestGlobalTfGate(unittest.TestCase):
         self.assertEqual((transform.header.frame_id, transform.child_frame_id),
                          ("map", "odom"))
         self.assertAlmostEqual(transform.transform.translation.x, 3.0)
+        lookup = self.node.tf_buffer.lookup_transform.call_args
+        self.assertEqual(lookup.args[:2], ("odom", "base_link"))
+        self.assertEqual(lookup.args[2].nanoseconds, 10_000_000_000)
+        self.assertAlmostEqual(lookup.kwargs["timeout"].nanoseconds / 1e9, 0.1)
 
     def test_stale_or_not_yet_corrected_global_output_does_not_publish_tf(self):
         self.node.on_global_odometry(odometry(10))
@@ -71,6 +77,29 @@ class TestGlobalTfGate(unittest.TestCase):
         self.node.get_clock().now.return_value.to_msg.return_value.sec = 20
         self.node.on_global_odometry(odometry(20))
         self.node.broadcaster.sendTransform.assert_not_called()
+
+    def test_waits_for_local_tf_at_the_global_odom_stamp(self):
+        self.node.tf_buffer.lookup_transform = self.real_lookup
+        header = Header(frame_id="map")
+        header.stamp.sec = 9
+        self.node.on_correction(header)
+        local = TransformStamped()
+        local.header.frame_id = "odom"
+        local.header.stamp.sec = 10
+        local.child_frame_id = "base_link"
+        local.transform.translation.x = 2.0
+        local.transform.rotation.w = 1.0
+        delayed = threading.Timer(
+            0.02, self.node.tf_buffer.set_transform, args=(local, "test")
+        )
+        delayed.start()
+        try:
+            self.node.on_global_odometry(odometry(10))
+        finally:
+            delayed.join()
+        transform = self.node.broadcaster.sendTransform.call_args.args[0]
+        self.assertEqual(transform.header.stamp.sec, 10)
+        self.assertAlmostEqual(transform.transform.translation.x, 3.0)
 
     def test_rotation_and_translation_compose(self):
         global_pose = odometry(10).pose.pose

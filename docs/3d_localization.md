@@ -149,7 +149,10 @@ LiDAR 與 IMU 的固定座標轉換由 `robot_state_publisher` 或 static TF 提
 
 LiDAR／IMU 經 FAST-LIO 與 PCD 配準，上游先依 ICP fitness 門檻篩選校正。Adapter 再結合 `/map_to_odom` 和 `/Odometry`，檢查掃描與里程計的新鮮度及位姿跳動，產生 `map` 座標的 `base_link` 位姿供 Global EKF 融合。輪速與 IMU 同時供 Local／Global EKF 預測。
 
-Global EKF 設為 `publish_tf: false`；閘控節點只在近期有有效 PCD 校正時，依 `/odometry/global` 和局部 TF 發布 `map -> odom`。不要同時啟動 2D AMCL、3D 融合或獨立 3D 展示模式。
+Global EKF 設為 `publish_tf: false`；閘控節點只在近期有有效 PCD 校正時，
+依 `/odometry/global` 和同時間的局部 TF 發布 `map -> odom`。
+若局部 TF 晚到，最多等待 0.1 秒；仍無 TF 則不發布該筆轉換。
+不要同時啟動 2D AMCL、3D 融合或獨立 3D 展示模式。
 
 ## 選擇啟動方式
 

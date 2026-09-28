@@ -4,6 +4,8 @@ import math
 
 import rclpy
 from nav_msgs.msg import Odometry
+from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import Header
@@ -90,7 +92,8 @@ class GlobalTfGate(Node):
             return
         try:
             local = self.tf_buffer.lookup_transform(
-                "odom", "base_link", Time.from_msg(message.header.stamp)
+                "odom", "base_link", Time.from_msg(message.header.stamp),
+                timeout=Duration(seconds=0.1),
             )
         except TransformException as error:
             if (
@@ -135,9 +138,12 @@ class GlobalTfGate(Node):
 def main():
     rclpy.init()
     node = GlobalTfGate()
+    # Keep the TF subscriber responsive while an odometry callback waits for its stamp.
+    executor = MultiThreadedExecutor(num_threads=2)
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 
