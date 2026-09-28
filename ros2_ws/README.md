@@ -179,7 +179,9 @@ The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
 local odometry remained nearly stationary. Letting AMCL own this transform
 prevents that drift; its `map -> odom` correction remains fixed between AMCL
-updates. With an additional 3D localizer, switch TF ownership to a validated
-global fusion node and disable AMCL's TF broadcast before enabling it.
+updates. In the planned PCD-based navigation mode, do not start AMCL:
+keep the PGM for Nav2's costmap, and give a validated global fusion node sole
+ownership of `map -> odom` using quality-gated 3D localization plus wheel/IMU
+data. This integration is not implemented yet.
 
 Use `./run_nav.sh --help` for all options.
