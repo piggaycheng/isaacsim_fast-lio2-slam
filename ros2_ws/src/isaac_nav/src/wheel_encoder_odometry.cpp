@@ -39,7 +39,7 @@ public:
     right_joint_ = declare_parameter<std::string>("right_joint", "joint_wheel_left");
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
-    wheel_radius_ = declare_parameter<double>("wheel_radius", 0.04295);
+    wheel_radius_ = declare_parameter<double>("wheel_radius", 0.14);
     wheel_base_ = declare_parameter<double>("wheel_base", 0.4132);
     encoder_ticks_per_revolution_ =
       declare_parameter<int>("encoder_ticks_per_revolution", 2048);

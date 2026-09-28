@@ -171,6 +171,14 @@ Global EKF 不斷發布漂移 TF，Global EKF 設為 `publish_tf: false`，
 另由閘控節點在收到近期校正時發布**唯一**的 `map -> odom`，
 Local EKF 發布 `odom -> base_link`。此模式不啟動 AMCL 或 Nav2，
 不與 `run_nav.sh`／原本的獨立 3D 展示模式同時執行。
+Nova Carter 驅動輪的 USD 接地碰撞體半徑為 0.14 m（輪距 0.4132 m）；
+控制器與輪速里程計須使用相同幾何，否則移動時輪速低估、
+`map -> odom` 必須持續補償，掃描會相對地圖漂移。
+目前也沿用 2D 模式的 `pointcloud_to_laserscan`，對 `/isaac/lidar_points`
+以 `base_link` 高度 0.1–2.0 m 裁切後發布 `/scan`，供 RViz 對照 PGM
+檢查障礙物投影。這只是 Nav2 local costmap 的**候選輸入**，還沒有
+地面分割、3D 障礙物體素化或已啟動的 Nav2 costmap；低於 0.1 m 的
+障礙物可能被濾掉，須驗證使用場景與高度設定後再用於自主避障。
 上游尚未輸出 ICP fitness 數值或可信 covariance；目前使用可調的保守
 測量 covariance，並未完成真值精度驗證或導航失效安全驗證，
 不能將本模式視為可上線的自主導航。

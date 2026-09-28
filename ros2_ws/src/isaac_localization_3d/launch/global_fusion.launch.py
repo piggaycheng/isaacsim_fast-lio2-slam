@@ -60,6 +60,17 @@ def generate_launch_description():
                 remappings=[("odometry/filtered", "/odometry/local")],
             ),
             Node(
+                package="pointcloud_to_laserscan",
+                executable="pointcloud_to_laserscan_node",
+                name="pointcloud_to_laserscan",
+                output="screen",
+                remappings=[
+                    ("cloud_in", "/isaac/lidar_points"),
+                    ("scan", "/scan"),
+                ],
+                parameters=nav_parameters,
+            ),
+            Node(
                 package="isaac_fastlio_adapter", executable="pointcloud2_to_livox",
                 output="screen", parameters=[sim],
             ),

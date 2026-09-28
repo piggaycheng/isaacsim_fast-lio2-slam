@@ -210,7 +210,7 @@ try:
         usd_path=carter_usd_path,
         positions=CARTER_SPAWN_POSITION,
     )
-    controller = DifferentialController(wheel_radius=0.04295, wheel_base=0.4132)
+    controller = DifferentialController(wheel_radius=0.14, wheel_base=0.4132)
 
     lidar_prim = stage.GetPrimAtPath(CARTER_LIDAR_PRIM_PATH)
     if not lidar_prim.IsValid():
@@ -310,6 +310,11 @@ try:
         if displacement[0] >= -0.01:
             raise RuntimeError(
                 f"Nova Carter forward jog moved in the wrong direction: displacement={displacement.tolist()}"
+            )
+        if not 0.15 <= distance_moved <= 0.25:
+            raise RuntimeError(
+                f"Nova Carter jog speed differs from the commanded 0.2 m/s: "
+                f"moved {distance_moved:.3f} m in one simulated second"
             )
         print(
             f"Nova Carter jog test passed: displacement={displacement.tolist()}, "

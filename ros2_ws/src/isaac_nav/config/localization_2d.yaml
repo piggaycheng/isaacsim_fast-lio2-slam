@@ -7,7 +7,7 @@ wheel_encoder_odometry:
     right_joint: joint_wheel_left
     odom_frame: odom
     base_frame: base_link
-    wheel_radius: 0.04295
+    wheel_radius: 0.14
     wheel_base: 0.4132
     encoder_ticks_per_revolution: 2048
     left_distance_scale: 1.002

@@ -111,7 +111,7 @@ set -u
 
 required_packages=(isaac_localization_3d fast_lio_localization isaac_fastlio_adapter nav2_map_server nav2_lifecycle_manager)
 if [[ "$global_fusion" == true ]]; then
-  required_packages+=(isaac_nav robot_localization)
+  required_packages+=(isaac_nav robot_localization pointcloud_to_laserscan)
 fi
 for package in "${required_packages[@]}"; do
   if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then

@@ -192,11 +192,25 @@ and wheel/IMU inputs in both Local and Global EKFs. Local EKF owns
 `odom -> base_link`; the Global EKF publishes `/odometry/global` with TF disabled,
 and a freshness gate alone publishes `map -> odom` while PCD corrections remain
 recent. It does **not** start AMCL or Nav2; the PGM is displayed in RViz.
+Nova Carter's USD drive-wheel contact radius is 0.14 m (0.4132 m wheelbase);
+both the simulator controller and wheel odometry use these dimensions. Using
+the smaller controller-only radius for wheel odometry makes the moving scan
+drift relative to the map between PCD corrections.
+The same height-filtered `pointcloud_to_laserscan` configuration as the 2D
+mode also projects `/isaac/lidar_points` into `/scan` (in `base_link`), shown
+against the PGM in RViz. The height window is 0.1–2.0 m above `base_link`:
+this is a 2D obstacle projection, **not** ground segmentation or a 3D costmap.
+Obstacles below 0.1 m or beyond the sensor/range limits may be missed; Nav2
+does not consume `/scan` until its costmap is configured and launched.
 Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
 The upstream ICP node enforces its fitness threshold internally but does not
 publish a quality score or calibrated covariance; global pose covariance is
 configurable, not experimentally calibrated. This is not yet validated for
 autonomous navigation or positioning accuracy against simulation ground truth.
+The RViz "Accepted PCD Position" display shows the accepted pose without its
+covariance geometry: unobserved height/tilt axes carry deliberately large
+variances and otherwise draw misleading vertical lines. Covariance remains in
+the published message for the EKF.
 
 Use `./run_nav.sh --help` for all options.
