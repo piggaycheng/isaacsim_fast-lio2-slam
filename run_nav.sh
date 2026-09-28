@@ -2,147 +2,89 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_dir="$project_dir/ros2_ws"
-nav_prefix="$workspace_dir/nav_install/opt/ros/humble"
-nav_root="$workspace_dir/nav_install"
+mode=""
 map_file="$project_dir/maps/office/map_2d.yaml"
+map_pcd=""
 headless=false
-rviz=true
 auto_jog=false
+rviz=true
+manual_initial_pose=false
 
 usage() {
   cat <<'EOF'
-Usage: ./run_nav.sh [OPTIONS]
+Usage: ./run_nav.sh --mode {2d|3d} [OPTIONS]
 
-Launch Isaac Sim and the 2D localization stack.
+Launch Isaac Sim with exactly one localization mode.
 
 Options:
-  -m, --map FILE       Nav2 map YAML file. The YAML selects its PGM image.
-                       Default: maps/office/map_2d.yaml
+      --mode MODE      Required: 2d (AMCL), or 3d (PCD fusion and costmaps).
+  -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
+      --pcd FILE       3d only: PCD map (default: maps/office/map.pcd).
+      --manual-initial-pose
+                       3d only: set initial pose in RViz instead of Office spawn.
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
   -h, --help           Show this help.
 
 Examples:
-  ./run_nav.sh
-  ./run_nav.sh --map maps/warehouse/map.yaml
-  ./run_nav.sh --headless --auto-jog --no-rviz
+  ./run_nav.sh --mode 2d
+  ./run_nav.sh --mode 3d --headless --no-rviz
 EOF
 }
 
 while (($# > 0)); do
   case "$1" in
+    --mode)
+      if (($# < 2)) || [[ -n "$mode" ]]; then
+        echo "--mode requires one value and may only be specified once" >&2
+        exit 2
+      fi
+      mode="$2"
+      shift 2
+      ;;
     -m|--map)
       if (($# < 2)); then
         echo "Missing value for $1" >&2
-        usage >&2
         exit 2
       fi
       map_file="$2"
       shift 2
       ;;
-    --headless)
-      headless=true
-      shift
+    --pcd)
+      if (($# < 2)); then
+        echo "Missing value for --pcd" >&2
+        exit 2
+      fi
+      map_pcd="$2"
+      shift 2
       ;;
-    --auto-jog)
-      auto_jog=true
-      shift
-      ;;
-    --no-rviz)
-      rviz=false
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "Unknown option: $1" >&2
-      usage >&2
-      exit 2
-      ;;
+    --manual-initial-pose) manual_initial_pose=true; shift ;;
+    --headless) headless=true; shift ;;
+    --auto-jog) auto_jog=true; shift ;;
+    --no-rviz) rviz=false; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-if [[ "$map_file" != /* ]]; then
-  map_file="$project_dir/$map_file"
+if [[ "$mode" != 2d && "$mode" != 3d ]]; then
+  echo "Specify --mode 2d or --mode 3d" >&2
+  usage >&2
+  exit 2
 fi
-if [[ ! -f "$map_file" ]]; then
-  echo "Map YAML does not exist: $map_file" >&2
-  exit 1
-fi
-if [[ "$map_file" != *.yaml && "$map_file" != *.yml ]]; then
-  echo "--map must point to a Nav2 YAML file, not directly to a PGM: $map_file" >&2
-  exit 1
-fi
-
-map_image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$map_file" | head -1)"
-map_image="${map_image%\"}"
-map_image="${map_image#\"}"
-map_image="${map_image%\'}"
-map_image="${map_image#\'}"
-if [[ -z "$map_image" ]]; then
-  echo "Map YAML has no image entry: $map_file" >&2
-  exit 1
-fi
-if [[ "$map_image" != /* ]]; then
-  map_image="$(dirname "$map_file")/$map_image"
-fi
-if [[ ! -f "$map_image" ]]; then
-  echo "PGM referenced by the map YAML does not exist: $map_image" >&2
-  exit 1
-fi
-if [[ ! -f "$workspace_dir/install/setup.bash" ]]; then
-  echo "ROS workspace is not built. Run ros2_ws/build_workspace.sh first." >&2
-  exit 1
-fi
-
-source /opt/ros/humble/setup.bash
-if [[ -d "$nav_prefix" ]]; then
-  export AMENT_PREFIX_PATH="$nav_prefix:${AMENT_PREFIX_PATH:-}"
-  export CMAKE_PREFIX_PATH="$nav_prefix:${CMAKE_PREFIX_PATH:-}"
-  export PATH="$nav_prefix/bin:$nav_prefix/lib/nav2_amcl:$nav_prefix/lib/nav2_lifecycle_manager:$nav_prefix/lib/nav2_map_server:$nav_prefix/lib/pointcloud_to_laserscan:$nav_prefix/lib/robot_localization:$PATH"
-  export LD_LIBRARY_PATH="$nav_prefix/lib:$nav_prefix/lib/x86_64-linux-gnu:$nav_root/usr/lib:$nav_root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
-  export PYTHONPATH="$nav_prefix/lib/python3.10/site-packages:${PYTHONPATH:-}"
-fi
-source "$workspace_dir/install/setup.bash"
-set -u
-
-required_packages=(
-  isaac_nav
-  nav2_amcl
-  nav2_lifecycle_manager
-  nav2_map_server
-  pointcloud_to_laserscan
-  robot_localization
-)
-for package in "${required_packages[@]}"; do
-  if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then
-    echo "Missing ROS package: $package" >&2
-    echo "Run ros2_ws/install_nav_dependencies.sh and rebuild the workspace." >&2
-    exit 1
+args=()
+if [[ "$headless" == true ]]; then args+=(--headless); fi
+if [[ "$auto_jog" == true ]]; then args+=(--auto-jog); fi
+if [[ "$rviz" == false ]]; then args+=(--no-rviz); fi
+if [[ "$mode" == 2d ]]; then
+  if [[ -n "$map_pcd" || "$manual_initial_pose" == true ]]; then
+    echo "--pcd and --manual-initial-pose require --mode 3d" >&2
+    exit 2
   fi
-done
-
-ros2 launch isaac_nav localization_2d.launch.py \
-  map:="$map_file" \
-  rviz:="$rviz" &
-ros_pid=$!
-
-cleanup() {
-  kill "$ros_pid" 2>/dev/null || true
-  wait "$ros_pid" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
-
-isaac_args=(--lidar-motion-compensation compensated)
-if [[ "$headless" == true ]]; then
-  isaac_args+=(--headless)
+  exec "$project_dir/run_2d_localization.sh" --map "$map_file" "${args[@]}"
 fi
-if [[ "$auto_jog" == true ]]; then
-  isaac_args+=(--auto-jog)
-fi
-
-"$project_dir/standalone.py" "${isaac_args[@]}"
+if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
+if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
+exec "$project_dir/run_3d_localization.sh" --global-fusion --costmaps \
+  --pgm "$map_file" "${args[@]}"

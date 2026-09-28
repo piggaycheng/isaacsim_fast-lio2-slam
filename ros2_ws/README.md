@@ -150,20 +150,24 @@ Install the project-local ROS 2 navigation dependencies and build the workspace:
 Start Isaac Sim and the 2D localization stack with the default Office map:
 
 ```bash
-./run_nav.sh
+./run_nav.sh --mode 2d
 ```
+
+`run_nav.sh` requires `--mode` and delegates 2D startup to
+`run_2d_localization.sh`; the latter can also be run directly with the same
+2D options, without `--mode`.
 
 The default map is `maps/office/map_2d.yaml`; that YAML loads
 `maps/office/map_2d.pgm`. Select another Nav2 map YAML with:
 
 ```bash
-./run_nav.sh --map maps/warehouse/map.yaml
+./run_nav.sh --mode 2d --map maps/warehouse/map.yaml
 ```
 
 For a headless automatic localization test:
 
 ```bash
-./run_nav.sh --headless --auto-jog --no-rviz
+./run_nav.sh --mode 2d --headless --auto-jog --no-rviz
 ```
 
 The localization stack:
@@ -215,6 +219,14 @@ To observe Nav2 costmaps without starting a planner or controller:
 ```bash
 ./run_3d_localization.sh --global-fusion --costmaps
 ```
+
+The unified entry point is `./run_nav.sh --mode 3d`. It launches this same
+PCD fusion and costmap observation mode, not autonomous driving. Both modes
+require `--mode` explicitly: `2d` starts AMCL, while `3d` starts PCD localization
+and costmaps without AMCL. `--map` selects a PGM map in either mode; `--pcd`
+and `--manual-initial-pose` apply only to `3d`. The separate
+`run_3d_localization.sh` remains available directly for its visualization-only and
+fusion-without-costmaps variants. Never run the modes concurrently.
 
 `--costmaps` also enables `--obstacle-cloud`. RViz overlays the Office PGM
 with `/global_costmap/costmap` (static PGM and inflation) and

@@ -1,10 +1,11 @@
 # 2D 定位現況與 3D 定位目標架構
 
-目前 `run_nav.sh` 僅實作 2D 定位：輪式里程計與 IMU 進 Local EKF，
+`run_nav.sh --mode 2d` 使用 2D 定位：輪式里程計與 IMU 進 Local EKF，
 由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，
 由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
 停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF
 在缺少全域校正時繼續預測出不合理的位移。
+此入口將 2D 啟動交給可單獨執行的 `run_2d_localization.sh`。
 
 未來若提供與 PGM 同座標系的 PCD，規劃切換到以下目標架構：
 停用 AMCL（PGM 只供 Nav2 costmap 使用），將
@@ -20,7 +21,7 @@ PGM + PCD 導航全域融合已實作。操作方式見
 
 ## 只有 PGM：純 2D 定位（目前已實作）
 
-以下是 `run_nav.sh` 的定位資料流；PGM 同時可供後續 Nav2 的
+以下是 `run_nav.sh --mode 2d` 的定位資料流；PGM 同時可供後續 Nav2 的
 global costmap 使用。此模式不載入 PCD、不啟動 FAST_LIO_LOCALIZATION2
 或 Global EKF。
 
@@ -154,7 +155,7 @@ flowchart TD
 | `odom -> base_link` | Local `robot_localization` |
 | `base_link -> lidar`、`base_link -> imu` | `robot_state_publisher` 或 static TF |
 
-目前 `run_nav.sh` 的 AMCL 使用 `tf_broadcast: true`。規劃中的 PCD
+`run_nav.sh --mode 2d` 的 AMCL 使用 `tf_broadcast: true`。PCD
 融合測試模式不啟動 AMCL，由校正時效閘控節點接管 `map -> odom`。
 `FAST_LIO_LOCALIZATION2` 原版
 `transform_fusion.py` 會發布 `map -> camera_init` TF，不能不修改就與目前
@@ -193,6 +194,11 @@ ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
 或自主駕駛。Global costmap 使用 PGM 靜態層和膨脹層，
 local costmap 使用 8 m 滾動視窗、`/perception/obstacles` 標記、
 `/scan` 射線清除及膨脹層。
+也可用統一入口 `./run_nav.sh --mode 3d` 啟動相同的全域融合與
+costmap 觀察流程；`run_nav.sh` 一律須指定 `--mode 2d` 或 `--mode 3d`，
+兩種模式不可同時執行。`run_nav.sh` 分別呼叫
+`run_2d_localization.sh` 和 `run_3d_localization.sh`；後者仍支援
+獨立的 3D 展示模式。
 在 RViz 疊加的「Global costmap (optional)」
 及「Local costmap (optional)」Map 顯示中可觀察佔據格和膨脹區，
 亦可切換 Office PGM 及 3D 點雲圖層對照。`robot_radius: 0.65 m`
