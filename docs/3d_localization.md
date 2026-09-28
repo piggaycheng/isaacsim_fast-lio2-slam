@@ -179,6 +179,15 @@ Nova Carter 驅動輪的 USD 接地碰撞體半徑為 0.14 m（輪距 0.4132 m�
 檢查障礙物投影。這只是 Nav2 local costmap 的**候選輸入**，還沒有
 地面分割、3D 障礙物體素化或已啟動的 Nav2 costmap；低於 0.1 m 的
 障礙物可能被濾掉，須驗證使用場景與高度設定後再用於自主避障。
+可選的 `--obstacle-cloud`（須與 `--global-fusion` 同用）會將 LiDAR
+點雲依訊息時間轉到 `base_link`，在近地點上以 RANSAC 偵測近水平地面，
+去除地面、裁切高度與距離，再以 8 cm 體素降採樣，發布
+`/perception/obstacles`（`PointCloud2`，`base_link` frame）。
+若找不到近 `base_link` 原點的地面平面或 TF 無效，會警告並**不發布**
+該圈障礙物點雲，絕不將未分割的地面偽裝成障礙物；RViz 的「3D
+ground-filtered obstacles」顯示需手動開啟以避免常態渲染負擔。
+目前僅供 Office 的水平地面驗證，尚未處理斜坡、動態物追蹤、
+逐點運動補償或 Nav2 的 voxel/costmap 接線及失效時停車安全機制。
 上游尚未輸出 ICP fitness 數值或可信 covariance；目前使用可調的保守
 測量 covariance，並未完成真值精度驗證或導航失效安全驗證，
 不能將本模式視為可上線的自主導航。

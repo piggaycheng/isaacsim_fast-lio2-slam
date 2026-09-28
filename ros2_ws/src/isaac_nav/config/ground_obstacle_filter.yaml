@@ -1,0 +1,14 @@
+ground_obstacle_filter:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /isaac/lidar_points
+    output_topic: /perception/obstacles
+    base_frame: base_link
+    min_range: 0.5
+    max_range: 20.0
+    ground_search_height: 0.25
+    ground_distance: 0.04
+    min_ground_points: 50
+    min_obstacle_height: 0.06
+    max_obstacle_height: 2.0
+    voxel_size: 0.08

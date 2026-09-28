@@ -15,6 +15,7 @@ def generate_launch_description():
     map_pgm = LaunchConfiguration("map_pgm")
     rviz = LaunchConfiguration("rviz")
     auto_initial_pose = LaunchConfiguration("auto_initial_pose")
+    obstacle_cloud = LaunchConfiguration("obstacle_cloud")
     sim = {"use_sim_time": True}
     nav_parameters = [os.path.join(nav, "config", "localization_2d.yaml"), sim]
     return LaunchDescription(
@@ -23,6 +24,7 @@ def generate_launch_description():
             DeclareLaunchArgument("map_pgm", description="Absolute Nav2 map YAML path"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
+            DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",
@@ -69,6 +71,16 @@ def generate_launch_description():
                     ("scan", "/scan"),
                 ],
                 parameters=nav_parameters,
+            ),
+            Node(
+                condition=IfCondition(obstacle_cloud),
+                package="isaac_nav",
+                executable="ground_obstacle_filter",
+                name="ground_obstacle_filter",
+                output="screen",
+                parameters=[
+                    os.path.join(nav, "config", "ground_obstacle_filter.yaml"), sim
+                ],
             ),
             Node(
                 package="isaac_fastlio_adapter", executable="pointcloud2_to_livox",

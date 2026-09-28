@@ -13,6 +13,7 @@ rviz=true
 auto_jog=false
 auto_initial_pose=true
 global_fusion=false
+obstacle_cloud=false
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,9 @@ Options:
       --no-rviz       Run without RViz.
       --global-fusion Run isolated PCD + wheel/IMU dual-EKF fusion instead of
                       the original 3D-only visualization (no AMCL or Nav2).
+      --obstacle-cloud
+                      With --global-fusion, filter ground from the 3D LiDAR
+                      and publish /perception/obstacles (not a Nav2 costmap).
   -h, --help          Show this help.
 EOF
 }
@@ -51,10 +55,15 @@ while (($# > 0)); do
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
     --global-fusion) global_fusion=true; shift ;;
+    --obstacle-cloud) obstacle_cloud=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
+  echo "--obstacle-cloud requires --global-fusion" >&2
+  exit 2
+fi
 
 if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ "$map_pgm" != /* ]]; then map_pgm="$project_dir/$map_pgm"; fi
@@ -125,10 +134,13 @@ if ! "$base/venv/bin/python" -c 'import open3d, ros2_numpy, tf_transformations';
 fi
 
 launch_file=localization_3d.launch.py
-if [[ "$global_fusion" == true ]]; then launch_file=global_fusion.launch.py; fi
-ros2 launch isaac_localization_3d "$launch_file" \
-  map_pcd:="$map_pcd" map_pgm:="$map_pgm" rviz:="$rviz" \
-  auto_initial_pose:="$auto_initial_pose" &
+launch_args=(map_pcd:="$map_pcd" map_pgm:="$map_pgm" rviz:="$rviz"
+  auto_initial_pose:="$auto_initial_pose")
+if [[ "$global_fusion" == true ]]; then
+  launch_file=global_fusion.launch.py
+  launch_args+=(obstacle_cloud:="$obstacle_cloud")
+fi
+ros2 launch isaac_localization_3d "$launch_file" "${launch_args[@]}" &
 ros_pid=$!
 
 cleanup() {

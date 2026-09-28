@@ -202,6 +202,15 @@ against the PGM in RViz. The height window is 0.1–2.0 m above `base_link`:
 this is a 2D obstacle projection, **not** ground segmentation or a 3D costmap.
 Obstacles below 0.1 m or beyond the sensor/range limits may be missed; Nav2
 does not consume `/scan` until its costmap is configured and launched.
+For experimental 3D perception, run
+`./run_3d_localization.sh --global-fusion --obstacle-cloud`.
+The optional ground filter transforms the raw LiDAR cloud into `base_link`,
+fits a near-horizontal ground plane with RANSAC, and publishes height-limited,
+8 cm voxelized `/perception/obstacles` as a `PointCloud2`. It warns and
+withholds a scan if the ground or timestamped TF is unavailable. The RViz 3D
+obstacle display is off by default to avoid additional rendering load. This
+Office-floor prototype does not track moving objects, compensate each point's
+motion, handle ramps, or feed a Nav2 costmap; it is not safe obstacle avoidance.
 Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
 The upstream ICP node enforces its fitness threshold internally but does not

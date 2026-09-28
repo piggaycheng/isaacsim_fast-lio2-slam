@@ -9,8 +9,12 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>nav_msgs</depend>
+  <depend>pcl_conversions</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_sensor_msgs</depend>
+  <build_depend>libpcl-all-dev</build_depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
@@ -20,7 +24,6 @@
   <exec_depend>pointcloud_to_laserscan</exec_depend>
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>rviz2</exec_depend>
-  <exec_depend>tf2_ros</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

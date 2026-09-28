@@ -50,6 +50,19 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /scan
+    - Class: rviz_default_plugins/PointCloud2
+      Color: 54; 207; 84
+      Color Transformer: FlatColor
+      Enabled: false
+      Name: 3D ground-filtered obstacles (optional)
+      Size (Pixels): 2
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /perception/obstacles
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 5
