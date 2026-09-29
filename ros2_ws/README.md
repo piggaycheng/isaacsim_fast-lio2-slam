@@ -202,8 +202,9 @@ navigation IMU's angular rate. Wheel yaw anchors the heading when the robot
 stops, so a small nonzero simulated gyro rate cannot accumulate indefinitely;
 the IMU still contributes during turns. The same Local EKF configuration is
 used by 2D and 3D fusion. Wheel yaw is dead-reckoned and can drift if the
-wheels slip: calibrate its uncertainty for a real robot rather than assuming
-the simulated covariance applies.
+wheels slip. Wheel covariance grows with the distance and angle actually
+driven; calibrate it for a real robot with `covariance_calibration.py` (see
+`docs/covariance_calibration.md`) rather than assuming the simulated values apply.
 
 The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
@@ -315,10 +316,12 @@ in your scene before using these layers for navigation. Without `--navigate`,
 this mode does not publish driving commands or start autonomous navigation.
 Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
-The upstream ICP node enforces its fitness threshold internally but does not
-publish a quality score or calibrated covariance; global pose covariance is
-configurable, not experimentally calibrated. This is not yet validated for
-autonomous navigation or positioning accuracy against simulation ground truth.
+The ICP node publishes its registration covariance; the adapter adds the
+calibrated `min_covariance_xy/yaw` floors and stamps the pose with the FAST-LIO
+time it was composed from. `covariance_calibration.py` estimates these values
+from a rosbag without ground truth (`docs/covariance_calibration.md`) and was
+validated against Isaac Sim ground truth. Real-vehicle navigation safety is not
+yet validated.
 The RViz "Accepted PCD Position" display shows the accepted pose without its
 covariance geometry: unobserved height/tilt axes carry deliberately large
 variances and otherwise draw misleading vertical lines. Covariance remains in

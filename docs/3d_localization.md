@@ -179,7 +179,7 @@ Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速�
 - **輪速**：Nova Carter 驅動輪接地碰撞體半徑 0.14 m、輪距 0.4132 m；控制器與輪速里程計須使用一致幾何，否則定位校正會持續補償里程誤差。
 - **航向**：2D／3D 共用的 `isaac_nav/config/local_odometry.yaml` 讓 Local EKF 融合輪速 yaw 位姿與 IMU 角速度；2D 專用的 AMCL、地圖伺服器及 RViz 啟動設定在 `isaac_localization_2d`。輪速航向約束停車時的陀螺儀偏差累積，但打滑時輪速仍可能漂移，真車須重新定標輪速不確定度。局部 costmap 刻意使用 `odom`，在 RViz 的 `map` 座標下會隨 `map -> odom` 校正呈現旋轉，不應僅為了讓畫面平行而改成 `map`。
 - **障礙物**：低於 `/scan` 裁切高度的障礙物可能被濾掉。`--obstacle-cloud` 以 RANSAC 分割近水平地面並以 8 cm 體素降採樣；地面或 TF 無效時警告且不發布該圈點雲。斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
-- **定位品質**：上游 ICP fitness 只供內部門檻判斷，未輸出數值供 covariance 定標；目前使用保守的固定測量 covariance。PCD 校正失效時不會自動切換 AMCL。車體定位以 `x/y/yaw` 為主，尚未完成真值精度及真實車輛安全驗證。
+- **定位品質**：PCD 定位輸出 ICP covariance 加上 `min_covariance_xy/yaw` 下限，並以 FAST-LIO 位姿的時間戳送入 Global EKF（`smooth_lagged_data` 會回溯修正延遲的量測）。輪速 covariance 依實際移動距離與轉角動態累積。各項數值由 `covariance_calibration.py` 定標，換車流程見 [covariance_calibration.md](covariance_calibration.md)。PCD 校正失效時不會自動切換 AMCL。車體定位以 `x/y/yaw` 為主，尚未完成真值精度及真實車輛安全驗證。
 
 ## 地圖與融合設定原則
 

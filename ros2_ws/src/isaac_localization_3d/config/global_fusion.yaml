@@ -5,6 +5,10 @@ global_ekf:
     sensor_timeout: 0.2
     reset_on_time_jump: true
     two_d_mode: true
+    # PCD poses carry the (older) LIO stamp they were composed with; rewind and
+    # replay so they are fused at that time instead of the current state.
+    smooth_lagged_data: true
+    history_length: 1.0
     publish_tf: false
     publish_acceleration: false
     map_frame: map
@@ -41,3 +45,14 @@ global_ekf:
        false, false, false]
     pose0_queue_size: 10
     pose0_nodelay: true
+
+global_pose_adapter:
+  ros__parameters:
+    # Published x/y/yaw covariance = scale * (propagated ICP covariance + minimums).
+    # Calibrate with scripts/covariance_calibration.py (docs/covariance_calibration.md).
+    registration_covariance_scale: 1.0
+    min_covariance_xy: 0.000147573
+    min_covariance_yaw: 1.4647e-06
+    # Fallback only when a correction carries no ICP covariance.
+    covariance_xy: 0.25
+    covariance_yaw: 0.09

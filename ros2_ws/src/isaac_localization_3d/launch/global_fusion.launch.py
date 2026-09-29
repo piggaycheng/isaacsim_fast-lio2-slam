@@ -24,6 +24,7 @@ def generate_launch_description():
     nav_parameters = [os.path.join(nav, "config", "local_odometry.yaml"), sim]
     observation_config = os.path.join(package, "config", "observation_costmaps.yaml")
     navigation_config = os.path.join(package, "config", "navigation.yaml")
+    fusion_config = os.path.join(package, "config", "global_fusion.yaml")
     observing = IfCondition(PythonExpression([
         "'", costmaps, "' == 'true' and '", navigate, "' == 'false'",
     ]))
@@ -71,7 +72,7 @@ def generate_launch_description():
                 executable="static_transform_publisher",
                 name="base_to_imu_tf",
                 arguments=[
-                    "--x", "0.2317", "--y", "0", "--z", "0.526",
+                    "--x", "0.213", "--y", "-0.009", "--z", "0.526",
                     "--roll", "0", "--pitch", "0", "--yaw", "3.141592654",
                     "--frame-id", "base_link", "--child-frame-id", "imu_link",
                 ],
@@ -82,7 +83,7 @@ def generate_launch_description():
                 executable="static_transform_publisher",
                 name="base_to_lidar_tf",
                 arguments=[
-                    "--x", "0.2317", "--y", "0", "--z", "0.526",
+                    "--x", "0.213", "--y", "-0.009", "--z", "0.526",
                     "--roll", "0", "--pitch", "0", "--yaw", "3.141592654",
                     "--frame-id", "base_link", "--child-frame-id", "lidar_link",
                 ],
@@ -151,12 +152,15 @@ def generate_launch_description():
             Node(
                 package="isaac_localization_3d", executable="global_pose_adapter.py",
                 name="global_pose_adapter", output="screen",
-                parameters=[{"use_sim_time": True, "auto_initial_pose": auto_initial_pose}],
+                parameters=[
+                    fusion_config,
+                    {"use_sim_time": True, "auto_initial_pose": auto_initial_pose},
+                ],
             ),
             Node(
                 package="robot_localization", executable="ekf_node",
                 name="global_ekf", output="screen",
-                parameters=[os.path.join(package, "config", "global_fusion.yaml"), sim],
+                parameters=[fusion_config, sim],
                 remappings=[("odometry/filtered", "/odometry/global")],
             ),
             Node(

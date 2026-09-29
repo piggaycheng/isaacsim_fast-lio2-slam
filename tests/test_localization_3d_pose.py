@@ -7,6 +7,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 
 from ros2_ws.src.isaac_localization_3d.scripts.localization_3d_pose import (
+    BODY_TO_BASE,
     LocalizationVisualization,
     compose_pose,
 )
@@ -91,12 +92,13 @@ class TestLocalizationVisualization(unittest.TestCase):
         self.assertEqual(transform.header.stamp.sec, 12)
         self.assertEqual(transform.transform.translation.x, 1.0)
         base_odom = self.node.odom_publisher.publish.call_args.args[0]
-        self.assertAlmostEqual(base_odom.pose.pose.position.x, 1.2317)
+        self.assertAlmostEqual(base_odom.pose.pose.position.x, 1.0 + BODY_TO_BASE[0][0])
+        self.assertAlmostEqual(base_odom.pose.pose.position.y, BODY_TO_BASE[0][1])
         self.assertAlmostEqual(base_odom.pose.pose.position.z, -0.526)
         projected_pose = self.node.pose_publisher.publish.call_args.args[0]
         self.assertEqual(projected_pose.header.frame_id, "map")
         self.assertEqual(projected_pose.pose.position.z, 0)
-        self.assertAlmostEqual(projected_pose.pose.position.x, 1.2317)
+        self.assertAlmostEqual(projected_pose.pose.position.x, 1.0 + BODY_TO_BASE[0][0])
         marker = self.node.marker_publisher.publish.call_args.args[0]
         self.assertEqual(marker.lifetime.sec, 2)
         self.assertEqual(marker.header.frame_id, "map")

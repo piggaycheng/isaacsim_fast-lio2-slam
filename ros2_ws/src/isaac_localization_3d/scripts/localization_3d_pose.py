@@ -10,7 +10,9 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from visualization_msgs.msg import Marker
 
 
-BODY_TO_BASE = ((0.2317, 0.0, -0.526), (0.0, 0.0, 1.0, 0.0))
+# FAST-LIO body (LiDAR/IMU) -> base_link. xy comes from covariance_calibration.py's lever-arm
+# fit (USD mount is 0.2317, 0); keep in sync with global_fusion.launch.py's static TFs.
+BODY_TO_BASE = ((0.213, -0.009, -0.526), (0.0, 0.0, 1.0, 0.0))
 
 
 def rotate_vector(quaternion, vector):

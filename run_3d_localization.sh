@@ -16,6 +16,7 @@ global_fusion=false
 obstacle_cloud=false
 costmaps=false
 navigate=false
+ros_cmd_vel=false
 
 usage() {
   cat <<'EOF'
@@ -42,6 +43,8 @@ Options:
                       3D-obstacle local Nav2 costmaps (no autonomous driving).
       --navigate      With --global-fusion, start low-speed Nav2 navigation
                       from RViz goals and accept /cmd_vel (no automatic goal).
+      --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
+                      covariance_drive.py calibration runs.
   -h, --help          Show this help.
 EOF
 }
@@ -64,6 +67,7 @@ while (($# > 0)); do
     --obstacle-cloud) obstacle_cloud=true; shift ;;
     --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
+    --ros-cmd-vel) ros_cmd_vel=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -72,8 +76,8 @@ if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
   echo "--obstacle-cloud, --costmaps and --navigate require --global-fusion" >&2
   exit 2
 fi
-if [[ "$navigate" == true && "$auto_jog" == true ]]; then
-  echo "--auto-jog cannot be combined with --navigate" >&2
+if [[ ( "$navigate" == true || "$ros_cmd_vel" == true ) && "$auto_jog" == true ]]; then
+  echo "--auto-jog cannot be combined with --navigate or --ros-cmd-vel" >&2
   exit 2
 fi
 
@@ -176,5 +180,5 @@ trap cleanup EXIT INT TERM
 isaac_args=(--lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then isaac_args+=(--auto-jog); fi
-if [[ "$navigate" == true ]]; then isaac_args+=(--ros-cmd-vel); fi
+if [[ "$navigate" == true || "$ros_cmd_vel" == true ]]; then isaac_args+=(--ros-cmd-vel); fi
 "$project_dir/standalone.py" "${isaac_args[@]}"

@@ -39,6 +39,8 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/wait_for_costmap_tf.py
   scripts/cmd_vel_safety.py
   scripts/wait_for_navigation.py
+  scripts/covariance_calibration.py
+  scripts/covariance_drive.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES scripts/xyz_cloud.py DESTINATION lib/${PROJECT_NAME})

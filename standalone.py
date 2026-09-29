@@ -14,6 +14,7 @@ CARTER_ARTICULATION_PATH = f"{CARTER_PRIM_PATH}/chassis_link"
 CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
 CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
+GROUND_TRUTH_TOPIC = "/isaac/ground_truth/odom"
 LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 1.2
 CARTER_FORWARD_SIGN = -1.0
@@ -151,6 +152,8 @@ def create_ros2_publishers() -> None:
                 ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
                 ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
                 ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
+                ("ComputeGroundTruth", "isaacsim.core.nodes.IsaacComputeOdometry"),
+                ("PublishGroundTruth", "isaacsim.ros2.bridge.ROS2PublishOdometry"),
             ],
             keys.CONNECT: [
                 ("OnPlaybackTick.outputs:tick", "ReadIMU.inputs:execIn"),
@@ -163,6 +166,19 @@ def create_ros2_publishers() -> None:
                 ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
                 ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
                 ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+                ("OnPlaybackTick.outputs:tick", "ComputeGroundTruth.inputs:execIn"),
+                ("ComputeGroundTruth.outputs:execOut", "PublishGroundTruth.inputs:execIn"),
+                ("ComputeGroundTruth.outputs:position", "PublishGroundTruth.inputs:position"),
+                ("ComputeGroundTruth.outputs:orientation", "PublishGroundTruth.inputs:orientation"),
+                (
+                    "ComputeGroundTruth.outputs:linearVelocity",
+                    "PublishGroundTruth.inputs:linearVelocity",
+                ),
+                (
+                    "ComputeGroundTruth.outputs:angularVelocity",
+                    "PublishGroundTruth.inputs:angularVelocity",
+                ),
+                ("ReadSimTime.outputs:simulationTime", "PublishGroundTruth.inputs:timeStamp"),
             ],
             keys.SET_VALUES: [
                 ("PublishIMU.inputs:topicName", "/isaac/imu"),
@@ -173,8 +189,17 @@ def create_ros2_publishers() -> None:
                     [usdrt.Sdf.Path(CARTER_ARTICULATION_PATH)],
                 ),
                 ("PublishClock.inputs:topicName", "/clock"),
+                # Simulator truth for covariance validation only; never fused.
+                ("PublishGroundTruth.inputs:topicName", GROUND_TRUTH_TOPIC),
+                ("PublishGroundTruth.inputs:odomFrameId", "isaac_world"),
+                ("PublishGroundTruth.inputs:chassisFrameId", "chassis_link"),
+                ("PublishGroundTruth.inputs:robotFront", [CARTER_FORWARD_SIGN, 0.0, 0.0]),
             ],
         },
+    )
+    og.Controller.set(
+        og.Controller.attribute(f"{graph_path}/ComputeGroundTruth.inputs:chassisPrim"),
+        [usdrt.Sdf.Path(CARTER_ARTICULATION_PATH)],
     )
     og.Controller.set(
         og.Controller.attribute(f"{graph_path}/ReadIMU.inputs:imuPrim"),
@@ -327,6 +352,7 @@ try:
     print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
     print("ROS 2 joint states: /isaac/joint_states [sensor_msgs/msg/JointState]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
+    print(f"ROS 2 simulator ground truth: {GROUND_TRUTH_TOPIC} [nav_msgs/msg/Odometry]")
     if command_receiver is not None:
         print("Carter command source: native ROS 2 /cmd_vel (0.5 s watchdog; keyboard disabled)")
     if not args.headless and command_receiver is None:

@@ -48,11 +48,40 @@ public:
     left_direction_ = declare_parameter<double>("left_direction", -1.0);
     right_direction_ = declare_parameter<double>("right_direction", -1.0);
     distance_noise_ratio_ = declare_parameter<double>("distance_noise_ratio", 0.005);
+    // Increment error model: Var(ds) = k_s|ds|, Var(dyaw) = k_yd|ds| + k_yy|dyaw|.
+    distance_variance_per_meter_ =
+      declare_parameter<double>("distance_variance_per_meter", 1.0e-4);
+    yaw_variance_per_meter_ = declare_parameter<double>("yaw_variance_per_meter", 1.0e-4);
+    yaw_variance_per_radian_ = declare_parameter<double>("yaw_variance_per_radian", 1.0e-3);
+    position_variance_per_radian_ =
+      declare_parameter<double>("position_variance_per_radian", 1.0e-5);
+    min_linear_velocity_variance_ =
+      declare_parameter<double>("min_linear_velocity_variance", 1.0e-4);
+    min_angular_velocity_variance_ =
+      declare_parameter<double>("min_angular_velocity_variance", 1.0e-4);
+    min_position_variance_ = declare_parameter<double>("min_position_variance", 1.0e-4);
+    min_yaw_variance_ = declare_parameter<double>("min_yaw_variance", 1.0e-4);
 
     if (wheel_radius_ <= 0.0 || wheel_base_ <= 0.0 ||
       encoder_ticks_per_revolution_ <= 0 || distance_noise_ratio_ < 0.0)
     {
       throw std::invalid_argument("Wheel odometry dimensions and encoder resolution must be valid");
+    }
+    for (const double value : {
+        distance_variance_per_meter_, yaw_variance_per_meter_, yaw_variance_per_radian_,
+        position_variance_per_radian_})
+    {
+      if (!std::isfinite(value) || value < 0.0) {
+        throw std::invalid_argument("Wheel odometry variance growth rates must be nonnegative");
+      }
+    }
+    for (const double value : {
+        min_linear_velocity_variance_, min_angular_velocity_variance_,
+        min_position_variance_, min_yaw_variance_})
+    {
+      if (!std::isfinite(value) || value <= 0.0) {
+        throw std::invalid_argument("Wheel odometry minimum variances must be positive");
+      }
     }
 
     tick_angle_ = kTwoPi / static_cast<double>(encoder_ticks_per_revolution_);
@@ -120,6 +149,8 @@ private:
         x_ = 0.0;
         y_ = 0.0;
         yaw_ = 0.0;
+        position_variance_ = 0.0;
+        yaw_variance_ = 0.0;
       }
       return;
     }
@@ -145,6 +176,17 @@ private:
     y_ += distance * std::sin(midpoint_yaw);
     yaw_ = std::remainder(yaw_ + delta_yaw, kTwoPi);
 
+    // Integrated pose error grows only while the wheels move, so a parked robot
+    // keeps its current heading confidence instead of drifting toward either sensor.
+    // In-place turns still scrub the wheels, so translation uncertainty grows with rotation.
+    const double distance_variance = distance_variance_per_meter_ * std::abs(distance) +
+      position_variance_per_radian_ * std::abs(delta_yaw);
+    const double step_yaw_variance =
+      yaw_variance_per_meter_ * std::abs(distance) +
+      yaw_variance_per_radian_ * std::abs(delta_yaw);
+    position_variance_ += distance_variance + distance * distance * yaw_variance_;
+    yaw_variance_ += step_yaw_variance;
+
     nav_msgs::msg::Odometry odometry;
     odometry.header.stamp = message->header.stamp;
     odometry.header.frame_id = odom_frame_;
@@ -156,18 +198,22 @@ private:
     odometry.twist.twist.linear.x = distance / dt;
     odometry.twist.twist.angular.z = delta_yaw / dt;
 
-    odometry.pose.covariance[0] = 0.02;
-    odometry.pose.covariance[7] = 0.02;
+    // White-noise equivalent of this step's increment variance.
+    const double dt_squared = dt * dt;
+    odometry.pose.covariance[0] = min_position_variance_ + position_variance_;
+    odometry.pose.covariance[7] = min_position_variance_ + position_variance_;
     odometry.pose.covariance[14] = 1.0e6;
     odometry.pose.covariance[21] = 1.0e6;
     odometry.pose.covariance[28] = 1.0e6;
-    odometry.pose.covariance[35] = 0.05;
-    odometry.twist.covariance[0] = 0.01;
+    odometry.pose.covariance[35] = min_yaw_variance_ + yaw_variance_;
+    odometry.twist.covariance[0] =
+      min_linear_velocity_variance_ + distance_variance / dt_squared;
     odometry.twist.covariance[7] = 1.0e6;
     odometry.twist.covariance[14] = 1.0e6;
     odometry.twist.covariance[21] = 1.0e6;
     odometry.twist.covariance[28] = 1.0e6;
-    odometry.twist.covariance[35] = 0.02;
+    odometry.twist.covariance[35] =
+      min_angular_velocity_variance_ + step_yaw_variance / dt_squared;
     publisher_->publish(odometry);
   }
 
@@ -185,7 +231,17 @@ private:
   double left_direction_;
   double right_direction_;
   double distance_noise_ratio_;
+  double distance_variance_per_meter_;
+  double yaw_variance_per_meter_;
+  double yaw_variance_per_radian_;
+  double position_variance_per_radian_;
+  double min_linear_velocity_variance_;
+  double min_angular_velocity_variance_;
+  double min_position_variance_;
+  double min_yaw_variance_;
   double tick_angle_;
+  double position_variance_{0.0};
+  double yaw_variance_{0.0};
 
   bool initialized_{false};
   double previous_left_angle_{0.0};

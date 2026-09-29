@@ -2,12 +2,16 @@
 """Gate fresh 3D registrations into planar global pose observations.
 
 /map_to_odom is published only after upstream ICP passes its configured fitness
-threshold (normally 0.8). Fitness is not present in that message; this node
-cannot independently verify it or infer measurement covariance from it.
+threshold (normally 0.8). global_localization_xyz.py fills its pose covariance
+with the unscaled ICP covariance of map -> camera_init (a left perturbation in
+the map frame). This node propagates it to the base_link x/y/yaw observation,
+adds minimum variances and multiplies the sum by registration_covariance_scale.
+Corrections without covariance fall back to covariance_xy/covariance_yaw.
 """
 
 import math
 
+import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
@@ -37,10 +41,29 @@ def angle_difference(first, second):
 
 
 def planar_base(correction, lio):
-    position, quaternion = compose_pose(
-        compose_pose(pose_values(correction), pose_values(lio)), BODY_TO_BASE
-    )
+    position, quaternion = base_pose(correction, lio)
     return position[0], position[1], yaw_of(quaternion)
+
+
+def base_pose(correction, lio):
+    return compose_pose(compose_pose(pose_values(correction), pose_values(lio)), BODY_TO_BASE)
+
+
+def planar_registration_covariance(covariance, position, scale, min_xy, min_yaw):
+    """Propagate a map-frame 6x6 registration covariance to base x/y/yaw."""
+    covariance = np.asarray(covariance, dtype=float).reshape(6, 6)
+    px, py, pz = position
+    # Left perturbation: delta_p = t + w x p, delta_yaw = w_z (ROS x,y,z,roll,pitch,yaw).
+    jacobian = np.array([
+        [1.0, 0.0, 0.0, 0.0, pz, -py],
+        [0.0, 1.0, 0.0, -pz, 0.0, px],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ])
+    # The scale multiplies the whole published covariance, floors included, so a
+    # multiplier measured from published covariances can be applied directly.
+    planar = jacobian @ covariance @ jacobian.T
+    planar = 0.5 * (planar + planar.T) + np.diag((min_xy, min_xy, min_yaw))
+    return scale * planar
 
 
 class GlobalPoseAdapter(Node):
@@ -60,13 +83,19 @@ class GlobalPoseAdapter(Node):
         self.jump_per_radian = self.declare_parameter("jump_per_radian", 0.2).value
         self.covariance_xy = self.declare_parameter("covariance_xy", 0.25).value
         self.covariance_yaw = self.declare_parameter("covariance_yaw", 0.09).value
+        self.registration_covariance_scale = self.declare_parameter(
+            "registration_covariance_scale", 1.0
+        ).value
+        self.min_covariance_xy = self.declare_parameter("min_covariance_xy", 1.0e-4).value
+        self.min_covariance_yaw = self.declare_parameter("min_covariance_yaw", 1.0e-5).value
         self.covariance_unobserved = self.declare_parameter(
             "covariance_unobserved", 1_000_000.0
         ).value
         for name in (
             "max_correction_age", "max_lio_age", "max_scan_age", "max_alignment",
             "max_translation_jump", "max_yaw_jump", "covariance_xy",
-            "covariance_yaw", "covariance_unobserved",
+            "covariance_yaw", "covariance_unobserved", "registration_covariance_scale",
+            "min_covariance_xy", "min_covariance_yaw",
         ):
             value = getattr(self, name)
             if not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
@@ -183,6 +212,23 @@ class GlobalPoseAdapter(Node):
             return
         self.scan_time = timestamp
 
+    def planar_covariance(self, registration_covariance, position):
+        registration = np.asarray(registration_covariance, dtype=float)
+        if not np.any(registration):
+            return np.diag((self.covariance_xy, self.covariance_xy, self.covariance_yaw))
+        registration = registration.reshape(6, 6)
+        if (
+            not np.all(np.isfinite(registration))
+            or np.any(np.diag(registration) < 0)
+            or not np.allclose(registration, registration.T, rtol=1e-6, atol=1e-12)
+        ):
+            self.reject("invalid registration covariance")
+            return None
+        return planar_registration_covariance(
+            registration, position, self.registration_covariance_scale,
+            self.min_covariance_xy, self.min_covariance_yaw,
+        )
+
     def on_correction(self, message):
         now = self.now()
         if (
@@ -238,20 +284,28 @@ class GlobalPoseAdapter(Node):
                 self.reject("registration innovation jump")
                 return
 
-        x, y, yaw = planar_base(message.pose.pose, self.lio.pose.pose)
+        position, quaternion = base_pose(message.pose.pose, self.lio.pose.pose)
+        x, y, yaw = position[0], position[1], yaw_of(quaternion)
         observation = PoseWithCovarianceStamped()
         observation.header.frame_id = "map"
-        observation.header.stamp = message.header.stamp
+        # map->camera_init is a frame correction; the base pose it yields is the
+        # LIO pose's, so it must carry the LIO stamp (up to 0.2 s older than the
+        # correction). The Global EKF replays lagged measurements at that time.
+        observation.header.stamp = self.lio.header.stamp
         observation.pose.pose.position.x = x
         observation.pose.pose.position.y = y
         observation.pose.pose.orientation.z = math.sin(yaw / 2)
         observation.pose.pose.orientation.w = math.cos(yaw / 2)
-        for index, variance in zip(
-            (0, 7, 14, 21, 28, 35),
-            (self.covariance_xy, self.covariance_xy, self.covariance_unobserved,
-             self.covariance_unobserved, self.covariance_unobserved, self.covariance_yaw),
-        ):
-            observation.pose.covariance[index] = variance
+        planar = self.planar_covariance(message.pose.covariance, position)
+        if planar is None:
+            return
+        covariance = [0.0] * 36
+        for row, ros_row in enumerate((0, 1, 5)):
+            for column, ros_column in enumerate((0, 1, 5)):
+                covariance[ros_row * 6 + ros_column] = float(planar[row, column])
+        for index in (14, 21, 28):
+            covariance[index] = self.covariance_unobserved
+        observation.pose.covariance = covariance
         self.last_correction_time = timestamp
         self.last_accepted_scan_time = self.scan_time
         self.last_accepted_lio = self.lio

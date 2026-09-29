@@ -15,6 +15,7 @@ SCRIPTS = (
 )
 sys.path.insert(0, str(SCRIPTS))
 from global_pose_adapter import GlobalPoseAdapter
+from localization_3d_pose import BODY_TO_BASE
 
 
 def stamp(message, time):
@@ -83,8 +84,8 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         pose = self.node.pose_publisher.publish.call_args.args[0]
         self.assertEqual(pose.header.frame_id, "map")
         self.assertEqual(pose.header.stamp.sec, 10)
-        self.assertAlmostEqual(pose.pose.pose.position.x, 2)
-        self.assertAlmostEqual(pose.pose.pose.position.y, 0.2317)
+        self.assertAlmostEqual(pose.pose.pose.position.x, 2 - BODY_TO_BASE[0][1])
+        self.assertAlmostEqual(pose.pose.pose.position.y, BODY_TO_BASE[0][0])
         self.assertEqual(pose.pose.pose.position.z, 0)
         self.assertAlmostEqual(pose.pose.pose.orientation.z, -math.sqrt(0.5))
         self.assertAlmostEqual(pose.pose.pose.orientation.w, math.sqrt(0.5))
@@ -125,6 +126,55 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         self.correction()
         covariance = self.node.pose_publisher.publish.call_args.args[0].pose.covariance
         self.assertEqual((covariance[0], covariance[7], covariance[35]), (0.4, 0.4, 0.16))
+
+    def test_registration_covariance_propagates_to_base_pose(self):
+        registration = [0.0] * 36
+        for index, value in zip((0, 7, 14, 21, 28, 35), (0.01, 0.02, 0.5, 1e-4, 1e-4, 4e-4)):
+            registration[index] = value
+        registration[1] = registration[6] = 0.005
+        self.node.registration_covariance_scale = 2.0
+        self.input()
+        self.at(10)
+        message = odometry("map", "", 10, x=2, yaw=math.pi / 2)
+        message.pose.covariance = registration
+        self.node.on_correction(message)
+        self.assert_count(1)
+        pose = self.node.pose_publisher.publish.call_args.args[0]
+        covariance = pose.pose.covariance
+        x, y = pose.pose.pose.position.x, pose.pose.pose.position.y
+        z = -0.526
+        # Yaw error at the base position adds lever-arm variance to x/y.
+        self.assertAlmostEqual(
+            covariance[0], 2 * (0.01 + z * z * 1e-4 + y * y * 4e-4 + 1e-4)
+        )
+        self.assertAlmostEqual(
+            covariance[7], 2 * (0.02 + z * z * 1e-4 + x * x * 4e-4 + 1e-4)
+        )
+        self.assertAlmostEqual(covariance[35], 2 * (4e-4 + 1e-5))
+        self.assertAlmostEqual(covariance[1], 2 * (0.005 - x * y * 4e-4))
+        self.assertEqual(covariance[1], covariance[6])
+        self.assertAlmostEqual(covariance[5], 2 * -y * 4e-4)
+        self.assertEqual(covariance[5], covariance[30])
+        self.assertEqual([covariance[i] for i in (14, 21, 28)], [1_000_000] * 3)
+
+    def test_pose_carries_composed_lio_stamp(self):
+        self.at(9.9)
+        self.node.on_odometry(odometry("camera_init", "body", 9.9))
+        self.node.on_scan(scan(9.9))
+        self.correction(10)
+        self.assert_count(1)
+        pose = self.node.pose_publisher.publish.call_args.args[0]
+        self.assertEqual((pose.header.stamp.sec, pose.header.stamp.nanosec), (9, 900_000_000))
+        marker = self.node.accepted_publisher.publish.call_args.args[0]
+        self.assertEqual((marker.stamp.sec, marker.stamp.nanosec), (10, 0))
+
+    def test_invalid_registration_covariance_is_rejected(self):
+        self.input()
+        self.at(10)
+        message = odometry("map", "", 10)
+        message.pose.covariance[0] = -1.0
+        self.node.on_correction(message)
+        self.assert_count(0)
 
     def test_scan_frame_alignment_and_new_scan_required(self):
         self.at(10)
