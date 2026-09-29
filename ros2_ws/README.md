@@ -156,6 +156,15 @@ Install the project-local ROS 2 navigation dependencies and build the workspace:
 ./ros2_ws/build_workspace.sh
 ```
 
+While the system `ros-humble-tf2` is older than 0.25.24,
+`install_nav_dependencies.sh` also builds upstream tf2 0.25.24 and installs
+only `libtf2.so` into `nav_install/opt/ros/humble/lib`, which the run scripts
+place ahead of `/opt/ros/humble/lib`. Older tf2 has a lock-order deadlock
+(ros2/geometry2#990) between the TF listener and costmap message filters that
+freezes a Nav2 server's TF buffer after minutes, producing
+`Transform data too old` and a rotated local costmap. Rerunning the installer
+removes the overlay once the system tf2 contains the fix.
+
 Start Isaac Sim and the 2D localization stack with the default Office map:
 
 ```bash
