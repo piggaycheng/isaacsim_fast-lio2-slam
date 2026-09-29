@@ -29,10 +29,11 @@ sent as an approximate initial pose by default; use RViz's **2D Pose Estimate**
 to reinitialize at the robot's current location, or `--manual-initial-pose`
 to require a manual estimate. RViz displays the PGM map, registered scan,
 map-frame Carter arrow, and path. The 3D launch uses a thin wrapper around
-the pinned upstream localization node: its visualization clouds
-(`/cur_scan_in_map`, `/submap`) contain only their actual XYZ fields (and
-intensity if present), without synthesizing RGB/intensity or changing the
-original `/isaac/lidar_points` FAST-LIO input. This mode owns
+the pinned upstream localization node: its `/submap` visualization cloud
+contains only its actual XYZ fields (and intensity if present), without
+synthesizing RGB/intensity or changing the original `/isaac/lidar_points`
+FAST-LIO input. The redundant `/cur_scan_in_map` copy is not published;
+ICP still consumes `/cloud_registered` directly. This mode owns
 `map -> camera_init` only;
 do not run it alongside `run_nav.sh`, whose AMCL owns `map -> odom`.
 

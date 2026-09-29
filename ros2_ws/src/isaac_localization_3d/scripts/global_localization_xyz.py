@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run upstream PCD localization with truthful XYZ-only visualization clouds."""
+"""Run upstream PCD localization without redundant scan publication."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 import rclpy
+import open3d as o3d
 from ament_index_python.packages import get_package_prefix
 
 from xyz_cloud import make_point_cloud
@@ -25,6 +26,17 @@ def upstream_localization_class():
 
 
 class XYZGlobalLocalization(upstream_localization_class()):
+    def __init__(self):
+        super().__init__()
+        if not self.destroy_publisher(self.pub_pc_in_map):
+            raise RuntimeError("Could not remove redundant /cur_scan_in_map publisher")
+        del self.pub_pc_in_map
+
+    def cb_save_cur_scan(self, msg):
+        points = self.msg_to_array(msg)
+        self.cur_scan = o3d.geometry.PointCloud()
+        self.cur_scan.points = o3d.utility.Vector3dVector(points)
+
     def publish_point_cloud(self, publisher, header, points):
         publisher.publish(make_point_cloud(header, points))
 
