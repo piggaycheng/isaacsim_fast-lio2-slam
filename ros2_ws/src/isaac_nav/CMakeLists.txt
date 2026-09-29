@@ -42,7 +42,7 @@ install(TARGETS wheel_encoder_odometry imu_covariance_adapter ground_obstacle_fi
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY config launch
+install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 

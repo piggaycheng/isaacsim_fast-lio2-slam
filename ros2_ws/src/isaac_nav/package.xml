@@ -2,7 +2,7 @@
 <package format="3">
   <name>isaac_nav</name>
   <version>0.1.0</version>
-  <description>Isaac Sim wheel odometry and ROS 2 localization launch configuration.</description>
+  <description>Shared Isaac Sim wheel odometry, IMU and local navigation inputs.</description>
   <maintainer email="noreply@example.com">slam</maintainer>
   <license>Apache-2.0</license>
 
@@ -16,14 +16,6 @@
   <depend>tf2_sensor_msgs</depend>
   <build_depend>libpcl-all-dev</build_depend>
 
-  <exec_depend>launch</exec_depend>
-  <exec_depend>launch_ros</exec_depend>
-  <exec_depend>nav2_amcl</exec_depend>
-  <exec_depend>nav2_lifecycle_manager</exec_depend>
-  <exec_depend>nav2_map_server</exec_depend>
-  <exec_depend>pointcloud_to_laserscan</exec_depend>
-  <exec_depend>robot_localization</exec_depend>
-  <exec_depend>rviz2</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

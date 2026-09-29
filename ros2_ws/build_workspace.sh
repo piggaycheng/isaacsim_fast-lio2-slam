@@ -83,6 +83,11 @@ rm -rf \
   "$workspace_dir/build/isaac_nav"
 
 rm -f \
+  "$workspace_dir/install/isaac_nav/share/isaac_nav/config/localization_2d.yaml" \
+  "$workspace_dir/install/isaac_nav/share/isaac_nav/config/localization_2d.rviz" \
+  "$workspace_dir/install/isaac_nav/share/isaac_nav/launch/localization_2d.launch.py" \
+  "$workspace_dir/install/isaac_nav/share/isaac_nav/launch/__pycache__/localization_2d.launch.cpython-310.pyc" \
+  "$workspace_dir/install/isaac_nav/share/isaac_nav/launch/__pycache__/localization_2d.launch.cpython-312.pyc" \
   "$workspace_dir/install/isaac_fastlio_adapter/lib/isaac_fastlio_adapter/wheel_encoder_odometry" \
   "$workspace_dir/install/isaac_fastlio_adapter/share/isaac_fastlio_adapter/config/localization_2d.yaml" \
   "$workspace_dir/install/isaac_fastlio_adapter/share/isaac_fastlio_adapter/config/localization_2d.rviz" \
@@ -92,7 +97,7 @@ rm -f \
 
 cd "$workspace_dir"
 colcon build \
-  --packages-up-to fastlio2 pgo isaac_fastlio_adapter isaac_nav \
+  --packages-up-to fastlio2 pgo isaac_fastlio_adapter isaac_nav isaac_localization_2d \
   --cmake-args \
   -DROS_EDITION=ROS2 \
   -DDISTRO_ROS=humble \

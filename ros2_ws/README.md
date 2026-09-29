@@ -20,7 +20,7 @@ publishes the corrected input on `/livox/imu`.
 `src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
 `src/isaac_localization_3d` contains the separate 3D localization launch,
 ROS pose/TF publisher, and RViz configuration. `run_nav.sh --mode 3d` starts
-this package; `--mode 2d` uses `isaac_nav`. Build the existing workspace first, then run
+this package; `--mode 2d` uses `isaac_localization_2d` and shared `isaac_nav` inputs. Build the existing workspace first, then run
 `./ros2_ws/install_nav_dependencies.sh` and `./ros2_ws/setup_3d_localization.sh`
 to build the 3D packages and their private dependencies. Launch the Office
 simulator and RViz together with `./run_3d_localization.sh` (use `--help` for
@@ -141,9 +141,12 @@ into FASTLIO's four accepted Livox line IDs, while preserving the original
 point order and timing.
 # 2D Localization
 
-The `isaac_nav` ROS package contains the wheel encoder odometry, navigation
-IMU covariance adapter, and localization launch/config/RViz files. The
-`isaac_fastlio_adapter` package remains dedicated to FAST-LIO mapping inputs.
+`isaac_nav` provides wheel encoder odometry, the navigation IMU adapter,
+ground obstacle filtering and the shared Local EKF/scan settings in
+`config/local_odometry.yaml`. `isaac_localization_2d` owns the AMCL settings,
+2D map/AMCL launch and RViz configuration. The 3D fusion launch reuses the
+shared inputs without starting AMCL. `isaac_fastlio_adapter` remains dedicated
+to FAST-LIO mapping inputs.
 
 Install the project-local ROS 2 navigation dependencies and build the workspace:
 
@@ -184,7 +187,7 @@ The localization stack:
 - runs a Local EKF for `odom -> base_link`;
 - runs AMCL against the selected PGM map as the only publisher of `map -> odom`.
 
-The Local EKF fuses the wheel encoder's yaw pose and forward speed with the
+The shared Local EKF fuses the wheel encoder's yaw pose and forward speed with the
 navigation IMU's angular rate. Wheel yaw anchors the heading when the robot
 stops, so a small nonzero simulated gyro rate cannot accumulate indefinitely;
 the IMU still contributes during turns. The same Local EKF configuration is

@@ -9,8 +9,10 @@ import os
 
 
 def generate_launch_description():
-    package_share = get_package_share_directory("isaac_nav")
-    config_file = os.path.join(package_share, "config", "localization_2d.yaml")
+    package_share = get_package_share_directory("isaac_localization_2d")
+    nav_share = get_package_share_directory("isaac_nav")
+    config_file = os.path.join(nav_share, "config", "local_odometry.yaml")
+    amcl_config = os.path.join(package_share, "config", "amcl.yaml")
     rviz_config = os.path.join(package_share, "config", "localization_2d.rviz")
 
     map_file = LaunchConfiguration("map")
@@ -100,7 +102,7 @@ def generate_launch_description():
                 executable="amcl",
                 name="amcl",
                 output="screen",
-                parameters=common_parameters,
+                parameters=[amcl_config, {"use_sim_time": use_sim_time}],
             ),
             Node(
                 package="nav2_lifecycle_manager",

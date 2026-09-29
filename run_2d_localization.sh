@@ -112,6 +112,7 @@ set -u
 
 required_packages=(
   isaac_nav
+  isaac_localization_2d
   nav2_amcl
   nav2_lifecycle_manager
   nav2_map_server
@@ -126,12 +127,18 @@ for package in "${required_packages[@]}"; do
   fi
 done
 
-ros2 launch isaac_nav localization_2d.launch.py \
+ros2 launch isaac_localization_2d localization_2d.launch.py \
   map:="$map_file" \
   rviz:="$rviz" &
 ros_pid=$!
 
 cleanup() {
+  trap - EXIT INT TERM
+  while read -r child_pid; do
+    if [[ "$child_pid" =~ ^[0-9]+$ ]]; then
+      kill "$child_pid" 2>/dev/null || true
+    fi
+  done < <(ps -o pid= --ppid "$ros_pid")
   kill "$ros_pid" 2>/dev/null || true
   wait "$ros_pid" 2>/dev/null || true
 }

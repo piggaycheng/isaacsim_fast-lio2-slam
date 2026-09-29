@@ -21,7 +21,7 @@ def generate_launch_description():
     costmaps = LaunchConfiguration("costmaps")
     navigate = LaunchConfiguration("navigate")
     sim = {"use_sim_time": True}
-    nav_parameters = [os.path.join(nav, "config", "localization_2d.yaml"), sim]
+    nav_parameters = [os.path.join(nav, "config", "local_odometry.yaml"), sim]
     observation_config = os.path.join(package, "config", "observation_costmaps.yaml")
     navigation_config = os.path.join(package, "config", "navigation.yaml")
     observing = IfCondition(PythonExpression([
