@@ -277,6 +277,7 @@ flowchart LR
 
 - 尚未加入 `velocity_smoother`；`collision_monitor` 的區域大小與點數門檻是估計值，停車距離尚未驗證。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
+- 尚未使用 costmap filters（Keepout 禁行區、Speed 限速區、Binary 開關區）。目前無法在地圖上劃出禁止進入或限速的區域，只能靠修改 PGM 地圖或 inflation 來間接達成。
 - footprint 與 inflation 為估計值；斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
 - topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。
 - 真實車輛導航安全尚未驗證。只在淨空的 Office 模擬中測試，並先在 RViz 確認 costmap 與規劃路徑。
