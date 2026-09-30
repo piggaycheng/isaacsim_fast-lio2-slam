@@ -288,7 +288,9 @@ After the planner, controller and navigator report active, click RViz's
 **2D Goal Pose** tool on the map and drag to set the target heading. RViz
 publishes `/goal_pose` directly to Nav2's `NavigateToPose` navigator; there
 is no short-distance or forward-only goal test. In observation-only mode,
-this RViz tool does not drive Carter.
+this RViz tool does not drive Carter. The navigation architecture (costmaps,
+planner/controller, recovery and the `cmd_vel` safety chain) is described in
+`docs/nav.md`; the localization data flow is in `docs/3d_localization.md`.
 
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Obstacles missing from the PGM,

@@ -35,106 +35,66 @@ flowchart TD
     MapServer --> RViz
 ```
 
-## PGM + PCD 模式（全域融合與導航資料流）
+## PGM + PCD 模式：3D 定位與全域融合
 
-下圖為資料流示意；獨立 deskew、Patchwork++ 等方塊為規劃項目，不是目前全部已啟動的節點。實際組合見下方「選擇啟動方式」。
+下圖只畫 `run_nav.sh --mode 3d` 的定位資料流，終點是兩條 TF。之後 costmap、planner、controller 與 recovery 的導航流程見 [`nav.md`](nav.md)。
 
 ```mermaid
 flowchart TD
-    %% -------------------- 感測與底盤 --------------------
-    subgraph Sensing ["感測與底盤 Sensing & Base"]
-        WheelJoints["左右輪關節角度<br/>/isaac/joint_states"]
-        WheelOdom["輪式里程計 wheel_encoder_odometry<br/>編碼器量化、偏差與雜訊模型<br/>/wheel/odom"]
-        IMU["IMU<br/>/isaac/imu → nav_imu_adapter → /nav/imu"]
-        Lidar3D["單一 3D LiDAR<br/>PointCloud2 /isaac/lidar_points"]
-        Chassis["底盤驅動器<br/>Isaac DifferentialController，/cmd_vel"]
+    subgraph Sensors ["Isaac Sim 感測器 Sensors"]
+        Joints["左右輪關節角度<br/>/isaac/joint_states"]
+        IMU["IMU<br/>/isaac/imu"]
+        Lidar["3D LiDAR<br/>PointCloud2 /isaac/lidar_points"]
     end
 
-    %% -------------------- 點雲前處理 --------------------
-    subgraph LidarPreprocessing ["3D LiDAR 前處理 LiDAR Preprocessing"]
-        Deskew["時間同步、deskew 與 TF 轉換<br/>time sync / deskew / TF（規劃項目）"]
-        ScanProjection["高度裁切 + pointcloud_to_laserscan<br/>虛擬 2D LaserScan /scan"]
-    end
-
-    %% -------------------- 局部狀態估計 --------------------
     subgraph LocalEstimation ["局部狀態估計 Local Estimation"]
+        WheelOdom["輪式里程計 wheel_encoder_odometry<br/>編碼器量化、偏差與雜訊模型<br/>/wheel/odom"]
+        IMUAdapter["IMU adapter nav_imu_adapter<br/>/nav/imu"]
         LocalEKF["Local robot_localization<br/>local_ekf；world_frame: odom<br/>/odometry/local"]
     end
 
-    %% -------------------- 3D 全域定位 --------------------
     subgraph Localization3D ["3D 全域定位 3D Localization（不啟動 AMCL）"]
-        PCD["3D 地圖 3D map<br/>map.pcd"]
+        Livox["pointcloud2_to_livox<br/>/livox/lidar"]
         FastLIO["FAST-LIO 里程計 localization_fastlio<br/>LiDAR + IMU；不接管導航 TF<br/>/Odometry、/cloud_registered"]
-        FastLIOLocalization["FAST_LIO_LOCALIZATION2<br/>global_localization（global_localization_xyz.py）<br/>既有 PCD 地圖 ICP 配準 /map_to_odom"]
-        FastLIOAdapter["3D 定位 Adapter global_pose_adapter<br/>位姿組合、掃描／里程計新鮮度與跳動檢查<br/>使用上游內建 fitness 門檻；設定 covariance"]
+        PCD["3D 地圖 3D map<br/>map.pcd"]
+        InitialPose["map 座標初始位姿 /initialpose<br/>手動指定 / Office 起點近似先驗"]
+        ICP["FAST_LIO_LOCALIZATION2<br/>global_localization（global_localization_xyz.py）<br/>既有 PCD 地圖 ICP 配準 /map_to_odom"]
+        Adapter["3D 定位 Adapter global_pose_adapter<br/>位姿組合、掃描／里程計新鮮度與跳動檢查<br/>使用上游內建 fitness 門檻；設定 covariance"]
     end
 
-    %% -------------------- 2D 導航地圖 --------------------
-    PGM["PGM 地圖 PGM map<br/>map_server /map<br/>只供 Nav2 costmap；不供 AMCL 定位"]
-
-    %% -------------------- 全域融合 --------------------
     subgraph GlobalFusion ["全域融合 Global Fusion"]
-        GlobalEKF["Global robot_localization<br/>global_ekf；world_frame: map"]
-        TFGate["校正時效閘控 correction freshness gate<br/>global_tf_gate<br/>唯一發布 map -> odom"]
+        GlobalEKF["Global robot_localization<br/>global_ekf；world_frame: map<br/>/odometry/global；不發布 TF"]
+        TFGate["校正時效閘控 correction freshness gate<br/>global_tf_gate"]
     end
 
-    %% -------------------- 3D 障礙物處理 --------------------
-    subgraph Perception3D ["3D 障礙物處理 3D Perception"]
-        GroundFilter["地面濾除 ground_obstacle_filter<br/>/perception/obstacles<br/>（Patchwork++ 為規劃項目）"]
-        ObstacleProjection["障礙物投影 / 體素化<br/>Nav2 ObstacleLayer（STVL 為規劃項目）"]
-    end
+    Nav["Nav2 與 cmd_vel_safety<br/>見 nav.md"]
 
-    %% -------------------- Nav2 --------------------
-    subgraph Nav2Stack ["Nav2 Navigation Stack"]
-        BTNav["BT Navigator<br/>bt_navigator"]
-        GlobalCostmap["Global Costmap<br/>global_costmap"]
-        LocalCostmap["Local Costmap<br/>local_costmap"]
-        GlobalPlanner["Global Planner<br/>planner_server"]
-        LocalController["Local Controller<br/>controller_server（RPP）"]
-    end
-
-    %% 輪式里程計與局部 EKF
-    WheelJoints --> WheelOdom
+    Joints --> WheelOdom
+    IMU --> IMUAdapter
     WheelOdom --> LocalEKF
-    IMU --> LocalEKF
+    IMUAdapter --> LocalEKF
     WheelOdom --> GlobalEKF
-    IMU --> GlobalEKF
-    LocalEKF -->|"唯一 TF: odom -> base_link"| LocalCostmap
-    LocalEKF -->|"唯一 TF: odom -> base_link"| LocalController
+    IMUAdapter --> GlobalEKF
 
-    %% PCD 配準提供唯一的全域定位觀測
-    PCD --> FastLIOLocalization
-    Lidar3D --> Deskew
-    Lidar3D -.->|"含逐點時間的原始掃描"| FastLIO
-    IMU -.-> FastLIO
-    FastLIO -.->|"局部里程計 + 配準點雲"| FastLIOLocalization
-    InitialPose["map 座標初始位姿<br/>手動指定 / Office 起點近似先驗"] --> FastLIOLocalization
-    FastLIOLocalization -.->|"map 到 LIO 起點的配準結果<br/>需擴充 fitness 輸出"| FastLIOAdapter
-    FastLIO -.->|"LIO 里程計"| FastLIOAdapter
-    FastLIOAdapter -.->|"map 座標 pose<br/>/localization_3d/global_pose"| GlobalEKF
+    Lidar --> Livox --> FastLIO
+    IMU --> FastLIO
+    PCD --> ICP
+    InitialPose --> ICP
+    InitialPose --> Adapter
+    FastLIO -->|"配準點雲 /cloud_registered"| ICP
+    ICP -->|"map 到 LIO 起點的配準結果 /map_to_odom"| Adapter
+    FastLIO -->|"LIO 里程計 /Odometry"| Adapter
+    Adapter -->|"map 座標 pose<br/>/localization_3d/global_pose"| GlobalEKF
+    Adapter -->|"校正心跳<br/>/localization_3d/accepted_correction"| TFGate
+    GlobalEKF -->|"/odometry/global"| TFGate
+    LocalEKF -->|"唯一 TF: odom -> base_link"| TFGate
 
-    %% Global EKF 不直接發布 TF；閘控節點阻止過期校正時的 TF 更新
-    FastLIOAdapter -.->|"校正心跳<br/>/localization_3d/accepted_correction"| TFGate
-    GlobalEKF -->|"/odometry/global；不發布 TF"| TFGate
-    TFGate -->|"唯一 TF: map -> odom"| GlobalCostmap
-    TFGate -->|"唯一 TF: map -> odom"| GlobalPlanner
-
-    %% Nav2 地圖與即時障礙物
-    PGM -->|"靜態 occupancy grid"| GlobalCostmap
-    Deskew --> ScanProjection
-    ScanProjection --> LocalCostmap
-    Deskew --> GroundFilter
-    GroundFilter --> ObstacleProjection
-    ObstacleProjection --> LocalCostmap
-
-    %% Nav2 資料流
-    BTNav --> GlobalPlanner
-    BTNav --> LocalController
-    GlobalCostmap --> GlobalPlanner
-    GlobalPlanner -->|"Path"| LocalController
-    LocalCostmap --> LocalController
-    LocalController -->|"/nav2/cmd_vel → cmd_vel_safety → /cmd_vel"| Chassis
+    TFGate -->|"唯一 TF: map -> odom"| Nav
+    LocalEKF -->|"唯一 TF: odom -> base_link"| Nav
+    Adapter -->|"校正心跳"| Nav
 ```
+
+`global_tf_gate` 以 `/odometry/global` 和同時間的 `odom -> base_link` 算出 `map -> odom`；校正心跳同時供 `cmd_vel_safety` 判斷校正是否過期。
 
 ## TF 發布權責
 
@@ -171,7 +131,7 @@ Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速�
 
 `run_nav.sh --mode 3d` 會以 `--global-fusion --costmaps` 呼叫 `run_3d_localization.sh`；若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
 
-導航時 Nav2 以 PGM 為 global costmap、以 `/perception/obstacles` 標記及 `/scan` 清除局部障礙物，約每秒重新規劃。`/scan` 由 `/isaac/lidar_points` 投影而來，裁切高度為 `base_link` 上方 0.1–2.0 m。Nav2 的 `/nav2/cmd_vel` 經 ROS 2 安全節點檢查後發布 `/cmd_vel`，由 Isaac Sim 原生 ROS 2 訂閱器驅動 Carter；導航時不能同時使用鍵盤或 auto-jog。
+加上 `--navigate` 後的 costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈見 [`nav.md`](nav.md)。導航時不能同時使用鍵盤或 auto-jog。
 
 ## 參數與限制
 
