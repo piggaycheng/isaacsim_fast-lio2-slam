@@ -6,14 +6,37 @@ global_costmap:
       robot_base_frame: base_link
       footprint: '[[0.65, 0.32], [0.65, -0.32], [-0.20, -0.32], [-0.20, 0.32]]'
       resolution: 0.05
-      update_frequency: 1.0
+      update_frequency: 2.0
       publish_frequency: 1.0
       transform_tolerance: 0.5
-      plugins: ["static_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_topic: /map
         map_subscribe_transient_local: true
+      # Obstacles missing from the saved map, so the planner can route around them.
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        observation_sources: obstacles scan_clearing
+        obstacles:
+          topic: /perception/obstacles
+          data_type: "PointCloud2"
+          marking: true
+          clearing: false
+          obstacle_max_range: 6.0
+          obstacle_min_range: 0.0
+          max_obstacle_height: 2.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+        scan_clearing:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: false
+          clearing: true
+          raytrace_max_range: 7.0
+          raytrace_min_range: 0.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         inflation_radius: 0.9

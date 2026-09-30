@@ -51,7 +51,9 @@ def generate_launch_description():
         name="lifecycle_manager_navigation", output="screen",
         parameters=[{
             "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
-            "node_names": ["planner_server", "controller_server", "bt_navigator"],
+            "node_names": [
+                "planner_server", "controller_server", "behavior_server", "bt_navigator",
+            ],
         }],
     )
     navigation_readiness = Node(
@@ -208,6 +210,14 @@ def generate_launch_description():
                 package="nav2_controller", executable="controller_server",
                 name="controller_server", output="screen",
                 parameters=[navigation_config, observation_config, sim],
+                remappings=[("/cmd_vel", "/nav2/cmd_vel")],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="nav2_behaviors", executable="behavior_server",
+                name="behavior_server", output="screen",
+                parameters=[navigation_config, sim],
+                # Recovery motions go through the same cmd_vel_safety gate as the controller.
                 remappings=[("/cmd_vel", "/nav2/cmd_vel")],
             ),
             Node(

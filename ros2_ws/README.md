@@ -290,8 +290,10 @@ publishes `/goal_pose` directly to Nav2's `NavigateToPose` navigator; there
 is no short-distance or forward-only goal test. In observation-only mode,
 this RViz tool does not drive Carter.
 
-Nav2 plans on the PGM global costmap and follows paths using the local obstacle
-costmap. Its `/nav2/cmd_vel` passes through a ROS 2 safety node (PCD correction
+Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
+follows paths using the local obstacle costmap. Obstacles missing from the PGM,
+such as desks seen above the 2D slice or objects moved after mapping, are marked
+in both costmaps, so the 1 Hz replanning routes around them. Its `/nav2/cmd_vel` passes through a ROS 2 safety node (PCD correction
 freshness, planar command validation and speed limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
@@ -321,14 +323,20 @@ jogging commands
 speeds require controller, footprint, and stopping-distance validation.
 `--navigate` cannot be combined with
 `--auto-jog`. Unlike observation-only costmaps, Nav2's planner and controller
-own both costmaps. This configuration replans periodically, but has no
-automatic recovery behavior. Carter's rectangular footprint and inflation are estimates,
+own both costmaps. This configuration replans periodically and recovers from
+planner or controller failures (`config/navigate_to_pose.xml`): a failed
+planner or controller clears its costmap and retries once; if navigation still
+fails, `behavior_server` runs one recovery per failure in rotation (clear both
+costmaps, wait 5 s, back up 0.3 m, wait 10 s) and retries, up to 6 times
+(about 30 s) before aborting. Back-up checks the local costmap footprint and
+is skipped when blocked, and its `cmd_vel` goes through the same safety node.
+Carter's rectangular footprint and inflation are estimates,
 and dynamic obstacle clearing and localization failure response are not yet
 validated for safe autonomous operation. Test only in a clear Office
 simulation and inspect the costmaps and planned path before longer drives.
 
 `--costmaps` also enables `--obstacle-cloud`. RViz overlays the Office PGM
-with `/global_costmap/costmap` (static PGM and inflation) and
+with `/global_costmap/costmap` (static PGM, 3D obstacle marking and inflation) and
 `/local_costmap/costmap` (rolling 8 m window, 3D obstacle marking, `/scan`
 ray clearing, and inflation). Toggle the Map displays in RViz to compare
 the occupied, inflated, and free areas; enable "3D ground-filtered obstacles

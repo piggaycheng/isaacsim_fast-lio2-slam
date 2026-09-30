@@ -11,7 +11,7 @@ from rclpy.node import Node
 def main():
     rclpy.init()
     node = Node("navigation_readiness")
-    names = ("planner_server", "controller_server", "bt_navigator")
+    names = ("planner_server", "controller_server", "behavior_server", "bt_navigator")
     clients = {
         name: node.create_client(GetState, f"/{name}/get_state")
         for name in names
@@ -27,13 +27,15 @@ def main():
             for name, client in clients.items():
                 future = client.call_async(GetState.Request())
                 rclpy.spin_until_future_complete(node, future, timeout_sec=2)
-                if not future.done() or future.exception() is not None:
-                    raise RuntimeError(f"Cannot query lifecycle state of {name}")
-                if future.result() is None:
-                    raise RuntimeError(f"Empty lifecycle state response from {name}")
+                # A node busy in a lifecycle transition can miss one reply; retry until the deadline.
+                if not future.done() or future.exception() is not None or future.result() is None:
+                    client.remove_pending_request(future)
+                    node.get_logger().warning(f"Lifecycle state query to {name} failed; retrying")
+                    states[name] = None
+                    continue
                 states[name] = future.result().current_state.id
             if all(state == 3 for state in states.values()):
-                node.get_logger().info("Nav2 planner, controller and navigator active")
+                node.get_logger().info("Nav2 planner, controller, behavior server and navigator active")
                 return
             rclpy.spin_once(node, timeout_sec=0.5)
         raise TimeoutError(f"Nav2 activation timed out; lifecycle states: {states}")

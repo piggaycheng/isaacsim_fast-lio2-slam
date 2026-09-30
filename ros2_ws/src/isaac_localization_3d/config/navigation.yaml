@@ -59,3 +59,26 @@ bt_navigator:
       - nav2_follow_path_action_bt_node
       - nav2_pipeline_sequence_bt_node
       - nav2_rate_controller_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_back_up_action_bt_node
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: true
+    # BackUp checks its simulated motion against the local costmap footprint.
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["backup", "wait"]
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.5
+    simulate_ahead_time: 2.0

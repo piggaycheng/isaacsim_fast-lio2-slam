@@ -1,10 +1,38 @@
+<!--
+  NavigateThroughPoses with replanning and recovery.
+  Inner RecoveryNodes clear one costmap and retry the failed planner/controller once.
+  If the whole pipeline still fails, the outer RecoveryNode runs one recovery action
+  per failure (round robin: clear costmaps -> wait 5 s -> back up -> wait 10 s) and
+  retries, so a blocked robot waits ~30 s for a passing obstacle (e.g. another robot)
+  unless a new goal arrived. After 6 failed retries the goal is aborted.
+-->
 <root main_tree_to_execute="ThroughPoses">
   <BehaviorTree ID="ThroughPoses">
-    <PipelineSequence>
-      <RateController hz="1.0">
-        <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-      </RateController>
-      <FollowPath path="{path}" controller_id="FollowPath"/>
-    </PipelineSequence>
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePath">
+            <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Wait name="ShortWait" wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.10"/>
+          <Wait name="LongWait" wait_duration="10"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
   </BehaviorTree>
 </root>
