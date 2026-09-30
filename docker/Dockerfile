@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-nav2-amcl \
       ros-humble-nav2-behaviors \
       ros-humble-nav2-bt-navigator \
+      ros-humble-nav2-collision-monitor \
       ros-humble-nav2-controller \
       ros-humble-nav2-costmap-2d \
       ros-humble-nav2-lifecycle-manager \

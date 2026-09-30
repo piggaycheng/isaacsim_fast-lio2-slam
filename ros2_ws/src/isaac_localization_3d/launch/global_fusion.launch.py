@@ -25,6 +25,7 @@ def generate_launch_description():
     observation_config = os.path.join(package, "config", "observation_costmaps.yaml")
     navigation_config = os.path.join(package, "config", "navigation.yaml")
     fusion_config = os.path.join(package, "config", "global_fusion.yaml")
+    collision_config = os.path.join(package, "config", "collision_monitor.yaml")
     observing = IfCondition(PythonExpression([
         "'", costmaps, "' == 'true' and '", navigate, "' == 'false'",
     ]))
@@ -53,6 +54,7 @@ def generate_launch_description():
             "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
             "node_names": [
                 "planner_server", "controller_server", "behavior_server", "bt_navigator",
+                "collision_monitor",
             ],
         }],
     )
@@ -217,7 +219,8 @@ def generate_launch_description():
                 package="nav2_behaviors", executable="behavior_server",
                 name="behavior_server", output="screen",
                 parameters=[navigation_config, sim],
-                # Recovery motions go through the same cmd_vel_safety gate as the controller.
+                # Recovery motions go through the same collision_monitor and
+                # cmd_vel_safety gates as the controller.
                 remappings=[("/cmd_vel", "/nav2/cmd_vel")],
             ),
             Node(
@@ -235,8 +238,15 @@ def generate_launch_description():
             ),
             Node(
                 condition=IfCondition(navigate),
+                package="nav2_collision_monitor", executable="collision_monitor",
+                name="collision_monitor", output="screen",
+                parameters=[collision_config, sim],
+            ),
+            Node(
+                condition=IfCondition(navigate),
                 package="isaac_localization_3d", executable="cmd_vel_safety.py",
                 name="cmd_vel_safety", output="screen", parameters=[sim],
+                remappings=[("/nav2/cmd_vel", "/nav2/cmd_vel_monitored")],
             ),
             readiness,
             RegisterEventHandler(

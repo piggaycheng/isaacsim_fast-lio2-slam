@@ -50,6 +50,8 @@ flowchart TD
     Planner["planner_server<br/>NavFn + global_costmap"]
     Controller["controller_server<br/>GoalHeadingLatchedRPP + local_costmap"]
     Behavior["behavior_server<br/>BackUp、Wait"]
+    Monitor["collision_monitor<br/>前方停車區、減速區、footprint 碰撞預估"]
+    Obstacles["/perception/obstacles、/scan"]
     Safety["cmd_vel_safety<br/>校正過期停車、限速"]
     Correction["校正心跳<br/>/localization_3d/accepted_correction"]
     EStop["/navigation/emergency_stop"]
@@ -60,8 +62,10 @@ flowchart TD
     Planner -->|"path"| BT
     BT -->|"FollowPath"| Controller
     BT -->|"失敗時 recovery"| Behavior
-    Controller -->|"/nav2/cmd_vel"| Safety
-    Behavior -->|"/nav2/cmd_vel"| Safety
+    Controller -->|"/nav2/cmd_vel"| Monitor
+    Behavior -->|"/nav2/cmd_vel"| Monitor
+    Obstacles --> Monitor
+    Monitor -->|"/nav2/cmd_vel_monitored"| Safety
     Correction --> Safety
     EStop --> Safety
     Safety -->|"/cmd_vel"| Isaac
@@ -129,6 +133,59 @@ costmap 標記過的格子不會自己消失，只能靠清除：
 
 從 RViz 送 (3.5, 0) 的目標，路徑會繞過箱子。
 
+### 遇到動態障礙物時的處理順序
+
+下圖是行駛中前方突然出現障礙物（例如行人走進路線）時，各元件的處理順序。**減速與停車**由 `collision_monitor` 和 RPP 分工處理，**繞過障礙物**只靠 global costmap 重新規劃。圖中的時間是依更新頻率推算的上限，不是實測值。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant L as LiDAR<br/>/perception/obstacles、/scan
+    participant CM as collision_monitor
+    participant LC as local_costmap<br/>5 Hz
+    participant RPP as controller_server<br/>RPP 10 Hz
+    participant GC as global_costmap<br/>2 Hz
+    participant BT as bt_navigator<br/>重新規劃 1 Hz
+    participant P as planner_server
+    participant S as cmd_vel_safety → Isaac
+
+    Note over L,S: 障礙物出現在車前方
+    L->>CM: 最新點雲與 scan（每幀）
+    RPP->>CM: /nav2/cmd_vel（仍是原速）
+    CM->>S: 進入減速區 → 50%；碰撞預估 → 按比例降速；進入停車區 → 0
+    Note over CM: 第一道反應，不需等 costmap 更新
+
+    L->>LC: 標記障礙物（≤ 0.2 s）
+    LC->>RPP: 路徑附近代價升高
+    RPP->>CM: 依代價降速（Humble 預設 use_cost_regulated_linear_velocity_scaling）
+    alt 1 s 內（到前視點為止）會撞上
+        RPP->>CM: 發布零速
+        Note over RPP: 持續超過 failure_tolerance 1 s<br/>→ FollowPath 失敗，清除 local costmap 後重試
+    end
+
+    L->>GC: 標記障礙物（≤ 0.5 s）
+    BT->>P: ComputePathToPose（每秒一次）
+    P-->>BT: 繞開障礙物的新路徑
+    BT->>RPP: FollowPath（新路徑）
+    RPP->>CM: 沿新路徑恢復速度
+    CM->>S: 障礙物離開各區域後原速放行
+
+    opt 內層重試後仍失敗（規劃失敗，或 RPP 持續停車、15 s 無進展）
+        BT->>BT: recovery 輪流執行：清除 costmap → Wait 5 s → BackUp 0.3 m → Wait 10 s<br/>最多 6 次（約 30 s）後中止目標
+    end
+
+    Note over L,GC: 障礙物移走後，/scan 在看得到的範圍內清除 costmap，<br/>之後的重新規劃會改回原本較短的路徑
+```
+
+| 階段 | 誰負責 | 依據的資料 | 動作 |
+| :-- | :-- | :-- | :-- |
+| 緊急反應 | `collision_monitor` | 最新一幀感測資料 | 減速、按比例降速或停車；不會換路線 |
+| 平順減速 | RPP | local costmap | 靠近高代價區時降速；預估 1 s 內會撞就停車並回報失敗 |
+| 繞過障礙物 | `bt_navigator` + `planner_server` | global costmap | 每秒重新規劃，產生繞開的路徑 |
+| 繞不過去或卡住 | `bt_navigator` + `behavior_server` | — | 規劃或行駛任一方在內層重試後仍失敗時，清除 costmap、等待、後退，仍失敗就中止 |
+
+RPP 不會在 local costmap 裡自己找路繞開，只會沿著 planner 給的路徑減速或停車。因此移動中的障礙物如果還沒進入 global costmap，車子只會減速或停下等待，不會閃避。
+
 ## Behavior tree 與 recovery
 
 `navigate_to_pose.xml` 和 `navigate_through_poses.xml` 結構相同。`bt_navigator` 只在啟動時讀取 XML，修改後要重啟 stack。
@@ -165,7 +222,32 @@ ClearEntireCostmap 會清掉 global costmap 所有看過的障礙物，但 stati
 
 ## `cmd_vel` 安全鏈
 
-`controller_server` 和 `behavior_server` 都不直接控制車子，它們的 `/cmd_vel` 被重新映射到 `/nav2/cmd_vel`，再經過 `cmd_vel_safety.py` 發布到 Isaac Sim 訂閱的 `/cmd_vel`：
+`controller_server` 和 `behavior_server` 都不直接控制車子，它們的 `/cmd_vel` 被重新映射到 `/nav2/cmd_vel`，依序經過兩道關卡才到 Isaac Sim 訂閱的 `/cmd_vel`：
+
+```
+controller / behavior → /nav2/cmd_vel → collision_monitor → /nav2/cmd_vel_monitored → cmd_vel_safety → /cmd_vel
+```
+
+兩道關卡都只會降速或停車，不會加速，所以最終速度取最嚴格的限制。
+
+### collision_monitor
+
+Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.yaml`。它不看 costmap，每收到一次速度命令，就用最新的感測資料檢查一次，不會有 costmap 的更新延遲和殘影。RPP 負責依 costmap 平順降速與停車，`collision_monitor` 則是最後一道防撞保護，應付 costmap 還沒更新的突發近距離障礙物。
+
+| 區域 | 範圍（`base_link`） | 動作 |
+| :-- | :-- | :-- |
+| `PolygonStop` | 車頭前 0.25 m（x 0.65–0.90 m，y ±0.36 m） | 超過 3 個點就停車（線速度、角速度都歸零） |
+| `PolygonSlow` | 車頭前 0.75 m（x 0.65–1.40 m，y ±0.50 m） | 超過 3 個點就降為 50% |
+| `FootprintApproach` | local costmap 的 footprint（`/local_costmap/published_footprint`） | 沿目前命令模擬 1.5 秒，依距離碰撞的時間按比例降速；會考慮行進方向，後退和原地旋轉也會檢查 |
+
+- 感測來源：`/perception/obstacles`（地面濾除後的 3D 點）和 `/scan`（2D 切片）。找不到地面時，`ground_obstacle_filter` 會停止發布，這時仍有 `/scan` 可用。
+- 兩個來源都會丟掉距 `base_link` 0.5 m 內的點，所以車身兩側和後半部是盲區，停車區和減速區只設在車頭前方。
+- 停車區不分方向：障礙物在停車區內時，BackUp 後退也會被擋下，只能等障礙物離開，或在 recovery 用完後中止目標。
+- 來源超過 1 秒沒更新時，Humble 版會忽略該來源並放行命令（fail-open），`cmd_vel_safety` 也不檢查這一點。
+- 停車後會繼續發布零速 2 秒（`stop_pub_timeout`），之後停止發布；Isaac Sim 在 0.5 秒收不到命令時也會自行停車。
+- RViz 會顯示停車區（紅）和減速區（橘）。
+
+### cmd_vel_safety
 
 | 條件 | 行為 |
 | :-- | :-- |
@@ -181,9 +263,9 @@ ClearEntireCostmap 會清掉 global costmap 所有看過的障礙物，但 stati
 ```mermaid
 flowchart LR
     Start["launch 啟動定位、map_server<br/>與 Nav2 節點（未啟用）"] --> Ready["wait_for_costmap_tf.py<br/>等待 /map 與 map -> base_link"]
-    Ready -->|"--navigate"| NavMgr["lifecycle_manager_navigation<br/>planner_server、controller_server、<br/>behavior_server、bt_navigator"]
+    Ready -->|"--navigate"| NavMgr["lifecycle_manager_navigation<br/>planner_server、controller_server、<br/>behavior_server、bt_navigator、<br/>collision_monitor"]
     Ready -->|"未加 --navigate"| CostMgr["lifecycle_manager_fusion_costmaps<br/>只啟用兩個 costmap_observer"]
-    NavMgr --> NavReady["wait_for_navigation.py<br/>確認四個節點都 active"]
+    NavMgr --> NavReady["wait_for_navigation.py<br/>確認五個節點都 active"]
     NavReady -->|"成功"| Log["log：navigator active"]
     Ready -->|"失敗"| Stop["關閉整個 launch"]
     NavReady -->|"失敗"| Stop
@@ -193,7 +275,7 @@ flowchart LR
 
 ## 目前限制
 
-- 尚未加入 `collision_monitor` 與 `velocity_smoother`；緊急煞停只依靠 RPP 碰撞預測與 `cmd_vel_safety`。
+- 尚未加入 `velocity_smoother`；`collision_monitor` 的區域大小與點數門檻是估計值，停車距離尚未驗證。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
 - footprint 與 inflation 為估計值；斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
 - topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。

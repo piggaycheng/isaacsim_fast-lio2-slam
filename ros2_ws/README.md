@@ -295,7 +295,10 @@ planner/controller, recovery and the `cmd_vel` safety chain) is described in
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Obstacles missing from the PGM,
 such as desks seen above the 2D slice or objects moved after mapping, are marked
-in both costmaps, so the 1 Hz replanning routes around them. Its `/nav2/cmd_vel` passes through a ROS 2 safety node (PCD correction
+in both costmaps, so the 1 Hz replanning routes around them. Its `/nav2/cmd_vel` first passes through Nav2's `collision_monitor`
+(`config/collision_monitor.yaml`: a front stop zone, a front slowdown zone and
+a footprint time-to-collision check on `/perception/obstacles` and `/scan`),
+then through a ROS 2 safety node (PCD correction
 freshness, planar command validation and speed limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
@@ -331,7 +334,8 @@ planner or controller clears its costmap and retries once; if navigation still
 fails, `behavior_server` runs one recovery per failure in rotation (clear both
 costmaps, wait 5 s, back up 0.3 m, wait 10 s) and retries, up to 6 times
 (about 30 s) before aborting. Back-up checks the local costmap footprint and
-is skipped when blocked, and its `cmd_vel` goes through the same safety node.
+is skipped when blocked, and its `cmd_vel` goes through the same collision
+monitor and safety node.
 Carter's rectangular footprint and inflation are estimates,
 and dynamic obstacle clearing and localization failure response are not yet
 validated for safe autonomous operation. Test only in a clear Office

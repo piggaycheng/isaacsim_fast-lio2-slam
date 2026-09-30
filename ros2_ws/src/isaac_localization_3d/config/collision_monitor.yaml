@@ -1,0 +1,59 @@
+# Nav2 Humble collision_monitor: last sensor-based gate between Nav2 and cmd_vel_safety.
+# Footprint (base_link): front 0.65 m, rear 0.20 m, sides 0.32 m.
+# Both sources drop points within 0.5 m of base_link (range_min / min_range), so the
+# rear half and sides of the footprint are blind; these zones only cover the front.
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /nav2/cmd_vel
+    cmd_vel_out_topic: /nav2/cmd_vel_monitored
+    transform_tolerance: 0.5
+    # A source older than this is ignored (fail-open); cmd_vel_safety does not check it.
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    polygons: ["PolygonStop", "PolygonSlow", "FootprintApproach"]
+    # Stop/slowdown trigger when more than max_points points are inside the zone.
+    PolygonStop:
+      type: polygon
+      action_type: stop
+      points: [0.90, 0.36, 0.90, -0.36, 0.65, -0.36, 0.65, 0.36]
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: /collision_monitor/polygon_stop
+      enabled: true
+    PolygonSlow:
+      type: polygon
+      action_type: slowdown
+      points: [1.40, 0.50, 1.40, -0.50, 0.65, -0.50, 0.65, 0.50]
+      max_points: 3
+      slowdown_ratio: 0.5
+      visualize: true
+      polygon_pub_topic: /collision_monitor/polygon_slowdown
+      enabled: true
+    # Direction-aware: simulates the local costmap footprint along the command and
+    # scales speed by time-to-collision / time_before_collision.
+    FootprintApproach:
+      type: polygon
+      action_type: approach
+      footprint_topic: /local_costmap/published_footprint
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      max_points: 3
+      visualize: false
+      enabled: true
+    observation_sources: ["obstacles", "scan"]
+    # Ground-filtered 3D points in base_link; withheld when no ground plane is found.
+    obstacles:
+      type: pointcloud
+      topic: /perception/obstacles
+      min_height: 0.06
+      max_height: 2.0
+      enabled: true
+    # 2D slice without ground filtering; keeps the gate alive if obstacles is withheld.
+    scan:
+      type: scan
+      topic: /scan
+      enabled: true
