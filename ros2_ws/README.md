@@ -365,7 +365,14 @@ Carter's spawn; no RViz click is needed. `--manual-initial-pose` is for
 other maps or a different starting location. Both costmaps use the same
 `base_link`-relative rectangular footprint (front 0.65 m, rear 0.20 m, left
 and right 0.32 m). It approximates the Nova Carter USD body and wheels with
-about 6 cm of clearance; replace it when changing robots. The 0.9 m inflation
+about 6 cm of clearance; replace it when changing robots. To measure another
+robot, run the repository-root `usd_bbox.py` with Isaac Sim's Python, for example
+`./usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd --frame chassis_link --yaw-deg 180 --padding 0.06`
+(Carter's ROS `base_link` is USD `chassis_link` turned 180°). It prints the
+bounding box and a Nav2 `footprint` string (`--shape hull` for a convex hull,
+`--json` for machine-readable output). The collision_monitor stop and slowdown
+polygons are separate hardcoded values and must be updated by hand to match.
+The 0.9 m inflation
 radius remains an estimate, and neither setting is a validated safety clearance.
 Low obstacles absent from the height-filtered
 `/scan` might not clear reliably after moving; verify marking and clearing
