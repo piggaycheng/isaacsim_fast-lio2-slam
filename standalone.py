@@ -15,6 +15,8 @@ CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarX
 CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
 CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 GROUND_TRUTH_TOPIC = "/isaac/ground_truth/odom"
+BOX_PRIM_ROOT = "/World/TestBoxes"
+DEFAULT_BOX_SIZE = [0.6, 0.6, 1.0]
 LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 1.2
 CARTER_FORWARD_SIGN = -1.0
@@ -42,9 +44,29 @@ parser.add_argument(
     default="noncompensated",
     help="Select RTX LiDAR motion compensation; navigation uses compensated clouds.",
 )
+parser.add_argument(
+    "--box", action="append", default=[], metavar="X,Y[,SX,SY,SZ]",
+    help="Add a static collision box on the floor at world X,Y (m, same as the Office "
+    "map frame). Default size 0.6,0.6,1.0 m. Repeat for more boxes.",
+)
 args, _ = parser.parse_known_args()
 if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
+
+
+def parse_box(text: str) -> list[float]:
+    try:
+        values = [float(value) for value in text.split(",")]
+    except ValueError:
+        values = []
+    if len(values) == 2:
+        values += DEFAULT_BOX_SIZE
+    if len(values) != 5 or min(values[2:]) <= 0:
+        parser.error(f"--box expects X,Y or X,Y,SX,SY,SZ with positive sizes, got {text!r}")
+    return values
+
+
+boxes = [parse_box(text) for text in args.box]
 lidar_motion_compensation_state = args.lidar_motion_compensation.upper()
 
 simulation_app = SimulationApp(
@@ -61,6 +83,7 @@ import omni
 import omni.appwindow
 import omni.graph.core as og
 import usdrt
+from isaacsim.core.experimental.objects import Cube
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.experimental.utils.stage import is_stage_loading
 from isaacsim.core.rendering_manager import ViewportManager
@@ -70,7 +93,7 @@ from isaacsim.sensors.experimental.physics import IMU
 from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from omni.kit.viewport.utility import get_active_viewport
-from pxr import UsdGeom
+from pxr import UsdGeom, UsdPhysics
 
 app_utils.enable_extension("isaacsim.ros2.bridge")
 simulation_app.update()
@@ -286,6 +309,16 @@ try:
         positions=CARTER_SPAWN_POSITION,
     )
     controller = DifferentialController(wheel_radius=0.14, wheel_base=0.4132)
+
+    # Static (collision-only, no rigid body) boxes that Carter's LiDAR sees but cannot push.
+    for index, (x, y, size_x, size_y, size_z) in enumerate(boxes):
+        box_path = f"{BOX_PRIM_ROOT}/Box_{index}"
+        Cube(
+            box_path, sizes=1.0, colors="orange",
+            positions=[x, y, size_z / 2.0], scales=[size_x, size_y, size_z],
+        )
+        UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(box_path))
+        print(f"Spawned static box at ({x:.2f}, {y:.2f}) size {size_x}x{size_y}x{size_z} m")
 
     lidar_prim = stage.GetPrimAtPath(CARTER_LIDAR_PRIM_PATH)
     if not lidar_prim.IsValid():

@@ -7,6 +7,7 @@ map_file="$project_dir/maps/office/map_2d.yaml"
 headless=false
 rviz=true
 auto_jog=false
+boxes=()
 
 usage() {
   cat <<'EOF'
@@ -20,6 +21,9 @@ Options:
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
+      --box X,Y[,SX,SY,SZ]
+                       Place a static box obstacle in the scene at Office map
+                       X,Y (m); default size 0.6x0.6x1.0 m. Repeatable.
   -h, --help           Show this help.
 
 Examples:
@@ -51,6 +55,15 @@ while (($# > 0)); do
     --no-rviz)
       rviz=false
       shift
+      ;;
+    --box)
+      if (($# < 2)); then
+        echo "Missing value for --box" >&2
+        usage >&2
+        exit 2
+      fi
+      boxes+=(--box "$2")
+      shift 2
       ;;
     -h|--help)
       usage
@@ -108,5 +121,6 @@ fi
 if [[ "$auto_jog" == true ]]; then
   isaac_args+=(--auto-jog)
 fi
+isaac_args+=("${boxes[@]}")
 
 "$project_dir/standalone.py" "${isaac_args[@]}"

@@ -335,6 +335,18 @@ and dynamic obstacle clearing and localization failure response are not yet
 validated for safe autonomous operation. Test only in a clear Office
 simulation and inspect the costmaps and planned path before longer drives.
 
+To test obstacle avoidance, `--box X,Y[,SX,SY,SZ]` places a static collision
+box (default 0.6 x 0.6 x 1.0 m) in the Isaac Sim scene at Office map X,Y
+meters; repeat it for more boxes. It works in both modes. Carter spawns at
+(0, 0) facing -x, and x from -1 to 4.5 m is open floor, for example:
+
+```bash
+./run_nav.sh --mode 3d --navigate --box 2.0,0.0
+```
+
+The box is not in the saved PGM/PCD maps; the costmaps only see it through the
+LiDAR. A goal at (3.5, 0) then plans around it.
+
 `--costmaps` also enables `--obstacle-cloud`. RViz overlays the Office PGM
 with `/global_costmap/costmap` (static PGM, 3D obstacle marking and inflation) and
 `/local_costmap/costmap` (rolling 8 m window, 3D obstacle marking, `/scan`

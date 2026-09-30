@@ -10,6 +10,7 @@ auto_jog=false
 rviz=true
 manual_initial_pose=false
 navigate=false
+boxes=()
 
 usage() {
   cat <<'EOF'
@@ -27,11 +28,16 @@ Options:
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
+      --box X,Y[,SX,SY,SZ]
+                       Place a static box obstacle in the Isaac Sim scene at
+                       Office map coordinates X,Y (m). Default size
+                       0.6x0.6x1.0 m. Repeat for more boxes.
   -h, --help           Show this help.
 
 Examples:
   ./run_nav.sh --mode 2d
   ./run_nav.sh --mode 3d --headless --no-rviz
+  ./run_nav.sh --mode 3d --navigate --box 2.0,0.0
 EOF
 }
 
@@ -66,6 +72,14 @@ while (($# > 0)); do
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
     --no-rviz) rviz=false; shift ;;
+    --box)
+      if (($# < 2)); then
+        echo "Missing value for --box" >&2
+        exit 2
+      fi
+      boxes+=(--box "$2")
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -80,6 +94,7 @@ args=()
 if [[ "$headless" == true ]]; then args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then args+=(--auto-jog); fi
 if [[ "$rviz" == false ]]; then args+=(--no-rviz); fi
+args+=("${boxes[@]}")
 if [[ "$mode" == 2d ]]; then
   if [[ -n "$map_pcd" || "$manual_initial_pose" == true || "$navigate" == true ]]; then
     echo "--pcd, --manual-initial-pose and --navigate require --mode 3d" >&2

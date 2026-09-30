@@ -14,6 +14,7 @@ obstacle_cloud=false
 costmaps=false
 navigate=false
 ros_cmd_vel=false
+boxes=()
 
 usage() {
   cat <<'EOF'
@@ -42,6 +43,9 @@ Options:
                       from RViz goals and accept /cmd_vel (no automatic goal).
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
+      --box X,Y[,SX,SY,SZ]
+                      Place a static box obstacle in the scene at Office map
+                      X,Y (m); default size 0.6x0.6x1.0 m. Repeatable.
   -h, --help          Show this help.
 EOF
 }
@@ -65,6 +69,14 @@ while (($# > 0)); do
     --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
+    --box)
+      if (($# < 2)); then
+        echo "Missing value for --box" >&2
+        exit 2
+      fi
+      boxes+=(--box "$2")
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -126,4 +138,5 @@ isaac_args=(--lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then isaac_args+=(--auto-jog); fi
 if [[ "$navigate" == true || "$ros_cmd_vel" == true ]]; then isaac_args+=(--ros-cmd-vel); fi
+isaac_args+=("${boxes[@]}")
 "$project_dir/standalone.py" "${isaac_args[@]}"
