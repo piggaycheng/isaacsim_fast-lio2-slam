@@ -172,7 +172,8 @@ point order and timing.
 # 2D Localization
 
 `isaac_nav` provides wheel encoder odometry, the navigation IMU adapter,
-ground obstacle filtering and the shared Local EKF/scan settings in
+ground obstacle filtering, the Nav2 goal-heading controller and goal checker
+plugins, and the shared Local EKF/scan settings in
 `config/local_odometry.yaml`. `isaac_localization_2d` owns the AMCL settings,
 2D map/AMCL launch and RViz configuration. The 3D fusion launch reuses the
 shared inputs without starting AMCL. `isaac_fastlio_adapter` remains dedicated
@@ -294,6 +295,14 @@ costmap. Its `/nav2/cmd_vel` passes through a ROS 2 safety node (PCD correction
 freshness, planar command validation and speed limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
+The controller is `isaac_nav::GoalHeadingLatchedRPP`, a thin wrapper around
+Humble's Regulated Pure Pursuit, paired with `isaac_nav::LatchedGoalChecker`.
+Humble RPP re-checks `xy_goal_tolerance` every cycle and stops right at that
+boundary, and the controller server resets goal checkers on every 1 Hz replan.
+Small drift while rotating in place used to flip Carter between path tracking
+and the final heading until the progress checker aborted. Both plugins now keep
+the reached-position state for the same goal until it succeeds, a new goal
+arrives, or Carter drifts beyond `latch_release_distance` (0.5 m).
 RViz shows Nav2's `/plan` path alongside both costmap layers.
 The local costmap is intentionally in `odom`, not `map`, so its entire grid
 can appear rotated in RViz's `map` fixed frame by the current `map -> odom`

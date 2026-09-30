@@ -1,0 +1,12 @@
+<library path="isaac_nav_plugins">
+  <class type="isaac_nav::GoalHeadingLatchedRPP" base_class_type="nav2_core::Controller">
+    <description>
+      Regulated Pure Pursuit that keeps rotating toward the goal heading once the goal position is reached.
+    </description>
+  </class>
+  <class type="isaac_nav::LatchedGoalChecker" base_class_type="nav2_core::GoalChecker">
+    <description>
+      Goal checker whose xy latch survives replanning while the goal pose is unchanged.
+    </description>
+  </class>
+</library>

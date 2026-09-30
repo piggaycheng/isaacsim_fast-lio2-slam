@@ -6,7 +6,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav2_core REQUIRED)
+find_package(nav2_regulated_pure_pursuit_controller REQUIRED)
+find_package(nav2_util REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common filters segmentation)
 find_package(pcl_conversions REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -38,8 +44,30 @@ ament_target_dependencies(ground_obstacle_filter
   tf2_sensor_msgs
 )
 
+add_library(isaac_nav_plugins SHARED
+  src/goal_heading_latched_rpp.cpp
+  src/latched_goal_checker.cpp
+)
+ament_target_dependencies(isaac_nav_plugins
+  geometry_msgs
+  nav2_core
+  nav2_regulated_pure_pursuit_controller
+  nav2_util
+  nav_msgs
+  pluginlib
+  rclcpp
+  tf2
+)
+pluginlib_export_plugin_description_file(nav2_core nav2_plugins.xml)
+
 install(TARGETS wheel_encoder_odometry imu_covariance_adapter ground_obstacle_filter
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS isaac_nav_plugins
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 
 install(DIRECTORY config

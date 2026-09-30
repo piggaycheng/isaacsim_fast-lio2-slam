@@ -25,12 +25,13 @@ controller_server:
       required_movement_radius: 0.15
       movement_time_allowance: 15.0
     general_goal_checker:
-      plugin: "nav2_controller::SimpleGoalChecker"
+      plugin: "isaac_nav::LatchedGoalChecker"
       xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.25
-      stateful: true
+      # Keep the reached-position latch across 1 Hz replanning unless Carter drifts this far.
+      latch_release_distance: 0.5
     FollowPath:
-      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      plugin: "isaac_nav::GoalHeadingLatchedRPP"
       desired_linear_vel: 0.5
       lookahead_dist: 0.8
       use_velocity_scaled_lookahead_dist: false
@@ -38,6 +39,8 @@ controller_server:
       approach_velocity_scaling_dist: 0.5
       rotate_to_heading_angular_vel: 0.35
       use_rotate_to_heading: true
+      # Keep rotating in place after reaching the goal unless Carter drifts this far away.
+      latch_release_distance: 0.5
       allow_reversing: false
       use_collision_detection: true
       transform_tolerance: 0.5
