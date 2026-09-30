@@ -4,7 +4,7 @@
 
 停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF 在缺少全域校正時繼續預測出不合理的位移。此入口將 2D 啟動交給可單獨執行的 `run_2d_localization.sh`。
 
-3D 融合導航需使用與 PGM 同座標系的 PCD：停用 AMCL（PGM 只供 Nav2 costmap 使用），將 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2) 的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，由校正時效閘控節點獨自發布 `map -> odom`。**2D AMCL 與 3D 融合模式不能同時發布這條 TF。**
+3D 融合導航需使用與 PGM 同座標系的 PCD：停用 AMCL（PGM 只供 Nav2 costmap 使用），將 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2) 的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，由校正時效閘控節點（correction freshness gate，`global_tf_gate`）獨自發布 `map -> odom`。**2D AMCL 與 3D 融合模式不能同時發布這條 TF。**
 
 獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作方式見 [`ros2_ws/README.md`](../ros2_ws/README.md)。
 
@@ -15,20 +15,20 @@
 ```mermaid
 flowchart TD
     subgraph Sensors ["Isaac Sim 感測器"]
-        Joints["左右輪關節角度"]
-        IMU["IMU"]
-        Lidar["3D LiDAR<br/>PointCloud2"]
+        Joints["左右輪關節角度<br/>/isaac/joint_states"]
+        IMU["IMU<br/>/isaac/imu"]
+        Lidar["3D LiDAR<br/>PointCloud2 /isaac/lidar_points"]
     end
 
-    Joints --> WheelOdom["輪式里程計<br/>/wheel/odom"]
-    IMU --> IMUAdapter["IMU adapter<br/>/nav/imu"]
-    WheelOdom --> LocalEKF["Local robot_localization<br/>world_frame: odom"]
+    Joints --> WheelOdom["輪式里程計 wheel_encoder_odometry<br/>/wheel/odom"]
+    IMU --> IMUAdapter["IMU adapter nav_imu_adapter<br/>/nav/imu"]
+    WheelOdom --> LocalEKF["Local robot_localization<br/>local_ekf；world_frame: odom<br/>/odometry/local"]
     IMUAdapter --> LocalEKF
-    LocalEKF -->|"唯一 TF: odom -> base_link"| AMCL["AMCL"]
+    LocalEKF -->|"唯一 TF: odom -> base_link"| AMCL["AMCL<br/>amcl"]
 
     Lidar --> Scan["pointcloud_to_laserscan<br/>/scan"]
     Scan --> AMCL
-    PGM["PGM 地圖<br/>map.yaml + map.pgm"] --> MapServer["Nav2 map_server"]
+    PGM["PGM 地圖 PGM map<br/>map.yaml + map.pgm"] --> MapServer["Nav2 map_server<br/>/map"]
     MapServer --> AMCL
     AMCL -->|"唯一 TF: map -> odom"| RViz["RViz / 車體全域位置"]
     LocalEKF --> RViz
@@ -43,54 +43,54 @@ flowchart TD
 flowchart TD
     %% -------------------- 感測與底盤 --------------------
     subgraph Sensing ["感測與底盤 Sensing & Base"]
-        WheelJoints["左右輪關節角度"]
-        WheelOdom["輪式里程計<br/>編碼器量化、偏差與雜訊模型"]
-        IMU["IMU"]
-        Lidar3D["單一 3D LiDAR<br/>PointCloud2"]
-        Chassis["底盤驅動器"]
+        WheelJoints["左右輪關節角度<br/>/isaac/joint_states"]
+        WheelOdom["輪式里程計 wheel_encoder_odometry<br/>編碼器量化、偏差與雜訊模型<br/>/wheel/odom"]
+        IMU["IMU<br/>/isaac/imu → nav_imu_adapter → /nav/imu"]
+        Lidar3D["單一 3D LiDAR<br/>PointCloud2 /isaac/lidar_points"]
+        Chassis["底盤驅動器<br/>Isaac DifferentialController，/cmd_vel"]
     end
 
     %% -------------------- 點雲前處理 --------------------
     subgraph LidarPreprocessing ["3D LiDAR 前處理 LiDAR Preprocessing"]
-        Deskew["時間同步、deskew 與 TF 轉換"]
-        ScanProjection["高度裁切 + pointcloud_to_laserscan<br/>虛擬 2D LaserScan"]
+        Deskew["時間同步、deskew 與 TF 轉換<br/>time sync / deskew / TF（規劃項目）"]
+        ScanProjection["高度裁切 + pointcloud_to_laserscan<br/>虛擬 2D LaserScan /scan"]
     end
 
     %% -------------------- 局部狀態估計 --------------------
     subgraph LocalEstimation ["局部狀態估計 Local Estimation"]
-        LocalEKF["Local robot_localization<br/>world_frame: odom"]
+        LocalEKF["Local robot_localization<br/>local_ekf；world_frame: odom<br/>/odometry/local"]
     end
 
     %% -------------------- 3D 全域定位 --------------------
     subgraph Localization3D ["3D 全域定位 3D Localization（不啟動 AMCL）"]
-        PCD["3D 地圖<br/>map.pcd"]
-        FastLIO["FAST-LIO 里程計<br/>LiDAR + IMU；不接管導航 TF"]
-        FastLIOLocalization["FAST_LIO_LOCALIZATION2<br/>既有 PCD 地圖 ICP 配準"]
-        FastLIOAdapter["3D 定位 Adapter<br/>位姿組合、掃描／里程計新鮮度與跳動檢查<br/>使用上游內建 fitness 門檻；設定 covariance"]
+        PCD["3D 地圖 3D map<br/>map.pcd"]
+        FastLIO["FAST-LIO 里程計 localization_fastlio<br/>LiDAR + IMU；不接管導航 TF<br/>/Odometry、/cloud_registered"]
+        FastLIOLocalization["FAST_LIO_LOCALIZATION2<br/>global_localization（global_localization_xyz.py）<br/>既有 PCD 地圖 ICP 配準 /map_to_odom"]
+        FastLIOAdapter["3D 定位 Adapter global_pose_adapter<br/>位姿組合、掃描／里程計新鮮度與跳動檢查<br/>使用上游內建 fitness 門檻；設定 covariance"]
     end
 
     %% -------------------- 2D 導航地圖 --------------------
-    PGM["PGM 地圖<br/>只供 Nav2 costmap；不供 AMCL 定位"]
+    PGM["PGM 地圖 PGM map<br/>map_server /map<br/>只供 Nav2 costmap；不供 AMCL 定位"]
 
     %% -------------------- 全域融合 --------------------
     subgraph GlobalFusion ["全域融合 Global Fusion"]
-        GlobalEKF["Global robot_localization<br/>world_frame: map"]
-        TFGate["校正時效閘控<br/>唯一發布 map -> odom"]
+        GlobalEKF["Global robot_localization<br/>global_ekf；world_frame: map"]
+        TFGate["校正時效閘控 correction freshness gate<br/>global_tf_gate<br/>唯一發布 map -> odom"]
     end
 
     %% -------------------- 3D 障礙物處理 --------------------
     subgraph Perception3D ["3D 障礙物處理 3D Perception"]
-        GroundFilter["地面濾除<br/>例如 Patchwork++"]
-        ObstacleProjection["障礙物投影 / 體素化<br/>pointcloud_to_laserscan / STVL"]
+        GroundFilter["地面濾除 ground_obstacle_filter<br/>/perception/obstacles<br/>（Patchwork++ 為規劃項目）"]
+        ObstacleProjection["障礙物投影 / 體素化<br/>Nav2 ObstacleLayer（STVL 為規劃項目）"]
     end
 
     %% -------------------- Nav2 --------------------
     subgraph Nav2Stack ["Nav2 Navigation Stack"]
-        BTNav["BT Navigator"]
-        GlobalCostmap["Global Costmap"]
-        LocalCostmap["Local Costmap"]
-        GlobalPlanner["Global Planner"]
-        LocalController["Local Controller"]
+        BTNav["BT Navigator<br/>bt_navigator"]
+        GlobalCostmap["Global Costmap<br/>global_costmap"]
+        LocalCostmap["Local Costmap<br/>local_costmap"]
+        GlobalPlanner["Global Planner<br/>planner_server"]
+        LocalController["Local Controller<br/>controller_server（RPP）"]
     end
 
     %% 輪式里程計與局部 EKF
@@ -111,10 +111,10 @@ flowchart TD
     InitialPose["map 座標初始位姿<br/>手動指定 / Office 起點近似先驗"] --> FastLIOLocalization
     FastLIOLocalization -.->|"map 到 LIO 起點的配準結果<br/>需擴充 fitness 輸出"| FastLIOAdapter
     FastLIO -.->|"LIO 里程計"| FastLIOAdapter
-    FastLIOAdapter -.->|"map 座標 pose"| GlobalEKF
+    FastLIOAdapter -.->|"map 座標 pose<br/>/localization_3d/global_pose"| GlobalEKF
 
     %% Global EKF 不直接發布 TF；閘控節點阻止過期校正時的 TF 更新
-    FastLIOAdapter -.->|"校正心跳"| TFGate
+    FastLIOAdapter -.->|"校正心跳<br/>/localization_3d/accepted_correction"| TFGate
     GlobalEKF -->|"/odometry/global；不發布 TF"| TFGate
     TFGate -->|"唯一 TF: map -> odom"| GlobalCostmap
     TFGate -->|"唯一 TF: map -> odom"| GlobalPlanner
@@ -133,23 +133,23 @@ flowchart TD
     GlobalCostmap --> GlobalPlanner
     GlobalPlanner -->|"Path"| LocalController
     LocalCostmap --> LocalController
-    LocalController -->|"cmd_vel"| Chassis
+    LocalController -->|"/nav2/cmd_vel → cmd_vel_safety → /cmd_vel"| Chassis
 ```
 
 ## TF 發布權責
 
 | 模式                   | `map -> odom` 唯一發布者     | `odom -> base_link` |
 | :--------------------- | :--------------------------- | :------------------ |
-| `run_nav.sh --mode 2d` | AMCL（`tf_broadcast: true`） | Local EKF           |
-| `run_nav.sh --mode 3d` | 校正時效閘控節點             | Local EKF           |
+| `run_nav.sh --mode 2d` | AMCL（`amcl`，`tf_broadcast: true`） | Local EKF（`local_ekf`） |
+| `run_nav.sh --mode 3d` | 校正時效閘控節點（`global_tf_gate`） | Local EKF（`local_ekf`） |
 
 LiDAR 與 IMU 的固定座標轉換由 `robot_state_publisher` 或 static TF 提供。
 
 3D 融合模式不啟動 AMCL。`FAST_LIO_LOCALIZATION2` 原版 `transform_fusion.py` 發布的是另一條 `map -> camera_init` TF，不接入上述導航 TF 鏈；原版獨立 3D 展示模式也不能與融合導航同時啟動。
 
-LiDAR／IMU 經 FAST-LIO 與 PCD 配準，上游先依 ICP fitness 門檻篩選校正。Adapter 再結合 `/map_to_odom` 和 `/Odometry`，檢查掃描與里程計的新鮮度及位姿跳動，產生 `map` 座標的 `base_link` 位姿供 Global EKF 融合。輪速與 IMU 同時供 Local／Global EKF 預測。
+LiDAR／IMU 經 FAST-LIO 與 PCD 配準，上游先依 ICP fitness 門檻篩選校正。Adapter（`global_pose_adapter`）再結合 `/map_to_odom` 和 `/Odometry`，檢查掃描與里程計的新鮮度及位姿跳動，產生 `map` 座標的 `base_link` 位姿供 Global EKF 融合。輪速與 IMU 同時供 Local／Global EKF 預測。
 
-Global EKF 設為 `publish_tf: false`；閘控節點只在近期有有效 PCD 校正時，
+Global EKF（`global_ekf`）設為 `publish_tf: false`；閘控節點 `global_tf_gate` 只在近期有有效 PCD 校正時，
 依 `/odometry/global` 和同時間的局部 TF 發布 `map -> odom`。
 若局部 TF 晚到，最多等待 0.1 秒；仍無 TF 則不發布該筆轉換。
 合成位姿仍使用里程計原時間戳；發布時將 `map -> odom` TF 前推
