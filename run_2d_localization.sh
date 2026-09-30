@@ -2,9 +2,7 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_dir="$project_dir/ros2_ws"
-nav_prefix="$workspace_dir/nav_install/opt/ros/humble"
-nav_root="$workspace_dir/nav_install"
+source "$project_dir/docker/ros_compose.sh"
 map_file="$project_dir/maps/office/map_2d.yaml"
 headless=false
 rviz=true
@@ -94,55 +92,14 @@ if [[ ! -f "$map_image" ]]; then
   echo "PGM referenced by the map YAML does not exist: $map_image" >&2
   exit 1
 fi
-if [[ ! -f "$workspace_dir/install/setup.bash" ]]; then
-  echo "ROS workspace is not built. Run ros2_ws/build_workspace.sh first." >&2
-  exit 1
-fi
-
-source /opt/ros/humble/setup.bash
-if [[ -d "$nav_prefix" ]]; then
-  export AMENT_PREFIX_PATH="$nav_prefix:${AMENT_PREFIX_PATH:-}"
-  export CMAKE_PREFIX_PATH="$nav_prefix:${CMAKE_PREFIX_PATH:-}"
-  export PATH="$nav_prefix/bin:$nav_prefix/lib/nav2_amcl:$nav_prefix/lib/nav2_lifecycle_manager:$nav_prefix/lib/nav2_map_server:$nav_prefix/lib/pointcloud_to_laserscan:$nav_prefix/lib/robot_localization:$PATH"
-  export LD_LIBRARY_PATH="$nav_prefix/lib:$nav_prefix/lib/x86_64-linux-gnu:$nav_root/usr/lib:$nav_root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
-  export PYTHONPATH="$nav_prefix/lib/python3.10/site-packages:${PYTHONPATH:-}"
-fi
-source "$workspace_dir/install/setup.bash"
+container_map="$(container_path "$map_file")"
+container_path "$map_image" >/dev/null
+require_ros_workspace
 set -u
 
-required_packages=(
-  isaac_nav
-  isaac_localization_2d
-  nav2_amcl
-  nav2_lifecycle_manager
-  nav2_map_server
-  pointcloud_to_laserscan
-  robot_localization
-)
-for package in "${required_packages[@]}"; do
-  if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then
-    echo "Missing ROS package: $package" >&2
-    echo "Run ros2_ws/install_nav_dependencies.sh and rebuild the workspace." >&2
-    exit 1
-  fi
-done
-
-ros2 launch isaac_localization_2d localization_2d.launch.py \
-  map:="$map_file" \
-  rviz:="$rviz" &
-ros_pid=$!
-
-cleanup() {
-  trap - EXIT INT TERM
-  while read -r child_pid; do
-    if [[ "$child_pid" =~ ^[0-9]+$ ]]; then
-      kill "$child_pid" 2>/dev/null || true
-    fi
-  done < <(ps -o pid= --ppid "$ros_pid")
-  kill "$ros_pid" 2>/dev/null || true
-  wait "$ros_pid" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
+start_ros launch isaac_localization_2d localization_2d.launch.py \
+  map:="$container_map" \
+  rviz:="$rviz"
 
 isaac_args=(--lidar-motion-compensation compensated)
 if [[ "$headless" == true ]]; then

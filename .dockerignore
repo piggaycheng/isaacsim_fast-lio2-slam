@@ -1,0 +1,5 @@
+*
+!ros2_ws/src/Livox-SDK2
+!ros2_ws/src/Sophus
+ros2_ws/src/Livox-SDK2/.git
+ros2_ws/src/Sophus/.git

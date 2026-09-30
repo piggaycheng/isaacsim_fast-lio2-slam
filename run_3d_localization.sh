@@ -2,10 +2,7 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_dir="$project_dir/ros2_ws"
-base="$workspace_dir/localization_3d_install"
-nav_prefix="$workspace_dir/nav_install/opt/ros/humble"
-nav_root="$workspace_dir/nav_install"
+source "$project_dir/docker/ros_compose.sh"
 map_pcd="$project_dir/maps/office/map.pcd"
 map_pgm="$project_dir/maps/office/map_2d.yaml"
 headless=false
@@ -109,73 +106,21 @@ if [[ ! -f "$map_image" ]]; then
   echo "PGM referenced by map YAML does not exist: $map_image" >&2
   exit 1
 fi
-if [[ ! -f "$workspace_dir/install/setup.bash" ]]; then
-  echo "Build the ROS workspace with ros2_ws/build_workspace.sh first." >&2
-  exit 1
-fi
-if [[ ! -f "$base/install/setup.bash" || ! -x "$base/venv/bin/python" ||
-      ! -d "$base/debs/opt/ros/humble" ]]; then
-  echo "3D localization dependencies missing; run ros2_ws/setup_3d_localization.sh." >&2
-  exit 1
-fi
-
-source /opt/ros/humble/setup.bash
-if [[ -d "$nav_prefix" ]]; then
-  export AMENT_PREFIX_PATH="$nav_prefix:${AMENT_PREFIX_PATH:-}"
-  export CMAKE_PREFIX_PATH="$nav_prefix:${CMAKE_PREFIX_PATH:-}"
-  export PATH="$nav_prefix/bin:$nav_prefix/lib/nav2_map_server:$nav_prefix/lib/nav2_lifecycle_manager:$nav_prefix/lib/robot_localization:$PATH"
-  export LD_LIBRARY_PATH="$nav_prefix/lib:$nav_prefix/lib/x86_64-linux-gnu:$nav_root/usr/lib:$nav_root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
-  export PYTHONPATH="$nav_prefix/lib/python3.10/site-packages:${PYTHONPATH:-}"
-fi
-source "$workspace_dir/install/setup.bash"
-source "$base/install/setup.bash"
-export PATH="$base/venv/bin:$PATH"
-export PYTHONPATH="$base/debs/opt/ros/humble/lib/python3.10/site-packages:${PYTHONPATH:-}"
-export LD_LIBRARY_PATH="$base/debs/opt/ros/humble/lib:${LD_LIBRARY_PATH:-}"
+container_pcd="$(container_path "$map_pcd")"
+container_pgm="$(container_path "$map_pgm")"
+container_path "$map_image" >/dev/null
+require_ros_workspace
 set -u
 
-required_packages=(isaac_localization_3d fast_lio_localization isaac_fastlio_adapter nav2_map_server nav2_lifecycle_manager)
-if [[ "$global_fusion" == true ]]; then
-  required_packages+=(isaac_nav robot_localization pointcloud_to_laserscan)
-fi
-if [[ "$costmaps" == true ]]; then required_packages+=(nav2_costmap_2d); fi
-if [[ "$navigate" == true ]]; then
-  required_packages+=(nav2_planner nav2_controller nav2_bt_navigator
-    nav2_navfn_planner nav2_regulated_pure_pursuit_controller)
-fi
-for package in "${required_packages[@]}"; do
-  if ! ros2 pkg prefix "$package" >/dev/null 2>&1; then
-    echo "Missing ROS package: $package. Run ros2_ws/install_nav_dependencies.sh and ros2_ws/setup_3d_localization.sh." >&2
-    exit 1
-  fi
-done
-if ! "$base/venv/bin/python" -c 'import open3d, ros2_numpy, tf_transformations'; then
-  echo "3D Python dependencies unavailable; run ros2_ws/setup_3d_localization.sh." >&2
-  exit 1
-fi
-
 launch_file=localization_3d.launch.py
-launch_args=(map_pcd:="$map_pcd" map_pgm:="$map_pgm" rviz:="$rviz"
+launch_args=(map_pcd:="$container_pcd" map_pgm:="$container_pgm" rviz:="$rviz"
   auto_initial_pose:="$auto_initial_pose")
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
     navigate:="$navigate")
 fi
-ros2 launch isaac_localization_3d "$launch_file" "${launch_args[@]}" &
-ros_pid=$!
-
-cleanup() {
-  trap - EXIT INT TERM
-  while read -r child_pid; do
-    if [[ "$child_pid" =~ ^[0-9]+$ ]]; then
-      kill "$child_pid" 2>/dev/null || true
-    fi
-  done < <(ps -o pid= --ppid "$ros_pid")
-  kill "$ros_pid" 2>/dev/null || true
-  wait "$ros_pid" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
+start_ros launch isaac_localization_3d "$launch_file" "${launch_args[@]}"
 
 isaac_args=(--lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi

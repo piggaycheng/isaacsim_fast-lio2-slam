@@ -2,7 +2,7 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_dir="$project_dir/ros2_ws"
+source "$project_dir/docker/ros_compose.sh"
 output_dir="$project_dir/maps/office"
 save_patches="true"
 save_map_resolution=""
@@ -78,14 +78,20 @@ if [[ "$output_dir" == *"'"* ]]; then
   exit 2
 fi
 
-source /opt/ros/humble/setup.bash
-source "$workspace_dir/install/setup.bash"
 set -u
 
-mkdir -p "$output_dir"
-output_dir="$(cd "$output_dir" && pwd)"
+ros_exec() {
+  ros_compose exec -T ros /workspace/docker/entrypoint.sh "$@"
+}
 
-if [[ "$(ros2 service type /pgo/save_maps 2>/dev/null || true)" != "interface/srv/SaveMaps" ]]; then
+container_output_dir="$(container_path "$output_dir")"
+mkdir -p "$output_dir"
+
+if [[ -z "$(ros_compose ps --status running --quiet ros 2>/dev/null)" ]]; then
+  echo "The ROS container is not running. Start ./run_slam.sh before saving." >&2
+  exit 1
+fi
+if [[ "$(ros_exec ros2 service type /pgo/save_maps 2>/dev/null || true)" != "interface/srv/SaveMaps" ]]; then
   echo "/pgo/save_maps is unavailable. Start ./run_slam.sh before saving." >&2
   exit 1
 fi
@@ -94,8 +100,8 @@ if [[ -n "$save_map_resolution" ]]; then
   if [[ "$save_map_resolution" != *.* ]]; then
     save_map_resolution="${save_map_resolution}.0"
   fi
-  ros2 param set /pgo/pgo_node save_map_resolution "$save_map_resolution"
+  ros_exec ros2 param set /pgo/pgo_node save_map_resolution "$save_map_resolution"
 fi
 
-ros2 service call /pgo/save_maps interface/srv/SaveMaps \
-  "{file_path: '$output_dir', save_patches: $save_patches}"
+ros_exec ros2 service call /pgo/save_maps interface/srv/SaveMaps \
+  "{file_path: '$container_output_dir', save_patches: $save_patches}"

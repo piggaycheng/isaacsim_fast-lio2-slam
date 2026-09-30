@@ -24,12 +24,3 @@ maps/
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
-ros2_ws/livox_sdk_build/
-ros2_ws/livox_sdk_install/
-ros2_ws/sophus_build/
-ros2_ws/sophus_install/
-ros2_ws/gtsam_package/
-ros2_ws/gtsam_install/
-ros2_ws/nav_packages/
-ros2_ws/nav_install/
-ros2_ws/localization_3d_install/

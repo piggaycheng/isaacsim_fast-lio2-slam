@@ -1,0 +1,35 @@
+name: isaacsim-fastlio2
+
+services:
+  ros:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        USER_UID: ${HOST_UID:-1000}
+        USER_GID: ${HOST_GID:-1000}
+    image: isaacsim-fastlio2-ros:humble
+    entrypoint: ["/workspace/docker/entrypoint.sh"]
+    command: ["${ROS_COMMAND:-idle}"]
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 20s
+    # Host networking and IPC let Isaac Sim's ROS 2 bridge on the host reach
+    # these nodes over DDS, including Fast DDS shared-memory transport.
+    network_mode: host
+    ipc: host
+    gpus: all
+    working_dir: /workspace
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      ROS_LAUNCH_ARGS: ${ROS_LAUNCH_ARGS:-}
+      DISPLAY: ${DISPLAY:-}
+      XAUTHORITY: /tmp/.Xauthority
+      QT_X11_NO_MITSHM: "1"
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - .:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XAUTHORITY:-/dev/null}:/tmp/.Xauthority:ro

@@ -2,29 +2,10 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace_dir="$project_dir/ros2_ws"
-rviz_config="$workspace_dir/src/isaac_fastlio_adapter/config/fastlio.rviz"
-
-source /opt/ros/humble/setup.bash
-source "$workspace_dir/install/setup.bash"
+source "$project_dir/docker/ros_compose.sh"
 set -u
-export LD_LIBRARY_PATH="$workspace_dir/livox_sdk_install/lib:${LD_LIBRARY_PATH:-}"
-if [[ -d "$workspace_dir/gtsam_install/opt/ros/humble/lib/x86_64-linux-gnu" ]]; then
-  export LD_LIBRARY_PATH="$workspace_dir/gtsam_install/opt/ros/humble/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
-fi
 
-ros2 launch isaac_fastlio_adapter fastlio.launch.py &
-ros_pid=$!
-
-rviz2 -d "$rviz_config" &
-rviz_pid=$!
-
-cleanup() {
-  kill "$rviz_pid" 2>/dev/null || true
-  kill "$ros_pid" 2>/dev/null || true
-  wait "$rviz_pid" 2>/dev/null || true
-  wait "$ros_pid" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
+require_ros_workspace
+start_ros slam
 
 "$project_dir/standalone.py"

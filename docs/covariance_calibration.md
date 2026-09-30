@@ -27,14 +27,16 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 2. **啟動定位（不啟動 Nav2）**：
    - Isaac Sim：`./run_3d_localization.sh --global-fusion --ros-cmd-vel`
    - 真車：啟動相同的定位節點，並確保 `/cmd_vel` 可以驅動底盤，周圍需要至少約 1.5 m 的淨空。
-3. **錄製 rosbag**：
+3. **錄製 rosbag**：Isaac Sim 模式下，ROS 節點跑在 `ros` 容器內，以下 ROS 指令都透過 `docker compose exec` 在容器中執行。容器的工作目錄 `/workspace` 就是專案目錄，bag 會存到專案內。
    ```bash
-   ros2 bag record -o cov_bag /wheel/odom /nav/imu /Odometry /localization_3d/global_pose
+   docker compose exec ros /workspace/docker/entrypoint.sh \
+     ros2 bag record -o cov_bag /wheel/odom /nav/imu /Odometry /localization_3d/global_pose
    ```
    在 Isaac Sim 中可以另外加上 `/isaac/ground_truth/odom`，用於驗證。
 4. **執行校正路線**：
    ```bash
-   ros2 run isaac_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
+   docker compose exec ros /workspace/docker/entrypoint.sh \
+     ros2 run isaac_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
    ```
    - 內容依序為：靜止 40 秒；前進後退、正反原地旋轉、左右弧線並原路退回，重複 4 輪；最後靜止 20 秒。全程約 6 分鐘，活動範圍約 1 m。
    - 路線的目的：讓車在靜止、直行、原地旋轉、弧線等不同運動下各累積足夠樣本。靜止段量 IMU 偏差與 PCD 抖動；直行量每公尺誤差；旋轉量每弧度誤差並推算 LiDAR 外參。每個動作都原路退回，所以只需要很小的空間。
@@ -48,7 +50,8 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
    - 路線結束後停止錄製。
 5. **計算建議值**：
    ```bash
-   python3 ros2_ws/src/isaac_localization_3d/scripts/covariance_calibration.py cov_bag \
+   docker compose run --rm ros \
+     python3 ros2_ws/src/isaac_localization_3d/scripts/covariance_calibration.py cov_bag \
      --local-config ros2_ws/src/isaac_nav/config/local_odometry.yaml \
      --fusion-config ros2_ws/src/isaac_localization_3d/config/global_fusion.yaml
    ```
@@ -58,7 +61,7 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
    - `LIO body->base xy fitted` 與設定值相差約 1 cm 以上時，先修正外參，再回到步驟 2 重錄。
    - `PCD vs LIO ... by pair lag` 的數值應隨時間間隔增加而趨於平穩。若仍持續上升，代表 LIO 漂移明顯，可縮小 `--pcd-max-lag`。
 7. **寫入設定**：確認沒有問題後，在同一個指令加上 `--apply`，工具會把建議值寫回上述兩個 YAML。若使用 `--ground-truth` 且有任何項目 FAIL，工具會拒絕寫入。
-8. **重新建置並重啟**：重新建置 `isaac_nav` 與 `isaac_localization_3d` 套件，再重新啟動定位與導航。
+8. **重新建置並重啟**：執行 `docker compose run --rm ros build --packages-select isaac_nav isaac_localization_3d` 重新建置，再重新啟動定位與導航。
 
 ## 輸出判讀
 

@@ -20,9 +20,8 @@ publishes the corrected input on `/livox/imu`.
 `src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
 `src/isaac_localization_3d` contains the separate 3D localization launch,
 ROS pose/TF publisher, and RViz configuration. `run_nav.sh --mode 3d` starts
-this package; `--mode 2d` uses `isaac_localization_2d` and shared `isaac_nav` inputs. Build the existing workspace first, then run
-`./ros2_ws/install_nav_dependencies.sh` and `./ros2_ws/setup_3d_localization.sh`
-to build the 3D packages and their private dependencies. Launch the Office
+this package; `--mode 2d` uses `isaac_localization_2d` and shared `isaac_nav` inputs. The Docker
+workspace build below also builds the 3D packages. Launch the Office
 simulator and RViz together with `./run_3d_localization.sh` (use `--help` for
 map, headless, and initialization options). The Office spawn near `(0, 0)` is
 sent as an approximate initial pose by default; use RViz's **2D Pose Estimate**
@@ -37,18 +36,48 @@ ICP still consumes `/cloud_registered` directly. This mode owns
 `map -> camera_init` only;
 do not run it alongside `run_nav.sh`, whose AMCL owns `map -> odom`.
 
-Initialize submodules and build the local SDKs and ROS packages:
+## Docker setup
+
+The ROS 2 Humble nodes (FASTLIO2, PGO, localization, Nav2 and RViz) run in the
+`ros` Docker Compose service; Isaac Sim (`standalone.py`) runs on the host.
+Requirements: Docker with Compose v2, the NVIDIA Container Toolkit, an X11
+display, and Isaac Sim installed at the path in `standalone.py`'s shebang. The host
+does not need ROS 2.
+
+`docker/Dockerfile` installs every apt/pip dependency (GTSAM, Nav2,
+`robot_localization`, `pointcloud_to_laserscan`, `pcl_ros`, Open3D, ...)
+and builds Livox-SDK2 and Sophus from their submodules. The project directory
+is mounted at `/workspace`, so `ros2_ws/src` edits need no image rebuild; only
+dependency changes do. Initialize submodules, then build the image and the
+workspace:
 
 ```bash
-sudo apt install ros-humble-gtsam
 git submodule update --init --recursive
-./ros2_ws/build_workspace.sh
+docker compose build
+docker compose run --rm ros build
 ```
 
-Installing `ros-humble-gtsam` system-wide is recommended. If it is not
-installed and sudo is unavailable, `build_workspace.sh` automatically
-downloads the same Debian package and extracts it under
-`ros2_ws/gtsam_install/`.
+Rerun `docker compose run --rm ros build` after changing `ros2_ws/src`; extra
+arguments are passed to `colcon build`, for example
+`docker compose run --rm ros build --packages-select isaac_nav`. The image
+user matches UID/GID 1000 by default; if your IDs differ, build with
+`HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build`.
+
+Each `run_*.sh` script validates its options, starts the `ros` service with
+`docker compose up`, follows its logs, then launches `standalone.py` on the
+host with matching options. The container is stopped when Isaac Sim exits or
+on Ctrl+C. The container uses host networking and IPC, so DDS (including
+shared-memory transport) reaches Isaac Sim's ROS 2 bridge directly;
+`ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY` and `RMW_IMPLEMENTATION` are passed through
+from your shell. Map, PCD and output paths must be inside the project
+directory, because only it is mounted in the container.
+
+Run other ROS commands in the container with, for example:
+
+```bash
+docker compose run --rm ros ros2 topic list     # standalone container
+docker compose exec ros /workspace/docker/entrypoint.sh ros2 topic list  # while a run script is active
+```
 
 Run the GUI simulation, adapters, FASTLIO2, its existing PGO backend, and RViz
 together:
@@ -65,7 +94,7 @@ against a local submap with ICP, and optimizes the pose graph with GTSAM iSAM2. 
 `map` to `lidar` correction transform, but RViz keeps `lidar` as its fixed
 frame so delayed PGO transforms cannot block the live point cloud.
 
-`build_workspace.sh` applies `patches/fastlio2-pgo-sync.patch` while compiling
+`docker/build_workspace.sh` applies `patches/fastlio2-pgo-sync.patch` while compiling
 the upstream PGO node. The patch uses exact cloud/odometry timestamp matching,
 recovers from simulation clock resets, atomically consumes the newest queued
 measurement, and logs accepted keyframes and loop closures. The external
@@ -149,21 +178,15 @@ ground obstacle filtering and the shared Local EKF/scan settings in
 shared inputs without starting AMCL. `isaac_fastlio_adapter` remains dedicated
 to FAST-LIO mapping inputs.
 
-Install the project-local ROS 2 navigation dependencies and build the workspace:
+The navigation dependencies are installed in the Docker image (see
+[Docker setup](#docker-setup)).
 
-```bash
-./ros2_ws/install_nav_dependencies.sh
-./ros2_ws/build_workspace.sh
-```
-
-While the system `ros-humble-tf2` is older than 0.25.24,
-`install_nav_dependencies.sh` also builds upstream tf2 0.25.24 and installs
-only `libtf2.so` into `nav_install/opt/ros/humble/lib`, which the run scripts
-place ahead of `/opt/ros/humble/lib`. Older tf2 has a lock-order deadlock
-(ros2/geometry2#990) between the TF listener and costmap message filters that
-freezes a Nav2 server's TF buffer after minutes, producing
-`Transform data too old` and a rotated local costmap. Rerunning the installer
-removes the overlay once the system tf2 contains the fix.
+While the apt `ros-humble-tf2` is older than 0.25.24, the Dockerfile builds
+upstream tf2 0.25.24 and replaces only the image's `libtf2.so`. Older tf2 has a
+lock-order deadlock (ros2/geometry2#990) between the TF listener and costmap
+message filters that freezes a Nav2 server's TF buffer after minutes, producing
+`Transform data too old` and a rotated local costmap. Rebuilding the image
+skips the replacement once the apt tf2 contains the fix.
 
 Start Isaac Sim and the 2D localization stack with the default Office map:
 
@@ -210,9 +233,8 @@ The 2D-only stack does not start a Global EKF. In a move-then-stop test, the
 previous Global EKF continued shifting `map -> odom` while `/amcl_pose` and the
 local odometry remained nearly stationary. Letting AMCL own this transform
 prevents that drift; its `map -> odom` correction remains fixed between AMCL
-updates. To test PCD-based **global fusion without Nav2 costmaps**, first run
-`./ros2_ws/install_nav_dependencies.sh`, `./ros2_ws/build_workspace.sh`, and
-`./ros2_ws/setup_3d_localization.sh`, then use:
+updates. To test PCD-based **global fusion without Nav2 costmaps**, build the
+workspace (see [Docker setup](#docker-setup)), then use:
 
 ```bash
 ./run_3d_localization.sh --global-fusion
