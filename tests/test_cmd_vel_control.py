@@ -7,7 +7,8 @@ from unittest.mock import patch
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Bool, Header
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -61,15 +62,26 @@ class TestCmdVelSafety(unittest.TestCase):
         received = []
         listener.create_subscription(Twist, "/cmd_vel", received.append, 10)
 
-        def check(command, expected):
+        def check(command, expected, refresh_correction=True):
             deadline = time.monotonic() + 2
             while node.publisher.get_subscription_count() == 0 and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertGreater(node.publisher.get_subscription_count(), 0)
-            node.on_command(command)
-            rclpy.spin_once(listener, timeout_sec=1)
-            self.assertTrue(received)
-            self.assertEqual((received[-1].linear.x, received[-1].angular.z), expected)
+            received.clear()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                stamp = node.get_clock().now().to_msg()
+                scan = LaserScan()
+                scan.header = Header(frame_id="base_link", stamp=stamp)
+                node.on_sensor("scan", scan)
+                if refresh_correction:
+                    node.on_correction(Header(frame_id="map", stamp=stamp))
+                node.on_command(command)
+                rclpy.spin_once(listener, timeout_sec=0.02)
+                if received and (received[-1].linear.x, received[-1].angular.z) == expected:
+                    return
+                time.sleep(0.02)
+            self.fail(f"Did not reach bounded output {expected}: {received[-1:]}")
 
         try:
             node.last_correction = node.get_clock().now().nanoseconds * 1e-9
@@ -87,7 +99,7 @@ class TestCmdVelSafety(unittest.TestCase):
             invalid.linear.y = 1.0
             check(invalid, (0.0, 0.0))
             node.last_correction -= 5
-            check(valid, (0.0, 0.0))
+            check(valid, (0.0, 0.0), refresh_correction=False)
             node.last_correction = node.get_clock().now().nanoseconds * 1e-9
             node.on_stop(Bool(data=True))
             check(valid, (0.0, 0.0))

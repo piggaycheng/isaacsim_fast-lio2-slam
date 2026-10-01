@@ -33,6 +33,10 @@ KIT_EXTRA_ARGS = [
 parser = argparse.ArgumentParser(description="Launch Isaac Sim with the Office environment.")
 parser.add_argument("--headless", action="store_true", help="Run without the Isaac Sim GUI.")
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
+parser.add_argument(
+    "--validation-control-dir",
+    help="Opt-in file-controlled physical obstacles for tests/validate_braking.py.",
+)
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
 parser.add_argument(
     "--ros-cmd-vel", action="store_true",
@@ -52,6 +56,8 @@ parser.add_argument(
 args, _ = parser.parse_known_args()
 if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
+if args.validation_control_dir and not args.ros_cmd_vel:
+    parser.error("--validation-control-dir requires --ros-cmd-vel")
 
 
 def parse_box(text: str) -> list[float]:
@@ -362,6 +368,12 @@ try:
     if command_receiver is not None:
         create_ros2_drive_subscriber()
 
+    validation_scene = None
+    if args.validation_control_dir:
+        from safety_validation_scene import SafetyValidationScene
+
+        validation_scene = SafetyValidationScene(args.validation_control_dir, stage, carter)
+
     SimulationManager.setup_simulation(dt=1.0 / 60.0, device="cpu")
     physics_scenes = SimulationManager.get_physics_scenes()
     if not physics_scenes:
@@ -435,6 +447,8 @@ try:
         )
     else:
         while simulation_app.is_running():
+            if validation_scene is not None:
+                validation_scene.update()
             if command_receiver is not None:
                 try:
                     linear, angular = command_receiver.command()

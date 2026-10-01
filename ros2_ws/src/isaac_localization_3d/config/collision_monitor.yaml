@@ -18,7 +18,7 @@ collision_monitor:
     PolygonStop:
       type: polygon
       action_type: stop
-      points: [0.90, 0.36, 0.90, -0.36, 0.65, -0.36, 0.65, 0.36]
+      points: [1.30, 0.36, 1.30, -0.36, 0.65, -0.36, 0.65, 0.36]
       max_points: 3
       visualize: true
       polygon_pub_topic: /collision_monitor/polygon_stop
@@ -26,8 +26,8 @@ collision_monitor:
     PolygonSurround:
       type: polygon
       action_type: stop
-      # Footprint plus 0.10 m on all sides, including rear and rotation clearance.
-      points: [0.75, 0.42, 0.75, -0.42, -0.30, -0.42, -0.30, 0.42]
+      # Includes measured sensing/control delay, physical braking and footprint padding.
+      points: [1.10, 0.75, 1.10, -0.75, -0.80, -0.75, -0.80, 0.75]
       max_points: 3
       visualize: true
       polygon_pub_topic: /collision_monitor/polygon_surround

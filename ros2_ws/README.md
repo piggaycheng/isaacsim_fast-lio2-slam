@@ -326,8 +326,19 @@ inside Carter's extruded footprint (`self_filter_bounds` in
 `isaac_nav/config/ground_obstacle_filter.yaml`), rather than discarding everything
 within 0.5 m. Its `/perception/self_filtered_points` retains ground points and
 feeds `/scan` with `range_min: 0.0`; `/perception/obstacles` retains nearby external
-obstacles after ground removal. The surround stop zone extends 0.10 m beyond the
-footprint on every side. Physical LiDAR occlusion and minimum measurement range
+obstacles after ground removal. The surround stop zone spans x [-0.80, 1.10] m
+and y ±0.75 m; the front stop zone extends to x 1.30 m. The earlier, smaller
+zones failed conservative clearance checks at 0.75 m/s and were enlarged.
+USD geometry checks cover Carter's visible body and 10 enabled collision shapes;
+the footprint contains them with about 6 cm longitudinal and 7 cm lateral margin,
+plus an explicit 1 cm costmap padding. Thirty physical-box stopping trials passed
+at commanded ±0.25/0.50/0.75 m/s and ±0.35/0.70 rad/s, with at least 2 cm
+clearance for both the measured body envelope and padded footprint.
+See `docs/nav.md` for measured distances, exact test conditions and reproduction
+commands (`tests/validate_carter_geometry.py`, `tests/validate_braking.py`).
+The wider zones can block narrow passages; sensor loss still allowed about
+0.66 m travel in the 0.75 m/s fault-injection trial before the robot stopped.
+Physical LiDAR occlusion and minimum measurement range
 remain limitations; these settings are not certified safety clearances.
 The controller is `isaac_nav::GoalHeadingLatchedRPP`, a thin wrapper around
 Humble's Regulated Pure Pursuit, paired with `isaac_nav::LatchedGoalChecker`.

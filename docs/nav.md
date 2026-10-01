@@ -57,7 +57,7 @@ flowchart TD
     Controller["controller_server<br/>GoalHeadingLatchedRPP + local_costmap"]
     Behavior["behavior_server<br/>BackUp、Wait"]
     Smoother["velocity_smoother<br/>加減速限制"]
-    Monitor["collision_monitor<br/>前方/周圍停車區、減速區<br/>footprint 碰撞預估"]
+    Monitor["collision_monitor<br/>前方至 x 1.30 m、周圍 y ±0.75 m<br/>停車/減速、footprint 碰撞預估"]
     Obstacles["/perception/obstacles、/scan"]
     Safety["cmd_vel_safety<br/>感測/校正過期立即停車、限速<br/>停車後從零加速"]
     Correction["校正心跳<br/>/localization_3d/accepted_correction"]
@@ -99,7 +99,7 @@ costmap 是 2D 格子地圖，每格 0.05 m，存 0–255 的代價：0 是空�
 - **global 管「走哪條路」**，需要完整：包含 PGM 牆壁，並記得看過的障礙物，直到被清除。
 - **local 管「現在怎麼走」**，需要快而穩：它放在 `odom`，不會因 PCD 校正讓 `map -> odom` 跳動而跟著跳，controller 不會因此急轉或急停；它不載入 PGM，只看感測器，定位誤差時不會被對不準的地圖牆壁擋住。
 
-兩張共用同一個 `base_link` 矩形 footprint（前 0.65 m、後 0.20 m、左右各 0.32 m）和 0.9 m inflation 半徑。這兩個值都是估計值，還不是驗證過的安全距離。
+兩張設定相同的 `base_link` 矩形 footprint（前 0.65 m、後 0.20 m、左右各 0.32 m），並設定 `footprint_padding: 0.01` m。footprint 是車體在地面的占用輪廓，不是煞停區；目前涵蓋 Nova Carter 的車體幾何並保留裕度。0.9 m inflation 半徑用於產生導航代價，不是安全煞停距離。
 
 ### 障礙物標記與清除
 
@@ -266,10 +266,12 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 | 區域 | 範圍（`base_link`） | 動作 |
 | :-- | :-- | :-- |
-| `PolygonStop` | 車頭前 0.25 m（x 0.65–0.90 m，y ±0.36 m） | 超過 3 個點就停車（線速度、角速度都歸零） |
-| `PolygonSurround` | 整個 footprint 向外擴 0.10 m（x −0.30–0.75 m，y ±0.42 m） | 超過 3 個點就停車，涵蓋側面、後方與近車頭 |
+| `PolygonStop` | 車頭前 0.65 m（x 0.65–1.30 m，y ±0.36 m） | 超過 3 個點就停車（線速度、角速度都歸零） |
+| `PolygonSurround` | x −0.80–1.10 m，y ±0.75 m；相對未 padding 的 footprint，前擴 0.45 m、後擴 0.60 m、側擴 0.43 m | 超過 3 個點就停車，涵蓋側面、後方與近車頭 |
 | `PolygonSlow` | 車頭前 0.75 m（x 0.65–1.40 m，y ±0.50 m） | 超過 3 個點就降為 50% |
 | `FootprintApproach` | local costmap 的 footprint（`/local_costmap/published_footprint`） | 沿目前命令模擬 1.5 秒，依距離碰撞的時間按比例降速；會考慮行進方向，後退和原地旋轉也會檢查 |
+
+固定停車區需在車體輪廓外預留感測與控制延遲、物理煞停行程及安全裕度；發布零速不代表車體瞬間停止。`FootprintApproach` 使用 local costmap 發布的 footprint，但固定停車／減速區不會隨 footprint 自動更新。換車或提高速度時需重新調整並驗證，不能只修改 footprint。
 
 - 感測來源：`/perception/obstacles`（地面濾除後的 3D 點）和 `/scan`（2D 切片）。找不到地面時，`ground_obstacle_filter` 會停止發布，這時仍有 `/scan` 可用。
 - 不再排除半徑 0.5 m 內的所有點。`ground_obstacle_filter.yaml` 的 `self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]` 只排除車身矩形內的點（向上延伸，避免自體反射）；`min_range: 0.0`。導航的 `/scan` 使用同一份自體濾除點雲，並覆寫 `range_min: 0.0`、`range_max: 20.0`，所以車身外的近距離點可以同時進入 scan 與障礙點雲。
@@ -316,9 +318,9 @@ flowchart LR
 
 ## 目前限制
 
-- `collision_monitor` 的區域大小與點數門檻是估計值，停車距離尚未驗證。
+- `collision_monitor` 的區域已通過 Office／Nova Carter 的平地模擬煞停驗證；點數門檻、稀疏／低矮障礙及更差的感測延遲仍未驗證，不能當成認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
 - 尚未使用 costmap filters（Keepout 禁行區、Speed 限速區、Binary 開關區）。目前無法在地圖上劃出禁止進入或限速的區域，只能靠修改 PGM 地圖或 inflation 來間接達成。
-- footprint 與 inflation 為估計值；斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
+- footprint 已量測並涵蓋 Carter 幾何；inflation、斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。固定 `PolygonSurround` 全寬 1.50 m，可能擋住車身本來能通過的窄門。
 - topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。
-- 真實車輛導航安全尚未驗證。只在淨空的 Office 模擬中測試，並先在 RViz 確認 costmap 與規劃路徑。
+- 真實車輛導航安全尚未驗證。Office 模擬已包含實體箱子煞停與感測故障注入；使用時仍先在 RViz 確認 costmap 與規劃路徑。
