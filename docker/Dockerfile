@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-nav2-navfn-planner \
       ros-humble-nav2-planner \
       ros-humble-nav2-regulated-pure-pursuit-controller \
+      ros-humble-nav2-velocity-smoother \
       ros-humble-pcl-conversions \
       ros-humble-pcl-ros \
       ros-humble-pointcloud-to-laserscan \

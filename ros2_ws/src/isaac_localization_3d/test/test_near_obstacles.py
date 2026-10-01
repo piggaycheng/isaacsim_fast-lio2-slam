@@ -196,3 +196,53 @@ class NearObstacleTest(unittest.TestCase):
         self.assertEqual(self.messages["self"].width, 5)
         self.assertTrue(any(math.isfinite(r) and r < 0.5
                             for r in self.messages["scan"].ranges))
+
+    def test_monitor_stop_and_release_ramp_at_final_safety_gate(self):
+        config = Path(get_package_share_directory("isaac_localization_3d")) / "config"
+        self.start("isaac_localization_3d", "cmd_vel_safety.py", [
+            "--params-file", str(config / "collision_monitor.yaml"),
+            "-p", "use_sim_time:=false",
+            "-r", "/nav2/cmd_vel:=/test/out", "-r", "/cmd_vel:=/test/final",
+            "-r", "/scan:=/test/scan", "-r", "/perception/obstacles:=/test/obstacles",
+            "-r", "/localization_3d/accepted_correction:=/test/correction",
+        ])
+        outputs = []
+        self.node.create_subscription(Twist, "/test/final", outputs.append, 10)
+        correction_pub = self.node.create_publisher(Header, "/test/correction", 10)
+        clear = [(x, y, 0.0) for x in np.linspace(-2, 2, 15)
+                 for y in np.linspace(-2, 2, 15)] + [(2, 2, 0.3)]
+        near = clear + [(0.0, 0.40, z) for z in np.linspace(0.2, 0.6, 5)]
+        command = Twist()
+
+        def send(points):
+            correction_pub.publish(Header(
+                frame_id="map", stamp=self.node.get_clock().now().to_msg(),
+            ))
+            self.send(points)
+            self.cmd_pub.publish(command)
+
+        for linear, angular in ((0.5, 0.0), (-0.5, 0.0), (0.0, 0.35)):
+            with self.subTest(linear=linear, angular=angular):
+                command.linear.x = linear
+                command.angular.z = angular
+                self.wait(
+                    lambda: bool(outputs) and outputs[-1] == command,
+                    publish=lambda: send(clear),
+                )
+                self.messages.pop("out", None)
+                self.wait(
+                    lambda: self.messages.get("out") == Twist() and outputs[-1] == Twist(),
+                    publish=lambda: send(near),
+                )
+                outputs.clear()
+                self.wait(
+                    lambda: any(msg != Twist() for msg in outputs),
+                    publish=lambda: send(clear),
+                )
+                first = next(msg for msg in outputs if msg != Twist())
+                self.assertLessEqual(abs(first.linear.x), 0.08 + 1e-9)
+                self.assertLessEqual(abs(first.angular.z), 0.15 + 1e-9)
+                self.wait(
+                    lambda: outputs[-1] == command,
+                    publish=lambda: send(clear),
+                )

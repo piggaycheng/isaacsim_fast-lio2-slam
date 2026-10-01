@@ -295,17 +295,29 @@ planner/controller, recovery and the `cmd_vel` safety chain) is described in
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Obstacles missing from the PGM,
 such as desks seen above the 2D slice or objects moved after mapping, are marked
-in both costmaps, so the 1 Hz replanning routes around them. Its `/nav2/cmd_vel` first passes through Nav2's `collision_monitor`
+in both costmaps, so the 1 Hz replanning routes around them. Controller and
+recovery commands go to `/nav2/cmd_vel_nav`; Nav2's `velocity_smoother`
+(`config/navigation.yaml`, open loop, 0.8 m/s² acceleration and 1.5 m/s²
+deceleration) publishes the ramped `/nav2/cmd_vel`. Safety stops happen after
+the smoother, so they remain immediate. `/nav2/cmd_vel` then passes through Nav2's `collision_monitor`
 (`config/collision_monitor.yaml`: front and surround stop zones, a front slowdown zone and
 a footprint time-to-collision check on `/perception/obstacles` and `/scan`),
 then through a ROS 2 safety node (PCD correction and obstacle sensor
-freshness, planar command validation and speed limiting) to `/cmd_vel`, which
+freshness, planar command validation, speed limiting and restart acceleration
+limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
 The safety node actively publishes zero velocity at 10 Hz when neither `/scan`
 nor `/perception/obstacles` has a timestamp less than 1 second old, including
 before the first sensor message arrives and when incoming commands stop.
 Either source recovering allows new commands again; old commands are not replayed.
+The final safety gate tracks its published commands and limits increases in
+speed to 0.8 m/s² and 1.5 rad/s², including after collision-monitor or watchdog
+stops. Braking and zero commands remain immediate; direction changes pass through
+zero before accelerating in the opposite direction. These acceleration limits
+and a 0.5 s command timeout are configured under `cmd_vel_safety` in
+`config/collision_monitor.yaml`. Acceleration uses ROS time with at most 0.1 s
+credited per command; command gaps and clock resets restart from zero.
 `cmd_vel_safety.sensor_timeout` in `config/collision_monitor.yaml` must match
 the monitor's `source_timeout`. Freshness uses ROS time, so pausing `/clock`
 also pauses expiry; clock resets clear sensor and correction freshness state.

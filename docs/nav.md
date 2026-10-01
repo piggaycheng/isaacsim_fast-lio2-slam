@@ -56,9 +56,10 @@ flowchart TD
     Planner["planner_server<br/>NavFn + global_costmap"]
     Controller["controller_server<br/>GoalHeadingLatchedRPP + local_costmap"]
     Behavior["behavior_server<br/>BackUp、Wait"]
-    Monitor["collision_monitor<br/>前方停車區、減速區、footprint 碰撞預估"]
+    Smoother["velocity_smoother<br/>加減速限制"]
+    Monitor["collision_monitor<br/>前方/周圍停車區、減速區<br/>footprint 碰撞預估"]
     Obstacles["/perception/obstacles、/scan"]
-    Safety["cmd_vel_safety<br/>校正過期停車、限速"]
+    Safety["cmd_vel_safety<br/>感測/校正過期立即停車、限速<br/>停車後從零加速"]
     Correction["校正心跳<br/>/localization_3d/accepted_correction"]
     EStop["/navigation/emergency_stop"]
     Isaac["Isaac Sim Carter<br/>DifferentialController"]
@@ -68,9 +69,11 @@ flowchart TD
     Planner -->|"path"| BT
     BT -->|"FollowPath"| Controller
     BT -->|"失敗時 recovery"| Behavior
-    Controller -->|"/nav2/cmd_vel"| Monitor
-    Behavior -->|"/nav2/cmd_vel"| Monitor
+    Controller -->|"/nav2/cmd_vel_nav"| Smoother
+    Behavior -->|"/nav2/cmd_vel_nav"| Smoother
+    Smoother -->|"/nav2/cmd_vel"| Monitor
     Obstacles --> Monitor
+    Obstacles -->|"資料時效 watchdog"| Safety
     Monitor -->|"/nav2/cmd_vel_monitored"| Safety
     Correction --> Safety
     EStop --> Safety
@@ -150,6 +153,7 @@ sequenceDiagram
     participant CM as collision_monitor
     participant LC as local_costmap<br/>5 Hz
     participant RPP as controller_server<br/>RPP 10 Hz
+    participant VS as velocity_smoother<br/>20 Hz
     participant GC as global_costmap<br/>2 Hz
     participant BT as bt_navigator<br/>重新規劃 1 Hz
     participant P as planner_server
@@ -157,15 +161,19 @@ sequenceDiagram
 
     Note over L,S: 障礙物出現在車前方
     L->>CM: 最新點雲與 scan（每幀）
-    RPP->>CM: /nav2/cmd_vel（仍是原速）
+    RPP->>VS: /nav2/cmd_vel_nav
+    VS->>CM: /nav2/cmd_vel（加減速限制後）
     CM->>S: 進入減速區 → 50%；碰撞預估 → 按比例降速；進入停車區 → 0
+    Note over S: 停車立即歸零；解除後從零逐步加速
     Note over CM: 第一道反應，不需等 costmap 更新
 
     L->>LC: 標記障礙物（≤ 0.2 s）
     LC->>RPP: 路徑附近代價升高
-    RPP->>CM: 依代價降速（Humble 預設 use_cost_regulated_linear_velocity_scaling）
+    RPP->>VS: 依代價降速（Humble 預設 use_cost_regulated_linear_velocity_scaling）
+    VS->>CM: 平滑後命令
     alt 1 s 內（到前視點為止）會撞上
-        RPP->>CM: 發布零速
+        RPP->>VS: 發布零速
+        VS->>CM: 一般控制停車依減速度降速
         Note over RPP: 持續超過 failure_tolerance 1 s<br/>→ FollowPath 失敗，清除 local costmap 後重試
     end
 
@@ -228,13 +236,29 @@ ClearEntireCostmap 會清掉 global costmap 所有看過的障礙物，但 stati
 
 ## `cmd_vel` 安全鏈
 
-`controller_server` 和 `behavior_server` 都不直接控制車子，它們的 `/cmd_vel` 被重新映射到 `/nav2/cmd_vel`，依序經過兩道關卡才到 Isaac Sim 訂閱的 `/cmd_vel`：
+`controller_server` 和 `behavior_server` 都不直接控制車子，它們的 `/cmd_vel` 被重新映射到 `/nav2/cmd_vel_nav`，先經過 `velocity_smoother` 限制加減速，再依序經過兩道安全關卡才到 Isaac Sim 訂閱的 `/cmd_vel`：
 
 ```
-controller / behavior → /nav2/cmd_vel → collision_monitor → /nav2/cmd_vel_monitored → cmd_vel_safety → /cmd_vel
+controller / behavior → /nav2/cmd_vel_nav → velocity_smoother → /nav2/cmd_vel → collision_monitor → /nav2/cmd_vel_monitored → cmd_vel_safety → /cmd_vel
 ```
 
-兩道關卡都只會降速或停車，不會加速，所以最終速度取最嚴格的限制。
+兩道安全關卡都只會降速或停車，不會加速，所以最終速度取最嚴格的限制。smoother 放在安全關卡之前，安全停車不會被平滑延遲。
+
+### velocity_smoother
+
+Nav2 Humble 內建的 `nav2_velocity_smoother`，設定在 `navigation.yaml`。RPP 與 BackUp 的命令可能一步從 0 跳到 0.5 m/s，smoother 以 20 Hz 把它變成斜坡。
+
+| 參數 | 值 | 說明 |
+| :-- | :-- | :-- |
+| `max_accel` | 線 0.8 m/s²、角 1.5 rad/s² | 0 → 0.5 m/s 約 0.6 秒 |
+| `max_decel` | 線 −1.5 m/s²、角 −2.0 rad/s² | 正常減速；安全停車不受此限制 |
+| `max_velocity` / `min_velocity` | ±0.75 m/s、±0.7 rad/s | 與 `cmd_vel_safety` 的限速一致 |
+| `velocity_timeout` | 0.5 s | Nav2 停止發布命令後，依減速度降到 0，然後停止發布 |
+| `feedback` | `OPEN_LOOP` | 以上一個輸出作為目前速度 |
+
+- 不用 `CLOSED_LOOP`：它以量測速度加一步加速度作為輸出，原地旋轉時 Carter 的輪子在約 0.1 rad/s 時克服不了摩擦，量測速度一直是 0，車子會卡住不轉。
+- `OPEN_LOOP` 看不到下游的停車，因此由最後一道 `cmd_vel_safety` 記錄實際發布的命令；即使 smoother 在停車期間仍送原速，解除後最終命令也會從零逐步加速。
+- smoother 的計時器使用 wall time，模擬比實際時間慢時，以模擬時間換算的加速度會略高。
 
 ### collision_monitor
 
@@ -264,7 +288,12 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | 4 秒內沒有 `/localization_3d/accepted_correction`（PCD 校正過期） | 發布零速 |
 | `/scan` 與 `/perception/obstacles` 都沒有 1 秒內的新資料 | 發布零速；任一來源恢復後才允許新的速度命令 |
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
-| 其他 | 限制在 0.75 m/s、0.7 rad/s 後轉發 |
+| 0.5 秒未收到新的速度命令 | 發布零速；下一個命令從零起步 |
+| 其他 | 限速 0.75 m/s、0.7 rad/s，再限制加速；減速與停車立即轉發 |
+
+最後一道關卡只限制速度大小增加：`max_linear_accel: 0.8` m/s²、`max_angular_accel: 1.5` rad/s²（`collision_monitor.yaml`，與 smoother 的 `max_accel` 一致）。collision monitor 發布零速、感測或定位校正過期、無效命令與 emergency stop 都立即歸零並重設起步狀態；安全停車不受減速度限制。恢復後必須收到新命令，從最後發布的零速逐步增加；倒退與原地旋轉也適用。方向反轉先輸出零速，再向相反方向加速。
+
+加速使用 ROS 時間與上次輸出間隔，每次最多計入 0.1 秒，避免停車或延遲期間累積加速額度。第一個命令輸出零速，之後隨新命令逐步增加；不在 timer 內重播命令。`command_timeout: 0.5` 秒與 Isaac Sim 的命令逾時一致，命令中斷時由 watchdog 停車，且即使 timer 尚未執行，逾時後的第一個命令也會重新從零開始。時間倒退同樣重設起步狀態。
 
 安全節點不會放寬校正時效；`global_tf_gate` 也會在校正過期時停止發布 `map -> odom`，Nav2 因此查不到 TF，無法繼續規劃與控制。
 
@@ -275,9 +304,9 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 ```mermaid
 flowchart LR
     Start["launch 啟動定位、map_server<br/>與 Nav2 節點（未啟用）"] --> Ready["wait_for_costmap_tf.py<br/>等待 /map 與 map -> base_link"]
-    Ready -->|"--navigate"| NavMgr["lifecycle_manager_navigation<br/>planner_server、controller_server、<br/>behavior_server、bt_navigator、<br/>collision_monitor"]
+    Ready -->|"--navigate"| NavMgr["lifecycle_manager_navigation<br/>planner_server、controller_server、<br/>behavior_server、bt_navigator、<br/>velocity_smoother、collision_monitor"]
     Ready -->|"未加 --navigate"| CostMgr["lifecycle_manager_fusion_costmaps<br/>只啟用兩個 costmap_observer"]
-    NavMgr --> NavReady["wait_for_navigation.py<br/>確認五個節點都 active"]
+    NavMgr --> NavReady["wait_for_navigation.py<br/>確認六個節點都 active"]
     NavReady -->|"成功"| Log["log：navigator active"]
     Ready -->|"失敗"| Stop["關閉整個 launch"]
     NavReady -->|"失敗"| Stop
@@ -287,7 +316,7 @@ flowchart LR
 
 ## 目前限制
 
-- 尚未加入 `velocity_smoother`；`collision_monitor` 的區域大小與點數門檻是估計值，停車距離尚未驗證。
+- `collision_monitor` 的區域大小與點數門檻是估計值，停車距離尚未驗證。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
 - 尚未使用 costmap filters（Keepout 禁行區、Speed 限速區、Binary 開關區）。目前無法在地圖上劃出禁止進入或限速的區域，只能靠修改 PGM 地圖或 inflation 來間接達成。
 - footprint 與 inflation 為估計值；斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。

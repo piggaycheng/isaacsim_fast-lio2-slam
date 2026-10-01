@@ -12,7 +12,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan, PointCloud2
-from std_msgs.msg import Header
+from std_msgs.msg import Bool, Header
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from cmd_vel_safety import CmdVelSafety
@@ -28,7 +28,10 @@ class SafetyTest(unittest.TestCase):
         rclpy.shutdown()
 
     def setUp(self):
-        self.node = CmdVelSafety()
+        self.node = CmdVelSafety(parameter_overrides=[
+            Parameter("max_linear_accel", value=100.0),
+            Parameter("max_angular_accel", value=100.0),
+        ])
         self.publisher = Mock()
         self.node.publisher = self.publisher
         self.now = 10.0
@@ -37,6 +40,8 @@ class SafetyTest(unittest.TestCase):
         self.clock_patch = patch.object(self.node, "get_clock", return_value=self.clock)
         self.clock_patch.start()
         self.node.on_correction(self.header(10))
+        self.node.last_command_time = 9.9
+        self.node.last_output_time = 9.9
         self.command = Twist()
         self.command.linear.x = 0.5
         self.command.angular.z = 0.2
@@ -90,6 +95,9 @@ class SafetyTest(unittest.TestCase):
         self.now = 11.1
         self.sensor("obstacles", 11.1)
         self.node.on_command(self.command)
+        self.assert_output(0)
+        self.now += 0.01
+        self.node.on_command(self.command)
         self.assert_output(0.5, 0.2)
 
     def test_timer_stops_without_new_command_and_does_not_replay(self):
@@ -108,7 +116,10 @@ class SafetyTest(unittest.TestCase):
         self.publisher.reset_mock()
         self.sensor("scan", 11)
         self.node.on_watchdog()
-        self.publisher.publish.assert_not_called()
+        self.assert_output(0)
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.now += 0.01
         self.node.on_command(self.command)
         self.assert_output(0.5, 0.2)
 
@@ -131,6 +142,9 @@ class SafetyTest(unittest.TestCase):
         self.node.on_command(self.command)
         self.assert_output(0)
         self.node.on_correction(self.header(5))
+        self.now += 0.01
+        self.node.on_command(self.command)
+        self.now += 0.01
         self.node.on_command(self.command)
         self.assert_output(0.5, 0.2)
         self.now = 10
@@ -177,14 +191,133 @@ class SafetyTest(unittest.TestCase):
             executor.shutdown()
             feeder.destroy_node()
 
-    def test_invalid_timeout_is_rejected(self):
-        for value in (0.0, -1.0, float("nan"), float("inf")):
-            with self.subTest(value=value):
-                with self.assertRaises(ValueError):
-                    CmdVelSafety(
-                        enable_rosout=False,
-                        parameter_overrides=[Parameter("sensor_timeout", value=value)],
-                    )
+    def test_invalid_safety_parameters_are_rejected(self):
+        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout"):
+            for value in (0.0, -1.0, float("nan"), float("inf")):
+                with self.subTest(name=name, value=value):
+                    with self.assertRaises(ValueError):
+                        CmdVelSafety(
+                            enable_rosout=False,
+                            parameter_overrides=[Parameter(name, value=value)],
+                        )
+
+    def enable_acceleration_limits(self):
+        self.node.max_linear_accel = 0.8
+        self.node.max_angular_accel = 1.5
+        self.node.last_command_time = None
+        self.node.last_output_time = None
+        self.sensor("scan", self.now)
+
+    def ramp_command(self, ticks=15):
+        for _ in range(ticks):
+            self.now += 0.05
+            self.sensor("scan", self.now)
+            self.node.on_command(self.command)
+
+    def test_startup_and_monitor_release_ramp_with_immediate_braking(self):
+        self.enable_acceleration_limits()
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command()
+        self.assert_output(0.5, 0.2)
+        self.node.on_command(Twist())
+        self.assert_output(0)
+        self.now += 0.05
+        self.node.on_command(self.command)
+        output = self.publisher.publish.call_args.args[0]
+        self.assertAlmostEqual(output.linear.x, 0.04)
+        self.assertAlmostEqual(output.angular.z, 0.075)
+        self.ramp_command()
+        self.command.linear.x = 0.1
+        self.command.angular.z = 0.02
+        self.node.on_command(self.command)
+        self.assert_output(0.1, 0.02)
+
+    def test_watchdog_release_ramps_and_does_not_bank_idle_time(self):
+        self.enable_acceleration_limits()
+        self.ramp_command()
+        self.now += 1.0
+        self.node.on_watchdog()
+        self.assert_output(0)
+        self.sensor("scan", self.now)
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command(1)
+        output = self.publisher.publish.call_args.args[0]
+        self.assertAlmostEqual(output.linear.x, 0.04)
+        self.assertAlmostEqual(output.angular.z, 0.075)
+        self.node.on_command(Twist())
+        self.now += 0.4
+        self.sensor("scan", self.now)
+        self.node.on_command(self.command)
+        output = self.publisher.publish.call_args.args[0]
+        self.assertLessEqual(output.linear.x, 0.08 + 1e-9)
+        self.assertLessEqual(output.angular.z, 0.15 + 1e-9)
+
+    def test_command_gap_resets_even_before_watchdog_runs(self):
+        self.enable_acceleration_limits()
+        self.ramp_command()
+        self.now += 0.5
+        self.sensor("scan", self.now)
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command(1)
+        self.assertAlmostEqual(self.publisher.publish.call_args.args[0].linear.x, 0.04)
+        self.now += 0.5
+        self.sensor("scan", self.now)
+        self.node.on_watchdog()
+        self.assert_output(0)
+
+    def test_reverse_and_rotation_ramp_and_sign_change_stops_first(self):
+        self.enable_acceleration_limits()
+        self.command.linear.x = -0.5
+        self.command.angular.z = -0.35
+        self.ramp_command()
+        self.assert_output(-0.5, -0.35)
+        self.command.linear.x = 0.5
+        self.command.angular.z = 0.35
+        self.now += 0.05
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command(1)
+        output = self.publisher.publish.call_args.args[0]
+        self.assertAlmostEqual(output.linear.x, 0.04)
+        self.assertAlmostEqual(output.angular.z, 0.075)
+
+    def test_invalid_command_and_clock_reset_clear_ramp(self):
+        self.enable_acceleration_limits()
+        self.ramp_command()
+        invalid = Twist()
+        invalid.linear.x = float("nan")
+        self.node.on_command(invalid)
+        self.assert_output(0)
+        self.ramp_command(1)
+        self.assertAlmostEqual(self.publisher.publish.call_args.args[0].linear.x, 0.04)
+        self.now = 5.0
+        self.sensor("scan", self.now)
+        self.node.on_correction(self.header(self.now))
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command(1)
+        self.assertAlmostEqual(self.publisher.publish.call_args.args[0].linear.x, 0.04)
+
+    def test_correction_recovery_ramps_and_emergency_stop_stays_latched(self):
+        self.enable_acceleration_limits()
+        self.ramp_command()
+        self.now = 14.0
+        self.sensor("scan", self.now)
+        self.node.on_watchdog()
+        self.assert_output(0)
+        self.node.on_correction(self.header(self.now))
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.ramp_command(1)
+        self.assertAlmostEqual(self.publisher.publish.call_args.args[0].linear.x, 0.04)
+        self.node.on_stop(Bool(data=True))
+        self.assert_output(0)
+        self.node.on_stop(Bool(data=False))
+        self.ramp_command()
+        self.assert_output(0)
 
 
 class SafetyTopicTest(unittest.TestCase):
@@ -248,6 +381,12 @@ class SafetyTopicTest(unittest.TestCase):
             self.assertTrue(all(msg == Twist() for msg in outputs))
             command_pub.publish(command)
             spin(0.05)
+            self.assertGreaterEqual(outputs[-1].linear.x, 0.0)
+            self.assertLess(outputs[-1].linear.x, 0.4)
+            for _ in range(20):
+                send_sensors()
+                command_pub.publish(command)
+                spin(0.03)
             self.assertEqual(outputs[-1].linear.x, 0.4)
         finally:
             executor.shutdown()

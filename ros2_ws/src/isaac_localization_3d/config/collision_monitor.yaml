@@ -70,3 +70,8 @@ cmd_vel_safety:
   ros__parameters:
     # Keep aligned with collision_monitor.source_timeout.
     sensor_timeout: 1.0
+    # Acceleration only: safety braking and zero commands bypass these limits.
+    # Keep aligned with velocity_smoother.max_accel in navigation.yaml.
+    max_linear_accel: 0.8
+    max_angular_accel: 1.5
+    command_timeout: 0.5

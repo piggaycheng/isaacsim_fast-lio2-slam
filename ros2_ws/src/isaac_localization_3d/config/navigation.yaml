@@ -45,6 +45,23 @@ controller_server:
       use_collision_detection: true
       transform_tolerance: 0.5
 
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: true
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    # CLOSED_LOOP stalls Carter: one accel step above measured zero cannot
+    # overcome wheel friction during in-place rotation.
+    feedback: "OPEN_LOOP"
+    # Keep within cmd_vel_safety's Carter limits (0.75 m/s, 0.7 rad/s).
+    max_velocity: [0.75, 0.0, 0.7]
+    min_velocity: [-0.75, 0.0, -0.7]
+    max_accel: [0.8, 0.0, 1.5]
+    max_decel: [-1.5, 0.0, -2.0]
+    deadband_velocity: [0.0, 0.0, 0.0]
+    # Decelerate to zero if Nav2 stops publishing for this long.
+    velocity_timeout: 0.5
+
 bt_navigator:
   ros__parameters:
     use_sim_time: true

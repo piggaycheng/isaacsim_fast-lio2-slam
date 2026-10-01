@@ -13,7 +13,7 @@ def main():
     node = Node("navigation_readiness")
     names = (
         "planner_server", "controller_server", "behavior_server", "bt_navigator",
-        "collision_monitor",
+        "velocity_smoother", "collision_monitor",
     )
     clients = {
         name: node.create_client(GetState, f"/{name}/get_state")
@@ -39,7 +39,8 @@ def main():
                 states[name] = future.result().current_state.id
             if all(state == 3 for state in states.values()):
                 node.get_logger().info(
-                    "Nav2 planner, controller, behavior server, collision monitor and navigator active"
+                    "Nav2 planner, controller, behavior server, velocity smoother, "
+                    "collision monitor and navigator active"
                 )
                 return
             rclpy.spin_once(node, timeout_sec=0.5)

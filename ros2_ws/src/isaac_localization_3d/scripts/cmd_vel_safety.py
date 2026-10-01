@@ -19,11 +19,19 @@ class CmdVelSafety(Node):
         self.last_speed_warning = None
         self.stop_latched = False
         self.sensor_timeout = self.declare_parameter("sensor_timeout", 1.0).value
-        if not math.isfinite(self.sensor_timeout) or self.sensor_timeout <= 0:
-            self.destroy_node()
-            raise ValueError("sensor_timeout must be finite and positive")
+        self.max_linear_accel = self.declare_parameter("max_linear_accel", 0.8).value
+        self.max_angular_accel = self.declare_parameter("max_angular_accel", 1.5).value
+        self.command_timeout = self.declare_parameter("command_timeout", 0.5).value
+        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                self.destroy_node()
+                raise ValueError(f"{name} must be finite and positive")
         self.sensor_stamps = {"scan": None, "obstacles": None}
         self.last_watchdog_time = None
+        self.last_output = Twist()
+        self.last_output_time = None
+        self.last_command_time = None
         self.sensors_stale = None
         self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
@@ -54,6 +62,9 @@ class CmdVelSafety(Node):
         if self.last_watchdog_time is not None and now < self.last_watchdog_time:
             self.sensor_stamps = dict.fromkeys(self.sensor_stamps)
             self.last_correction = None
+            self.last_output = Twist()
+            self.last_output_time = None
+            self.last_command_time = None
             self.get_logger().warning("Clock reset; clearing safety freshness state")
         self.last_watchdog_time = now
         return now
@@ -76,14 +87,33 @@ class CmdVelSafety(Node):
         if not self.sensors_fresh(now) or self.stop_latched or (
             self.last_correction is None
             or not 0 <= now - self.last_correction < 4.0
+        ) or (
+            self.last_command_time is not None
+            and now - self.last_command_time >= self.command_timeout
         ):
-            self.publisher.publish(Twist())
+            if self.last_output != Twist():
+                self.get_logger().warning("Safety gate or command timeout; stopping Carter")
+            self.publish_output(Twist(), now)
 
     def on_stop(self, message):
         if message.data:
             self.stop_latched = True
             self.get_logger().error("Navigation emergency stop latched; restart to re-enable driving")
-            self.publisher.publish(Twist())
+            self.publish_output(Twist(), self.watchdog_time())
+
+    def publish_output(self, output, now):
+        self.last_output = output
+        self.last_output_time = now
+        self.publisher.publish(output)
+
+    @staticmethod
+    def limit_acceleration(previous, requested, step):
+        # Braking must never be delayed, including braking to zero before reversal.
+        if previous * requested < 0:
+            return 0.0
+        if abs(requested) <= abs(previous):
+            return requested
+        return math.copysign(min(abs(requested), abs(previous) + step), requested)
 
     def on_correction(self, message):
         self.watchdog_time()
@@ -94,6 +124,13 @@ class CmdVelSafety(Node):
 
     def on_command(self, command):
         now = self.watchdog_time()
+        if (
+            self.last_command_time is None
+            or now - self.last_command_time >= self.command_timeout
+        ):
+            self.last_output = Twist()
+            self.last_output_time = now
+        self.last_command_time = now
         sensors_fresh = self.sensors_fresh(now)
         values = (
             command.linear.x, command.linear.y, command.linear.z,
@@ -128,7 +165,18 @@ class CmdVelSafety(Node):
                     "Clamped Nav2 /cmd_vel to Carter limits (0.75 m/s, 0.7 rad/s)"
                 )
                 self.last_speed_warning = now
-        self.publisher.publish(output)
+            # Do not bank acceleration while stopped or between delayed commands.
+            elapsed = (
+                0.0 if self.last_output_time is None
+                else max(0.0, min(0.1, now - self.last_output_time))
+            )
+            output.linear.x = self.limit_acceleration(
+                self.last_output.linear.x, output.linear.x, self.max_linear_accel * elapsed
+            )
+            output.angular.z = self.limit_acceleration(
+                self.last_output.angular.z, output.angular.z, self.max_angular_accel * elapsed
+            )
+        self.publish_output(output, now)
 
 
 def main():

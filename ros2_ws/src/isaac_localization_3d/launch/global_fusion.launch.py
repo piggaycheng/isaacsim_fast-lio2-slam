@@ -54,7 +54,7 @@ def generate_launch_description():
             "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
             "node_names": [
                 "planner_server", "controller_server", "behavior_server", "bt_navigator",
-                "collision_monitor",
+                "velocity_smoother", "collision_monitor",
             ],
         }],
     )
@@ -222,16 +222,16 @@ def generate_launch_description():
                 package="nav2_controller", executable="controller_server",
                 name="controller_server", output="screen",
                 parameters=[navigation_config, observation_config, sim],
-                remappings=[("/cmd_vel", "/nav2/cmd_vel")],
+                remappings=[("/cmd_vel", "/nav2/cmd_vel_nav")],
             ),
             Node(
                 condition=IfCondition(navigate),
                 package="nav2_behaviors", executable="behavior_server",
                 name="behavior_server", output="screen",
                 parameters=[navigation_config, sim],
-                # Recovery motions go through the same collision_monitor and
-                # cmd_vel_safety gates as the controller.
-                remappings=[("/cmd_vel", "/nav2/cmd_vel")],
+                # Recovery motions go through the same smoother, collision_monitor
+                # and cmd_vel_safety gates as the controller.
+                remappings=[("/cmd_vel", "/nav2/cmd_vel_nav")],
             ),
             Node(
                 condition=IfCondition(navigate),
@@ -244,6 +244,16 @@ def generate_launch_description():
                     ), "default_nav_through_poses_bt_xml": os.path.join(
                         package, "config", "navigate_through_poses.xml"
                     )}, sim,
+                ],
+            ),
+            Node(
+                condition=IfCondition(navigate),
+                package="nav2_velocity_smoother", executable="velocity_smoother",
+                name="velocity_smoother", output="screen",
+                parameters=[navigation_config, sim],
+                # Smooth before the safety gates so their stops stay immediate.
+                remappings=[
+                    ("cmd_vel", "/nav2/cmd_vel_nav"), ("cmd_vel_smoothed", "/nav2/cmd_vel"),
                 ],
             ),
             Node(
