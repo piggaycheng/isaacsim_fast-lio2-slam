@@ -10,6 +10,8 @@ auto_jog=false
 rviz=true
 manual_initial_pose=false
 navigate=false
+filter_editor=false
+filter_state=""
 boxes=()
 
 usage() {
@@ -25,6 +27,9 @@ Options:
       --manual-initial-pose
                        3d only: set initial pose in RViz instead of Office spawn.
       --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
+      --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
+      --filter-state FILE
+                       Persistent editor JSON (default: maps/costmap_filters/editor.json).
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
@@ -68,6 +73,15 @@ while (($# > 0)); do
       shift 2
       ;;
     --manual-initial-pose) manual_initial_pose=true; shift ;;
+    --filter-editor) filter_editor=true; shift ;;
+    --filter-state)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      filter_state="$2"
+      shift 2
+      ;;
     --navigate) navigate=true; shift ;;
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
@@ -96,8 +110,10 @@ if [[ "$auto_jog" == true ]]; then args+=(--auto-jog); fi
 if [[ "$rviz" == false ]]; then args+=(--no-rviz); fi
 args+=("${boxes[@]}")
 if [[ "$mode" == 2d ]]; then
-  if [[ -n "$map_pcd" || "$manual_initial_pose" == true || "$navigate" == true ]]; then
-    echo "--pcd, --manual-initial-pose and --navigate require --mode 3d" >&2
+  if [[ -n "$map_pcd" ||
+        -n "$filter_state" || "$filter_editor" == true ||
+        "$manual_initial_pose" == true || "$navigate" == true ]]; then
+    echo "--pcd, --manual-initial-pose, --navigate and costmap filters require --mode 3d" >&2
     exit 2
   fi
   exec "$project_dir/run_2d_localization.sh" --map "$map_file" "${args[@]}"
@@ -105,5 +121,7 @@ fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
 if [[ "$navigate" == true ]]; then args+=(--navigate); fi
+if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
+if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
 exec "$project_dir/run_3d_localization.sh" --global-fusion --costmaps \
   --pgm "$map_file" "${args[@]}"

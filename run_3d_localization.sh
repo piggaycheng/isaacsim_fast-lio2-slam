@@ -13,6 +13,9 @@ global_fusion=false
 obstacle_cloud=false
 costmaps=false
 navigate=false
+filter_editor=false
+filter_state="$project_dir/maps/costmap_filters/editor.json"
+filter_state_set=false
 ros_cmd_vel=false
 boxes=()
 
@@ -41,6 +44,11 @@ Options:
                       3D-obstacle local Nav2 costmaps (no autonomous driving).
       --navigate      With --global-fusion, start low-speed Nav2 navigation
                       from RViz goals and accept /cmd_vel (no automatic goal).
+      --filter-editor Annotate Keepout/Speed polygons live in RViz;
+                      requires fusion and costmaps.
+      --filter-state FILE
+                      Persistent editor JSON inside the project (default:
+                      maps/costmap_filters/editor.json).
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
       --box X,Y[,SX,SY,SZ]
@@ -61,6 +69,16 @@ while (($# > 0)); do
       shift 2
       ;;
     --headless) headless=true; shift ;;
+    --filter-editor) filter_editor=true; shift ;;
+    --filter-state)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      filter_state="$2"
+      filter_state_set=true
+      shift 2
+      ;;
     --auto-jog) auto_jog=true; shift ;;
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
@@ -81,6 +99,15 @@ while (($# > 0)); do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$filter_editor" == true &&
+      ( "$global_fusion" != true || "$costmaps" != true ) ]]; then
+  echo "Costmap filters require --global-fusion and --costmaps or --navigate" >&2
+  exit 2
+fi
+if [[ "$filter_state_set" == true && "$filter_editor" != true ]]; then
+  echo "--filter-state requires --filter-editor" >&2
+  exit 2
+fi
 if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
   echo "--obstacle-cloud, --costmaps and --navigate require --global-fusion" >&2
   exit 2
@@ -121,6 +148,11 @@ fi
 container_pcd="$(container_path "$map_pcd")"
 container_pgm="$(container_path "$map_pgm")"
 container_path "$map_image" >/dev/null
+filter_args=()
+if [[ "$filter_editor" == true ]]; then
+  if [[ "$filter_state" != /* ]]; then filter_state="$project_dir/$filter_state"; fi
+  filter_args+=(filter_editor:=true "filter_state:=$(container_path "$filter_state")")
+fi
 require_ros_workspace
 set -u
 
@@ -130,7 +162,7 @@ launch_args=(map_pcd:="$container_pcd" map_pgm:="$container_pgm" rviz:="$rviz"
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
-    navigate:="$navigate")
+    navigate:="$navigate" "${filter_args[@]}")
 fi
 start_ros launch isaac_localization_3d "$launch_file" "${launch_args[@]}"
 

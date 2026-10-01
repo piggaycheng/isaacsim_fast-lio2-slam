@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-scipy \
       python3-yaml \
       ros-humble-gtsam \
+      ros-humble-interactive-markers \
       ros-humble-nav2-amcl \
       ros-humble-nav2-behaviors \
       ros-humble-nav2-bt-navigator \

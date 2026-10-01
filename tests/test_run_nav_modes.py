@@ -26,9 +26,11 @@ class TestRunNavModes(unittest.TestCase):
                 self.assertEqual(launch(*args).returncode, 2)
 
     def test_2d_rejects_3d_only_options(self):
-        for option in ("--pcd", "--manual-initial-pose", "--navigate"):
+        for option in ("--pcd", "--manual-initial-pose", "--navigate",
+                       "--filter-editor", "--filter-state"):
             with self.subTest(option=option):
-                args = (option, "map.pcd") if option == "--pcd" else (option,)
+                args = ((option, "missing.yaml") if option in
+                        ("--pcd", "--filter-state") else (option,))
                 result = launch("--mode", "2d", *args)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("require --mode 3d", result.stderr)
@@ -60,6 +62,52 @@ class TestRunNavModes(unittest.TestCase):
         result = launch("--mode", "3d", "--navigate", "--auto-jog")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--auto-jog cannot be combined with --navigate", result.stderr)
+
+    def test_missing_filter_values_are_rejected(self):
+        for option in ("--filter-state",):
+            self.assertEqual(launch("--mode", "3d", option).returncode, 2)
+            self.assertEqual(launch("--mode", "3d", option, "").returncode, 2)
+
+    def test_removed_mask_options_are_rejected(self):
+        for script in (RUN_NAV, RUN_NAV.with_name("run_3d_localization.sh")):
+            for option in ("--keepout-mask", "--speed-mask"):
+                result = subprocess.run(
+                    [str(script), option, "missing.yaml"],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"Unknown option: {option}", result.stderr)
+            result = subprocess.run(
+                [str(script), "--help"], capture_output=True, text=True, timeout=10,
+                check=False,
+            )
+            self.assertNotIn("--keepout-mask", result.stdout)
+            self.assertNotIn("--speed-mask", result.stdout)
+
+    def test_direct_3d_filters_require_costmaps(self):
+        result = subprocess.run(
+            [str(RUN_NAV.with_name("run_3d_localization.sh")),
+             "--global-fusion", "--filter-editor"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Costmap filters require", result.stderr)
+
+    def test_state_requires_editor(self):
+        result = launch("--mode", "3d", "--filter-state", "zones.json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--filter-state requires --filter-editor", result.stderr)
+
+    def test_editor_state_help_uses_map_directory(self):
+        for script in (RUN_NAV, RUN_NAV.with_name("run_3d_localization.sh")):
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    [str(script), "--help"], capture_output=True, text=True, timeout=10,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0)
+                self.assertIn("maps/costmap_filters/editor.json", result.stdout)
+                self.assertNotIn("ros2_ws/log/costmap_filters/editor.json", result.stdout)
 
 
 if __name__ == "__main__":

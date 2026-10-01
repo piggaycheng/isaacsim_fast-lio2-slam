@@ -1,13 +1,84 @@
 import os
+import tempfile
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, RegisterEventHandler,
+    SetLaunchConfiguration,
+)
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+
+
+def configure_filters(context, observation_config):
+    editor = LaunchConfiguration("filter_editor", default="false").perform(context).lower() == "true"
+    if not editor:
+        return [SetLaunchConfiguration("costmap_config", observation_config)]
+    if LaunchConfiguration("costmaps").perform(context).lower() != "true":
+        raise ValueError("Costmap filter editor requires costmaps:=true")
+    with open(observation_config, encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)
+    mask_topics = [f"/costmap_filters/{kind}_mask" for kind in ("keepout", "speed")]
+    for name in ("global_costmap", "local_costmap"):
+        parameters = config[name][name]["ros__parameters"]
+        parameters["filters"] = []
+        for kind in ("keepout", "speed"):
+            if kind == "speed" and name == "global_costmap":
+                continue
+            plugin = f"{kind}_filter"
+            parameters["filters"].append(plugin)
+            parameters[plugin] = {
+                "plugin": f"nav2_costmap_2d::{'KeepoutFilter' if kind == 'keepout' else 'SpeedFilter'}",
+                "enabled": True,
+                "filter_info_topic": f"/costmap_filters/{kind}_info",
+            }
+            if kind == "speed":
+                parameters[plugin]["speed_limit_topic"] = "/speed_limit"
+            else:
+                parameters["filters"].append("keepout_inflation")
+                parameters["keepout_inflation"] = {
+                    "plugin": "nav2_costmap_2d::InflationLayer",
+                    "inflation_radius": parameters["inflation_layer"]["inflation_radius"],
+                    "cost_scaling_factor": parameters["inflation_layer"]["cost_scaling_factor"],
+                }
+    directory = tempfile.TemporaryDirectory(prefix="isaac_costmap_filters_")
+    filename = os.path.join(directory.name, "costmaps.yaml")
+    with open(filename, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(config, stream)
+
+    def cleanup(event, context):
+        directory.cleanup()
+        return []
+
+    editor_node = Node(
+        package="isaac_localization_3d", executable="costmap_filter_editor.py",
+        name="costmap_filter_editor", output="screen",
+        parameters=[{
+            "use_sim_time": True,
+            "state_file": LaunchConfiguration("filter_state"),
+        }],
+    )
+    return [
+        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
+        SetLaunchConfiguration("costmap_config", filename),
+        SetLaunchConfiguration(
+            "filter_mask_topics", yaml.safe_dump(mask_topics, default_flow_style=True).strip(),
+        ),
+        editor_node,
+        RegisterEventHandler(OnProcessExit(
+            target_action=editor_node,
+            on_exit=lambda event, context: [] if context.is_shutdown else [
+                LogInfo(msg="ERROR: Costmap filter editor exited; shutting down navigation"),
+                EmitEvent(event=Shutdown(reason="Costmap filter editor exited")),
+            ],
+        )),
+    ]
 
 
 def generate_launch_description():
@@ -22,7 +93,7 @@ def generate_launch_description():
     navigate = LaunchConfiguration("navigate")
     sim = {"use_sim_time": True}
     nav_parameters = [os.path.join(nav, "config", "local_odometry.yaml"), sim]
-    observation_config = os.path.join(package, "config", "observation_costmaps.yaml")
+    observation_config = LaunchConfiguration("costmap_config")
     navigation_config = os.path.join(package, "config", "navigation.yaml")
     fusion_config = os.path.join(package, "config", "global_fusion.yaml")
     collision_config = os.path.join(package, "config", "collision_monitor.yaml")
@@ -32,7 +103,9 @@ def generate_launch_description():
     readiness = Node(
         condition=IfCondition(costmaps),
         package="isaac_localization_3d", executable="wait_for_costmap_tf.py",
-        output="screen", parameters=[sim],
+        output="screen", parameters=[sim, {
+            "filter_mask_topics": LaunchConfiguration("filter_mask_topics"),
+        }],
     )
     costmap_manager = Node(
         package="nav2_lifecycle_manager", executable="lifecycle_manager",
@@ -71,6 +144,18 @@ def generate_launch_description():
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             DeclareLaunchArgument("costmaps", default_value="false"),
             DeclareLaunchArgument("navigate", default_value="false"),
+            DeclareLaunchArgument("filter_editor", default_value="false",
+                                  description="Enable live RViz polygon annotation"),
+            DeclareLaunchArgument(
+                "filter_state",
+                default_value=os.path.join(os.getcwd(), "maps/costmap_filters/editor.json"),
+                description="Persistent JSON zone state for the RViz editor",
+            ),
+            SetLaunchConfiguration("filter_mask_topics", '[""]'),
+            OpaqueFunction(
+                function=configure_filters,
+                args=[os.path.join(package, "config", "observation_costmaps.yaml")],
+            ),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",

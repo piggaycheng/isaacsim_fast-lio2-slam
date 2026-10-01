@@ -292,6 +292,22 @@ this RViz tool does not drive Carter. The navigation architecture (costmaps,
 planner/controller, recovery and the `cmd_vel` safety chain) is described in
 `docs/nav.md`; the localization data flow is in `docs/3d_localization.md`.
 
+For live RViz annotation, run `./run_nav.sh --mode 3d --navigate --filter-editor`.
+Use **Publish Point** to draw polygon vertices, then **Interact** and right-click
+the draft's center cube to apply Keepout or a percentage Speed zone. Existing
+zones have menus for vertex editing and deletion. Updates are published live and
+atomically saved to `maps/costmap_filters/editor.json` alongside map data, or the project-local
+path given by `--filter-state FILE`. The editor restores matching map state on
+restart and refuses mismatched maps or invalid polygons.
+Keepout applies to both costmaps with additional inflation after the filter;
+Speed applies to the local costmap and publishes percentage limits on
+`/speed_limit` for RPP path-following linear velocity (not recovery, rotation or
+direct velocity commands). Speed mask value 0 means unrestricted, not stop.
+Without editor mode, no filter editor or plugins are added.
+The editor publishes both masks and filter info, and costmap readiness
+waits for both masks before activation. See `docs/nav.md` for the workflow
+and limitations.
+
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Obstacles missing from the PGM,
 such as desks seen above the 2D slice or objects moved after mapping, are marked

@@ -99,6 +99,7 @@ flowchart TD
     Correction --> Safety
     EStop --> Safety
     Safety -->|"/cmd_vel"| Isaac
+    Speed["可選 local costmap SpeedFilter<br/>/speed_limit"] --> Controller
 ```
 
 `planner_server` 和 `controller_server` 各自內含一張 costmap；`behavior_server` 則訂閱 `local_costmap` 做 BackUp 碰撞檢查。recovery 時 BT 也會呼叫兩張 costmap 的清除服務，見下方「Behavior tree 與 recovery」。
@@ -140,6 +141,55 @@ costmap 標記過的格子不會自己消失，只能靠清除：
 - 車子看得到原位置時，障礙物移走後 `/scan` 會在 1 秒內清掉它；BT 每秒重新規劃，路徑約 1–2 秒內改回。
 - 在車子背後、超過 7 m、被擋住，或低於 `/scan` 的 0.1 m 下限時，清除不到，會留下殘影。需等車子重新看到，或 recovery 清除整張 costmap。
 - `/scan` 設了 `use_inf: true`，但 costmap 未開 `inf_is_valid`，沒有打到東西的方向不會被清除。
+
+### Costmap filters：禁行區與限速區
+
+Filters 是感測圖層合併後的額外限制，資料來自 RViz 人工標註所產生的 **mask 遮罩地圖**，不是 LiDAR 判斷。未啟用 editor 時不建立 filter 節點、不修改 costmap 的 filters，維持原本導航行為。
+
+| Filter | 使用位置 | 效果 |
+| :-- | :-- | :-- |
+| Keepout | Global + local costmap | mask 的 100 值格子成為致命代價，planner 必須繞開，controller／BackUp 的碰撞檢查也會看到。另在 filter 後加入 inflation，沿用該 costmap 的 inflation 半徑與代價係數，避免只保護車體中心 |
+| Speed | Local costmap | 依 `base_link` 所在 mask 格子發布 `/speed_limit`，由 `controller_server` 通知 RPP 限制路徑跟隨線速度；離開區域後解除限制 |
+
+```mermaid
+flowchart LR
+    Editor["可選 costmap_filter_editor<br/>RViz 點選／右鍵選單"] -->|"keepout mask + info，type 0"| Keepout["Global / local KeepoutFilter<br/>再做 keepout inflation"]
+    Editor -->|"speed mask + info，type 1"| Speed["Local SpeedFilter"]
+    Speed -->|"/speed_limit"| Controller["controller_server → RPP"]
+```
+
+#### 在 RViz 動態標註
+
+不需預先製作遮罩圖片，editor 會以 `/map` 的尺寸、解析度與原點建立兩張空白遮罩：
+
+```bash
+./run_nav.sh --mode 3d --navigate --filter-editor
+```
+
+1. 保持 RViz **Fixed Frame = map**，選工具列的 **Publish Point**，依序點出多邊形頂點。不要再次點第一個點，套用時會自動閉合；黃色輪廓是尚未套用的草稿。
+2. 切換 **Interact**，右鍵點草稿中央的小方塊，選 **Apply draft: Keepout**，或 **Apply draft: Speed → 百分比**（5／10／25／50／75／100%）。
+3. 已套用的區域有編號：紅色是禁行區、藍色是限速區。右鍵其中央方塊可選 **Edit this zone's vertices**，再用 Interact 拖曳頂點；放開滑鼠時驗證、保存並更新遮罩。選 **Finish vertex editing** 結束編輯。
+4. 右鍵選 **Delete this zone** 可移除該區域；**Delete all zones → Confirm delete all** 移除全部已套用區域。草稿可用 **Undo draft vertex** 或 **Discard draft** 修改，不影響已套用區域。
+
+若點擊後沒有黃色草稿，確認 Displays 的 **Costmap zone editor (optional)** 已勾選，且 **Interactive Markers Namespace** 為 `/costmap_filter_editor`。這是 Humble 的連線設定，不是 `Update Topic`；可直接在 RViz 修改，不需重啟導航或清除已收到的草稿。
+
+套用、刪除與頂點調整都會即時更新 filter，不需重啟 Nav2。costmap 仍按其更新頻率套用，路徑由 BT 的 1 Hz 重規劃更新；不是滑鼠放開當下車子就必須瞬間改道或停車。重疊禁行區取聯集，重疊限速區取較低百分比。
+
+每次成功更新都先原子寫入 `maps/costmap_filters/editor.json`，再發布遮罩；下次用 `--filter-editor` 啟動會自動還原。標註資料與地圖一起保存，不放在可清理的 `ros2_ws/log/` 下。可用 `--filter-state maps/office/zones.json` 指定專案內的其他 JSON 檔。狀態檔包含地圖指紋，與目前地圖不符、檔案損壞或無法保存時會明確報錯，不會假裝載入空白成功；editor 異常退出會關閉導航 stack。
+
+頂點必須在地圖內，多邊形不能自交、重複頂點、面積為零或小到沒有格子中心落在其中。被拒絕的更新不會覆蓋既有區域；主控制方塊的描述與終端會顯示狀態，也可訂閱 `/costmap_filters/editor_status`。editor 以格子中心是否位於多邊形內來產生遮罩，邊界精度受地圖解析度限制。
+
+也可省略 `--navigate`，先在 costmap 觀察模式畫區域；直接 launch 時使用 `filter_editor:=true filter_state:=/workspace/.../zones.json costmaps:=true`。
+
+Editor 發布 mask 與 filter info，costmap 啟動前會等待兩張 mask、`/map` 與有效定位 TF。Keepout mask 的 100 表示禁止通行、0 表示未標註；Speed mask 的 **0 表示不限速，不是停車**，非零值表示 RPP 原始目標線速度的百分比。目前 50% 將 0.5 m/s 的目標速度降至 0.25 m/s，仍可能因曲率或障礙更慢。
+
+兩張 mask 涵蓋整張 `/map`；Humble 超出 speed mask 範圍時可能保留前一個限制，不應靠越界來解除限速。感測清除與 recovery 不會移除標註定義，後續 costmap 更新仍會重新套用。
+
+#### 與安全鏈的區別
+
+Keepout 是軟體導航限制，不是實體障礙物；collision monitor 不讀 mask，因此仍只看感測點。Speed 目前限制的是 RPP 路徑跟隨線速度，**不限制原地旋轉、BackUp、手動命令或直接送入速度 topic 的命令**；也不是進入區域邊界前的硬性煞車保證，感測／costmap 更新與 smoother 正常減速仍有延遲。需將限速區提前擴大，並依用途驗證邊界與定位誤差。
+
+Binary filter 尚未實作；它用於區域開關事件，不是 Keepout 或 Speed 的必要組件。
 
 ## 規劃、控制與避障
 
@@ -326,7 +376,8 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 ```mermaid
 flowchart LR
-    Start["launch 啟動定位、map_server<br/>與 Nav2 節點（未啟用）"] --> Ready["wait_for_costmap_tf.py<br/>等待 /map 與 map -> base_link"]
+    Start["launch 啟動定位、map_server<br/>與 Nav2 節點（未啟用）"] --> Ready["wait_for_costmap_tf.py<br/>等待 /map、可選 filter masks<br/>與 map -> base_link"]
+    Filters["可選 RViz editor<br/>建立／還原 masks 並發布 filter info"] --> Ready
     Ready -->|"--navigate"| NavMgr["lifecycle_manager_navigation<br/>planner_server、controller_server、<br/>behavior_server、bt_navigator、<br/>velocity_smoother、collision_monitor"]
     Ready -->|"未加 --navigate"| CostMgr["lifecycle_manager_fusion_costmaps<br/>只啟用兩個 costmap_observer"]
     NavMgr --> NavReady["wait_for_navigation.py<br/>確認六個節點都 active"]
@@ -341,7 +392,7 @@ flowchart LR
 
 - `collision_monitor` 的區域已通過 Office／Nova Carter 的平地模擬煞停驗證；點數門檻、稀疏／低矮障礙及更差的感測延遲仍未驗證，不能當成認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
-- 尚未使用 costmap filters（Keepout 禁行區、Speed 限速區、Binary 開關區）。目前無法在地圖上劃出禁止進入或限速的區域，只能靠修改 PGM 地圖或 inflation 來間接達成。
+- 已支援可選 Keepout 禁行區與 Speed 限速區，使用 RViz 動態標註及 JSON 保存／還原。Binary 開關區未實作；Speed 不涵蓋 recovery、原地旋轉或直接速度命令，不能作為所有控制來源共用的硬性限速。
 - footprint 已量測並涵蓋 Carter 幾何；inflation、斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。固定 `PolygonSurround` 全寬 1.50 m，可能擋住車身本來能通過的窄門。
 - topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。
 - 真實車輛導航安全尚未驗證。Office 模擬已包含實體箱子煞停與感測故障注入；使用時仍先在 RViz 確認 costmap 與規劃路徑。

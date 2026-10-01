@@ -14,6 +14,17 @@ class CostmapReadiness(Node):
     def __init__(self):
         super().__init__("costmap_readiness")
         self.map_received = False
+        topics = self.declare_parameter("filter_mask_topics", [""]).value
+        self.masks_received = {topic: False for topic in topics if topic}
+        mask_qos = QoSProfile(
+            depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        for topic in self.masks_received:
+            self.create_subscription(
+                OccupancyGrid, topic,
+                lambda message, topic=topic: self.on_mask(topic, message), mask_qos,
+            )
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
         self.create_subscription(
@@ -28,8 +39,14 @@ class CostmapReadiness(Node):
     def on_map(self, message):
         self.map_received = message.info.width > 0 and message.info.height > 0
 
+    def on_mask(self, topic, message):
+        self.masks_received[topic] = (
+            message.header.frame_id == "map" and message.info.width > 0
+            and message.info.height > 0
+        )
+
     def ready(self):
-        if not self.map_received:
+        if not self.map_received or not all(self.masks_received.values()):
             return False
         try:
             transform = self.buffer.lookup_transform("map", "base_link", Time())
@@ -48,9 +65,12 @@ def main():
         while rclpy.ok() and time.monotonic() - started < 300:
             rclpy.spin_once(node, timeout_sec=0.2)
             if node.ready():
-                node.get_logger().info("Map and recent map -> base_link TF ready for costmaps")
+                node.get_logger().info("Map, filter masks and recent map -> base_link TF ready for costmaps")
                 return
-        raise RuntimeError("Timed out waiting for /map and recent map -> base_link TF")
+        missing = [topic for topic, received in node.masks_received.items() if not received]
+        raise RuntimeError(
+            f"Timed out waiting for /map, recent map -> base_link TF or filter masks: {missing}"
+        )
     finally:
         node.destroy_node()
         rclpy.shutdown()
