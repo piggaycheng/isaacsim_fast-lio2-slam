@@ -296,12 +296,27 @@ Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Obstacles missing from the PGM,
 such as desks seen above the 2D slice or objects moved after mapping, are marked
 in both costmaps, so the 1 Hz replanning routes around them. Its `/nav2/cmd_vel` first passes through Nav2's `collision_monitor`
-(`config/collision_monitor.yaml`: a front stop zone, a front slowdown zone and
+(`config/collision_monitor.yaml`: front and surround stop zones, a front slowdown zone and
 a footprint time-to-collision check on `/perception/obstacles` and `/scan`),
-then through a ROS 2 safety node (PCD correction
+then through a ROS 2 safety node (PCD correction and obstacle sensor
 freshness, planar command validation and speed limiting) to `/cmd_vel`, which
 Isaac Sim's native ROS 2 Subscribe Twist node receives to drive Carter. There
 is no Unix socket or separate command transport.
+The safety node actively publishes zero velocity at 10 Hz when neither `/scan`
+nor `/perception/obstacles` has a timestamp less than 1 second old, including
+before the first sensor message arrives and when incoming commands stop.
+Either source recovering allows new commands again; old commands are not replayed.
+`cmd_vel_safety.sensor_timeout` in `config/collision_monitor.yaml` must match
+the monitor's `source_timeout`. Freshness uses ROS time, so pausing `/clock`
+also pauses expiry; clock resets clear sensor and correction freshness state.
+For obstacle-enabled 3D navigation, `ground_obstacle_filter` removes returns
+inside Carter's extruded footprint (`self_filter_bounds` in
+`isaac_nav/config/ground_obstacle_filter.yaml`), rather than discarding everything
+within 0.5 m. Its `/perception/self_filtered_points` retains ground points and
+feeds `/scan` with `range_min: 0.0`; `/perception/obstacles` retains nearby external
+obstacles after ground removal. The surround stop zone extends 0.10 m beyond the
+footprint on every side. Physical LiDAR occlusion and minimum measurement range
+remain limitations; these settings are not certified safety clearances.
 The controller is `isaac_nav::GoalHeadingLatchedRPP`, a thin wrapper around
 Humble's Regulated Pure Pursuit, paired with `isaac_nav::LatchedGoalChecker`.
 Humble RPP re-checks `xy_goal_tolerance` every cycle and stops right at that

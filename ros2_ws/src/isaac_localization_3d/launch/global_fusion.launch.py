@@ -113,10 +113,20 @@ def generate_launch_description():
                 name="pointcloud_to_laserscan",
                 output="screen",
                 remappings=[
-                    ("cloud_in", "/isaac/lidar_points"),
+                    ("cloud_in", PythonExpression([
+                        "'/perception/self_filtered_points' if '", obstacle_cloud,
+                        "' == 'true' else '/isaac/lidar_points'",
+                    ])),
                     ("scan", "/scan"),
                 ],
-                parameters=nav_parameters,
+                parameters=[*nav_parameters, {
+                    "range_min": PythonExpression([
+                        "0.0 if '", obstacle_cloud, "' == 'true' else 0.5",
+                    ]),
+                    "range_max": PythonExpression([
+                        "20.0 if '", obstacle_cloud, "' == 'true' else 30.0",
+                    ]),
+                }],
             ),
             Node(
                 condition=IfCondition(obstacle_cloud),
@@ -245,7 +255,7 @@ def generate_launch_description():
             Node(
                 condition=IfCondition(navigate),
                 package="isaac_localization_3d", executable="cmd_vel_safety.py",
-                name="cmd_vel_safety", output="screen", parameters=[sim],
+                name="cmd_vel_safety", output="screen", parameters=[collision_config, sim],
                 remappings=[("/nav2/cmd_vel", "/nav2/cmd_vel_monitored")],
             ),
             readiness,

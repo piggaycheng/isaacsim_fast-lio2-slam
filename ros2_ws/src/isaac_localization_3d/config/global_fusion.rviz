@@ -72,6 +72,17 @@ Visualization Manager:
         Value: /collision_monitor/polygon_stop
     - Alpha: 1
       Class: rviz_default_plugins/Polygon
+      Color: 255; 0; 150
+      Enabled: true
+      Name: Collision monitor surround stop zone (navigate mode)
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /collision_monitor/polygon_surround
+    - Alpha: 1
+      Class: rviz_default_plugins/Polygon
       Color: 255; 170; 0
       Enabled: true
       Name: Collision monitor slowdown zone (navigate mode)

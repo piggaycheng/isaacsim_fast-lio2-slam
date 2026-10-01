@@ -16,7 +16,10 @@
 flowchart TD
     Lidar["3D LiDAR<br/>/isaac/lidar_points"]
     MapServer["map_server<br/>PGM → /map"]
-    GroundFilter["ground_obstacle_filter<br/>地面濾除，離地 0.06–2.0 m<br/>/perception/obstacles<br/>實線：只標記 marking"]
+    subgraph Filter ["ground_obstacle_filter"]
+        SelfFilter["車身形狀自體濾除<br/>保留車身外的近距離點"]
+        GroundFilter["地面濾除，離地 0.06–2.0 m<br/>/perception/obstacles<br/>實線：只標記 marking"]
+    end
     ScanProj["pointcloud_to_laserscan<br/>高度 0.1–2.0 m 切片<br/>/scan<br/>虛線：只清除 clearing"]
 
     subgraph GlobalCostmap ["global_costmap（map，2 Hz，整張地圖）"]
@@ -30,8 +33,9 @@ flowchart TD
         LInflation["inflation_layer"]
     end
 
-    Lidar --> GroundFilter
-    Lidar --> ScanProj
+    Lidar --> SelfFilter
+    SelfFilter --> GroundFilter
+    SelfFilter -->|"/perception/self_filtered_points"| ScanProj
     MapServer --> GStatic
     GroundFilter --> GObstacle
     GroundFilter --> LObstacle
@@ -40,6 +44,8 @@ flowchart TD
 ```
 
 兩張 costmap 都用 3D 定位發布的 TF 查車體位置：`map -> odom` 由 `global_tf_gate` 發布，`odom -> base_link` 由 `local_ekf` 發布（見 [`3d_localization.md`](3d_localization.md)）。
+
+啟用 `--obstacle-cloud`（`--costmaps` / `--navigate` 會自動啟用）時，`ground_obstacle_filter` 先將點轉到 `base_link`，排除車身矩形內的點，再分兩路輸出：保留地面的 `/perception/self_filtered_points` 供 `/scan` 投影；地面擬合後的 `/perception/obstacles` 供障礙物標記。地面擬合失敗時仍會發布前者；TF 失敗則兩者都停止發布，交由 watchdog 停車。未啟用障礙點雲的 3D 定位展示與 2D AMCL 模式保留原本的原始點雲投影，不啟動這條近距離保護鏈。
 
 ### 目標 → 速度命令
 
@@ -237,15 +243,18 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | 區域 | 範圍（`base_link`） | 動作 |
 | :-- | :-- | :-- |
 | `PolygonStop` | 車頭前 0.25 m（x 0.65–0.90 m，y ±0.36 m） | 超過 3 個點就停車（線速度、角速度都歸零） |
+| `PolygonSurround` | 整個 footprint 向外擴 0.10 m（x −0.30–0.75 m，y ±0.42 m） | 超過 3 個點就停車，涵蓋側面、後方與近車頭 |
 | `PolygonSlow` | 車頭前 0.75 m（x 0.65–1.40 m，y ±0.50 m） | 超過 3 個點就降為 50% |
 | `FootprintApproach` | local costmap 的 footprint（`/local_costmap/published_footprint`） | 沿目前命令模擬 1.5 秒，依距離碰撞的時間按比例降速；會考慮行進方向，後退和原地旋轉也會檢查 |
 
 - 感測來源：`/perception/obstacles`（地面濾除後的 3D 點）和 `/scan`（2D 切片）。找不到地面時，`ground_obstacle_filter` 會停止發布，這時仍有 `/scan` 可用。
-- 兩個來源都會丟掉距 `base_link` 0.5 m 內的點，所以車身兩側和後半部是盲區，停車區和減速區只設在車頭前方。
+- 不再排除半徑 0.5 m 內的所有點。`ground_obstacle_filter.yaml` 的 `self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]` 只排除車身矩形內的點（向上延伸，避免自體反射）；`min_range: 0.0`。導航的 `/scan` 使用同一份自體濾除點雲，並覆寫 `range_min: 0.0`、`range_max: 20.0`，所以車身外的近距離點可以同時進入 scan 與障礙點雲。
+- `PolygonSurround` 不分行進方向：側方或後方太近時，前進、倒退、原地旋轉都會被擋下。障礙物離開且新資料確認區域淨空後才恢復。
+- 這解決的是軟體距離濾除造成的盲區，不代表 LiDAR 沒有物理遮蔽、量測最短距離或點數不足的盲區。車身自體濾除範圍與保護區必須隨機器人幾何一起調整，必要時需加近距離感測器。
 - 停車區不分方向：障礙物在停車區內時，BackUp 後退也會被擋下，只能等障礙物離開，或在 recovery 用完後中止目標。
-- 來源超過 1 秒沒更新時，Humble 版會忽略該來源並放行命令（fail-open），`cmd_vel_safety` 也不檢查這一點。
+- 來源時間戳落後目前 ROS 時間達 1 秒時，Humble 版會忽略該來源；最後一層 `cmd_vel_safety` 會在兩個來源都過期或尚未收到時強制停車。
 - 停車後會繼續發布零速 2 秒（`stop_pub_timeout`），之後停止發布；Isaac Sim 在 0.5 秒收不到命令時也會自行停車。
-- RViz 會顯示停車區（紅）和減速區（橘）。
+- RViz 會顯示前方停車區（紅）、周圍停車區（粉紅）和減速區（橘）。
 
 ### cmd_vel_safety
 
@@ -253,10 +262,13 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | :-- | :-- |
 | 命令含 NaN/Inf，或有非平面分量（`linear.y/z`、`angular.x/y`） | 發布零速 |
 | 4 秒內沒有 `/localization_3d/accepted_correction`（PCD 校正過期） | 發布零速 |
+| `/scan` 與 `/perception/obstacles` 都沒有 1 秒內的新資料 | 發布零速；任一來源恢復後才允許新的速度命令 |
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
 | 其他 | 限制在 0.75 m/s、0.7 rad/s 後轉發 |
 
 安全節點不會放寬校正時效；`global_tf_gate` 也會在校正過期時停止發布 `map -> odom`，Nav2 因此查不到 TF，無法繼續規劃與控制。
+
+感測 watchdog 每 0.1 秒檢查一次，即使 monitor 沒有再送速度命令，也會主動發布零速；不會在資料恢復後重播舊命令。`sensor_timeout` 設定在 `collision_monitor.yaml`，需與 monitor 的 `source_timeout` 保持一致。訂閱使用 sensor-data QoS，可接收 best-effort 感測資料。新鮮度依訊息時間戳及 ROS 時間計算：模擬暫停且 `/clock` 停止時不會按現實時間過期；時間倒退時清空感測與定位校正狀態，需重新收到資料。這只檢查資料時效，不能判斷感測盲區或資料是否完整可用。
 
 ## 啟動順序
 

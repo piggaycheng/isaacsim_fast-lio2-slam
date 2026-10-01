@@ -1,7 +1,6 @@
 # Nav2 Humble collision_monitor: last sensor-based gate between Nav2 and cmd_vel_safety.
 # Footprint (base_link): front 0.65 m, rear 0.20 m, sides 0.32 m.
-# Both sources drop points within 0.5 m of base_link (range_min / min_range), so the
-# rear half and sides of the footprint are blind; these zones only cover the front.
+# Both sources use footprint-based self filtering and retain nearby external returns.
 collision_monitor:
   ros__parameters:
     use_sim_time: true
@@ -10,11 +9,11 @@ collision_monitor:
     cmd_vel_in_topic: /nav2/cmd_vel
     cmd_vel_out_topic: /nav2/cmd_vel_monitored
     transform_tolerance: 0.5
-    # A source older than this is ignored (fail-open); cmd_vel_safety does not check it.
+    # Humble ignores stale sources; cmd_vel_safety stops when neither source is fresh.
     source_timeout: 1.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
-    polygons: ["PolygonStop", "PolygonSlow", "FootprintApproach"]
+    polygons: ["PolygonStop", "PolygonSurround", "PolygonSlow", "FootprintApproach"]
     # Stop/slowdown trigger when more than max_points points are inside the zone.
     PolygonStop:
       type: polygon
@@ -23,6 +22,15 @@ collision_monitor:
       max_points: 3
       visualize: true
       polygon_pub_topic: /collision_monitor/polygon_stop
+      enabled: true
+    PolygonSurround:
+      type: polygon
+      action_type: stop
+      # Footprint plus 0.10 m on all sides, including rear and rotation clearance.
+      points: [0.75, 0.42, 0.75, -0.42, -0.30, -0.42, -0.30, 0.42]
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: /collision_monitor/polygon_surround
       enabled: true
     PolygonSlow:
       type: polygon
@@ -57,3 +65,8 @@ collision_monitor:
       type: scan
       topic: /scan
       enabled: true
+
+cmd_vel_safety:
+  ros__parameters:
+    # Keep aligned with collision_monitor.source_timeout.
+    sensor_timeout: 1.0

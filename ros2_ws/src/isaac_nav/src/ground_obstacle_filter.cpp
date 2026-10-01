@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
@@ -26,8 +27,12 @@ public:
       "input_topic", "/isaac/lidar_points");
     const auto output_topic = declare_parameter<std::string>(
       "output_topic", "/perception/obstacles");
+    const auto self_filtered_topic = declare_parameter<std::string>(
+      "self_filtered_topic", "/perception/self_filtered_points");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
-    min_range_ = declare_parameter<double>("min_range", 0.5);
+    min_range_ = declare_parameter<double>("min_range", 0.0);
+    self_filter_bounds_ = declare_parameter<std::vector<double>>(
+      "self_filter_bounds", {-0.20, 0.65, -0.32, 0.32});
     max_range_ = declare_parameter<double>("max_range", 20.0);
     ground_search_height_ = declare_parameter<double>("ground_search_height", 0.25);
     ground_distance_ = declare_parameter<double>("ground_distance", 0.04);
@@ -43,11 +48,21 @@ public:
     {
       throw std::invalid_argument("Invalid ground obstacle filter dimensions");
     }
+    if (self_filter_bounds_.size() != 4 ||
+      !std::isfinite(self_filter_bounds_[0]) || !std::isfinite(self_filter_bounds_[1]) ||
+      !std::isfinite(self_filter_bounds_[2]) || !std::isfinite(self_filter_bounds_[3]) ||
+      self_filter_bounds_[0] >= self_filter_bounds_[1] ||
+      self_filter_bounds_[2] >= self_filter_bounds_[3])
+    {
+      throw std::invalid_argument("self_filter_bounds must be [min_x, max_x, min_y, max_y]");
+    }
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
     publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       output_topic, rclcpp::SensorDataQoS());
+    self_filtered_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      self_filtered_topic, rclcpp::SensorDataQoS());
     subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       input_topic, rclcpp::SensorDataQoS(),
       std::bind(&GroundObstacleFilter::onCloud, this, std::placeholders::_1));
@@ -87,12 +102,38 @@ private:
     sensor_msgs::msg::PointCloud2 transformed;
     tf2::doTransform(*message, transformed, transform);
 
+    pcl::PointCloud<pcl::PointXYZ> input;
+    pcl::fromROSMsg(transformed, input);
     pcl::PointCloud<pcl::PointXYZ> cloud;
-    pcl::fromROSMsg(transformed, cloud);
-    auto ground_candidates = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-    ground_candidates->reserve(cloud.size());
+    cloud.reserve(input.size());
     const double max_range_squared = max_range_ * max_range_;
     const double min_range_squared = min_range_ * min_range_;
+    for (const auto & point : input) {
+      if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+        continue;
+      }
+      const double distance_squared = point.x * point.x + point.y * point.y;
+      constexpr double boundary_tolerance = 1e-6;
+      const bool inside_body =
+        point.x >= self_filter_bounds_[0] - boundary_tolerance &&
+        point.x <= self_filter_bounds_[1] + boundary_tolerance &&
+        point.y >= self_filter_bounds_[2] - boundary_tolerance &&
+        point.y <= self_filter_bounds_[3] + boundary_tolerance;
+      if (!inside_body && distance_squared >= min_range_squared &&
+        distance_squared <= max_range_squared)
+      {
+        cloud.push_back(point);
+      }
+    }
+    // Keep ground returns for /scan, even when plane fitting cannot produce obstacles.
+    sensor_msgs::msg::PointCloud2 self_filtered;
+    pcl::toROSMsg(cloud, self_filtered);
+    self_filtered.header = message->header;
+    self_filtered.header.frame_id = base_frame_;
+    self_filtered_publisher_->publish(self_filtered);
+
+    auto ground_candidates = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+    ground_candidates->reserve(cloud.size());
     for (const auto & point : cloud) {
       if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
         !std::isfinite(point.z))
@@ -176,6 +217,7 @@ private:
   }
 
   std::string base_frame_;
+  std::vector<double> self_filter_bounds_;
   double min_range_;
   double max_range_;
   double ground_search_height_;
@@ -187,6 +229,7 @@ private:
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<tf2_ros::TransformListener> listener_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr self_filtered_publisher_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
 };
 

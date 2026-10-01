@@ -3,8 +3,11 @@ ground_obstacle_filter:
     use_sim_time: true
     input_topic: /isaac/lidar_points
     output_topic: /perception/obstacles
+    self_filtered_topic: /perception/self_filtered_points
     base_frame: base_link
-    min_range: 0.5
+    min_range: 0.0
+    # Extruded Carter footprint: remove body returns, not a circular near-field region.
+    self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]
     max_range: 20.0
     ground_search_height: 0.25
     ground_distance: 0.04
