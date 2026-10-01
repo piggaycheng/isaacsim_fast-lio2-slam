@@ -4,7 +4,7 @@
 
 - 只有 3D 模式有導航；`run_nav.sh --mode 2d` 只做 AMCL 定位，不啟動 Nav2。
 - 不加 `--navigate` 時，只以 `costmap_observer` 啟動兩張 costmap 供 RViz 觀察，不啟動 planner、controller，也不發布行駛命令。
-- 設定檔都在 `ros2_ws/src/isaac_localization_3d/config/`，啟動檔是 `launch/global_fusion.launch.py`。
+- Nav2 設定檔在 `ros2_ws/src/isaac_localization_3d/config/`，感測前處理設定在 `ros2_ws/src/isaac_nav/config/`；啟動檔是 `isaac_localization_3d/launch/global_fusion.launch.py`。
 
 ## 整體資料流
 
@@ -17,8 +17,8 @@ flowchart TD
     Lidar["3D LiDAR<br/>/isaac/lidar_points"]
     MapServer["map_server<br/>PGM → /map"]
     subgraph Filter ["ground_obstacle_filter"]
-        SelfFilter["車身形狀自體濾除<br/>保留車身外的近距離點"]
-        GroundFilter["地面濾除，離地 0.06–2.0 m<br/>/perception/obstacles<br/>實線：只標記 marking"]
+        SelfFilter["轉到 base_link、去除無效點<br/>車身形狀自體濾除、水平距離 0–20 m"]
+        GroundFilter["RANSAC 地面濾除，離地 0.06–2.0 m<br/>8 cm 體素降採樣 → /perception/obstacles<br/>實線：只標記 marking"]
     end
     ScanProj["pointcloud_to_laserscan<br/>高度 0.1–2.0 m 切片<br/>/scan<br/>虛線：只清除 clearing"]
 
@@ -45,7 +45,28 @@ flowchart TD
 
 兩張 costmap 都用 3D 定位發布的 TF 查車體位置：`map -> odom` 由 `global_tf_gate` 發布，`odom -> base_link` 由 `local_ekf` 發布（見 [`3d_localization.md`](3d_localization.md)）。
 
-啟用 `--obstacle-cloud`（`--costmaps` / `--navigate` 會自動啟用）時，`ground_obstacle_filter` 先將點轉到 `base_link`，排除車身矩形內的點，再分兩路輸出：保留地面的 `/perception/self_filtered_points` 供 `/scan` 投影；地面擬合後的 `/perception/obstacles` 供障礙物標記。地面擬合失敗時仍會發布前者；TF 失敗則兩者都停止發布，交由 watchdog 停車。未啟用障礙點雲的 3D 定位展示與 2D AMCL 模式保留原本的原始點雲投影，不啟動這條近距離保護鏈。
+3D 定位與障礙物感知使用同一份 `/isaac/lidar_points`，但分開處理：FAST-LIO／PCD 配準負責定位，以上分支提供導航與防撞的即時障礙資料，不使用定位分支的 `/cloud_registered`。啟用 `--obstacle-cloud`（`--costmaps` / `--navigate` 會自動啟用）時，點雲先經自體濾除，再分成以下兩路。
+
+#### `/perception/obstacles`：留下障礙物的 3D 點雲
+
+`ground_obstacle_filter` 的設定在 `isaac_nav/config/ground_obstacle_filter.yaml`：
+
+1. 按原始訊息時間戳，使用 TF 把點轉到 `base_link`，去除非有限座標。
+2. 去除車身矩形內的點（x −0.20–0.65 m、y ±0.32 m，不限高度），並保留水平距離 0–20 m 的點。這一步先發布 `/perception/self_filtered_points`，保留地面、尚未體素降採樣，不是把車身附近整個圓形範圍排除。
+3. 從 `base_link` 高度 ±0.25 m 的候選點，以 RANSAC 估計近水平地面；目前至少需要 50 個地面內點，平面距離門檻為 0.04 m。
+4. 依點到估計地面沿平面法線的有號距離，保留地面上方 0.06–2.0 m 的點，再以 0.08 m × 0.08 m × 0.08 m 體素降採樣，減少點數。
+
+因此它不只是原始點雲降採樣，還包含座標轉換、自體濾除與地面／高度篩選。輸出保留原始時間戳，座標系為 `base_link`。TF 無效時警告且不發布兩份點雲；找不到可靠地面時只停止發布 `/perception/obstacles`，self-filtered 分支仍可供 `/scan` 使用。導航時兩個來源都過期會由 watchdog 停車。
+
+#### `/scan`：把高度切片投影成 2D 雷射
+
+`pointcloud_to_laserscan` 從 `/perception/self_filtered_points` 取 `base_link` 高度 0.1–2.0 m 的點，計算水平角度與距離，再在每個角度格中留下最近距離，產生 `LaserScan`。目前角度涵蓋 −π–π，解析度約 0.5°，距離範圍為 0–20 m。
+
+這個分支**不做 RANSAC 地面濾除，也不經過 8 cm 體素降採樣**；高度依 `base_link` 的 z 座標裁切，不是相對估計地面的高度。切片內若仍有地面點就可能投影進 scan，低於切片的障礙物則可能漏掉。
+
+高度與角度設定在 `isaac_nav/config/local_odometry.yaml`；3D 融合 launch 在啟用障礙點雲時覆寫 `range_min: 0.0`、`range_max: 20.0`。未啟用障礙點雲時，該 launch 改用 `/isaac/lidar_points` 直接產生 `/scan`，距離範圍為 0.5–30 m，不經上述自體濾除分支；2D AMCL 模式也保留原始點雲投影。
+
+兩張 costmap 的 obstacle layer 使用 `/perception/obstacles` **標記障礙物**、使用 `/scan` **清除已觀測為空的區域**；collision monitor 則直接把兩者當作障礙來源，檢查停止／減速區及 footprint 碰撞預測。兩個 topic 來自同一顆 LiDAR，不是獨立感測器備援。
 
 ### 目標 → 速度命令
 

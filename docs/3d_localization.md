@@ -96,6 +96,8 @@ flowchart TD
 
 `global_tf_gate` 以 `/odometry/global` 和同時間的 `odom -> base_link` 算出 `map -> odom`；校正心跳同時供 `cmd_vel_safety` 判斷校正是否過期。
 
+3D 定位與導航感知使用同一份 `/isaac/lidar_points`，但分開處理；導航用的 `/perception/obstacles` 與 `/scan` 如何產生，見 [`nav.md` 的「感測 → costmap」](nav.md#感測--costmap)。
+
 ## TF 發布權責
 
 | 模式                   | `map -> odom` 唯一發布者     | `odom -> base_link` |
@@ -138,7 +140,7 @@ Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速�
 - **控制**：手動 W/S 與導航線速度上限為 0.75 m/s；Nav2 目標速度 0.5 m/s，固定前視距離 0.8 m，必要時依曲率、接近目標及碰撞預測降速。命令中斷 0.5 秒或 PCD 校正逾時 4 秒時停車。
 - **輪速**：Nova Carter 驅動輪接地碰撞體半徑 0.14 m、輪距 0.4132 m；控制器與輪速里程計須使用一致幾何，否則定位校正會持續補償里程誤差。
 - **航向**：2D／3D 共用的 `isaac_nav/config/local_odometry.yaml` 讓 Local EKF 融合輪速 yaw 位姿與 IMU 角速度；2D 專用的 AMCL、地圖伺服器及 RViz 啟動設定在 `isaac_localization_2d`。輪速航向約束停車時的陀螺儀偏差累積，但打滑時輪速仍可能漂移，真車須重新定標輪速不確定度。局部 costmap 刻意使用 `odom`，在 RViz 的 `map` 座標下會隨 `map -> odom` 校正呈現旋轉，不應僅為了讓畫面平行而改成 `map`。
-- **障礙物**：低於 `/scan` 裁切高度的障礙物可能被濾掉。`--obstacle-cloud` 以 RANSAC 分割近水平地面並以 8 cm 體素降採樣；地面或 TF 無效時警告且不發布該圈點雲。斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
+- **障礙物**：低於 `/scan` 裁切高度的障礙物可能被濾掉。`--obstacle-cloud` 以 RANSAC 分割近水平地面並以 8 cm 體素降採樣；地面無效時停止發布障礙點雲，但 self-filtered 分支仍可產生 `/scan`，TF 無效時兩個分支都受影響。感知資料流與限制見 [`nav.md`](nav.md)。斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
 - **定位品質**：PCD 定位輸出 ICP covariance 加上 `min_covariance_xy/yaw` 下限，並以 FAST-LIO 位姿的時間戳送入 Global EKF（`smooth_lagged_data` 會回溯修正延遲的量測）。輪速 covariance 依實際移動距離與轉角動態累積。各項數值由 `covariance_calibration.py` 定標，換車流程見 [covariance_calibration.md](covariance_calibration.md)。PCD 校正失效時不會自動切換 AMCL。車體定位以 `x/y/yaw` 為主，尚未完成真值精度及真實車輛安全驗證。
 
 ## 地圖與融合設定原則
