@@ -1,4 +1,4 @@
-#!/home/yu/isaacsim-6.1.0/python.sh
+#!/home/user/isaacsim-6.1.0/python.sh
 
 import argparse
 
@@ -35,7 +35,7 @@ parser.add_argument("--headless", action="store_true", help="Run without the Isa
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument(
     "--validation-control-dir",
-    help="Opt-in file-controlled physical obstacles for tests/validate_braking.py.",
+    help="Opt-in file-controlled physical obstacles for braking/navigation validation.",
 )
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
 parser.add_argument(
@@ -448,7 +448,7 @@ try:
     else:
         while simulation_app.is_running():
             if validation_scene is not None:
-                validation_scene.update()
+                validation_scene.update(SimulationManager.get_simulation_time())
             if command_receiver is not None:
                 try:
                     linear, angular = command_receiver.command()

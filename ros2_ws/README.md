@@ -308,8 +308,116 @@ The editor publishes both masks and filter info, and costmap readiness
 waits for both masks before activation. See `docs/nav.md` for the workflow
 and limitations.
 
+For experimental speed-adaptive Surround on Humble, run
+`./run_nav.sh --mode 3d --navigate --adaptive-surround` (or
+`run_3d_localization.sh --global-fusion --navigate --adaptive-surround`).
+The default remains the original fixed Surround. The opt-in selector atomically
+switches native polygon enable flags, not unsupported runtime point updates:
+full x [-0.80, 1.10], y +/-0.75 m; crawl x [-0.45, 0.90], y +/-0.55 m.
+Crawl commands are capped at 0.10 m/s and 0.20 rad/s by both the selector and
+the final safety gate. RPP requests 0.10 m/s and 0.15 rad/s in this mode;
+the smoother also caps curved-path angular commands at +/-0.20 rad/s.
+Shrinking requires both bounded commands and fresh local EKF twist/pose-difference
+motion within 0.12 m/s and 0.22 rad/s for 0.5 s. Switching blocks motion until
+the final gate acknowledges zero limits and the native monitor acknowledges
+the atomic update. Missing odometry/commands, invalid geometry or failed
+switches do not allow motion. The final gate requires a stamped limits heartbeat;
+its 0.2 s expiry is checked every 0.1 s. Selector exit leaves the safety gates
+running to enforce the stop; restart is required. Near-future DDS messages are
+buffered until the receiver's ROS clock catches up, not used as fresh evidence
+before their timestamp. The active acknowledged polygon uses the existing RViz
+Surround topic, with no competing native polygon publishers.
+Physical footprints, inflation, ordinary obstacle clearing, other collision zones,
+sensor watchdogs and the latched emergency stop are unchanged.
+This is a bounded two-profile experiment, not continuous braking-distance
+scaling, heading-aware planning or moving-actor trajectory prediction.
+
+Use `bash tests/run_navigation_environment.sh --adaptive-surround --cases ...`
+for opt-in corridor/crossing trials. The nominal aligned threshold then uses
+the 1.10 m crawl width instead of the 1.50 m fixed width; 1.4 m is expected to
+traverse and 0.6 m to hold safely. Width alone does not guarantee traversal.
+Reports preserve heartbeat samples, the adaptive-config hash and live
+physical-footprint/final-gate checks. For qualified crawl braking, use
+`bash tests/run_navigation_environment.sh --braking --adaptive-surround --linear-speeds 0.1 --angular-speeds 0.2 --repeats 1`.
+The rear/side obstacles are placed at the crawl boundary, while the front
+case retains the unchanged frontal Stop boundary. A case must have confirmed
+cruise speed and the crawl profile together before obstacle insertion;
+already-stopped cases cannot count as successful braking.
+The adaptive braking run also forcibly kills the selector last: it requires
+a final zero command within 0.35 s and confirmed physical standstill within
+0.5 s, while the other safety nodes remain running.
+In `20261002_132325`, fast crossing at crawl speed completed twice with
+continuous conservative clearance lower bounds of 0.636/0.645 m, but both
+1.4 m corridor trials timed out before entering, despite remaining collision-free.
+Recorded-pose replay found crawl polygon/wall overlap of about 1.8/1.9 cm.
+Do not count those safe holds as traversal or treat the nominal 1.10 m width
+as heading-aware feasibility. These low-speed crossing results are not
+acceptance of high-speed navigation or an actor-trajectory predictor.
+The feature remains experimental and disabled by default.
+In `20261002_133659`, baseline, 1.6/1.8 m corridor traversal, 0.6 m safe holding
+and slow crossing all passed once. The 0.6 m goal was manually cancelled after
+12 s; this is not autonomous rejection. In `20261002_135434`, four qualified
+crawl obstacle-braking cases and both fault stops passed; forcibly killing
+the selector produced final zero after 0.167 s and physical standstill after
+0.217 s. These are limited simulation samples, not safety certification.
+The consolidated local evidence is
+`ros2_ws/log/navigation_environment/summary_adaptive_20261002.json`.
+
+For opt-in physical navigation regression, stop the ordinary simulation and run
+`bash tests/run_navigation_environment.sh` from the repository root. It uses
+Isaac Sim's Python launcher, a separate Compose project and ROS domain 189
+(`VALIDATION_ROS_DOMAIN_ID` overrides it), without RViz or costmap filter zones.
+The default two repetitions cover baseline navigation, two crossing speeds
+(0.35/0.65 m/s), blocking obstacles that move away after a confirmed stop in
+open space and a 1.8 m corridor, and
+1.8/1.6/1.4/0.6 m corridors. `--cases ... --repeats N` selects a subset.
+Each run saves geometry, ground-truth trajectories, actual obstacle poses, commands, action outcomes,
+and logs under `ros2_ws/log/navigation_environment/<timestamp>/`.
+Acceptance requires goal completion for traversable scenarios, safe stopping or action rejection
+for corridors no wider than the larger of the padded physical footprint and the
+fixed Surround width (currently 1.50 m: the 0.6/1.4 m cases), and at least 2 cm conservative body clearance
+including a between-sample motion allowance. Corridor traversal must enter
+between the walls, not detour around them. Failures produce a nonzero exit
+status; unsafe clearance latches the emergency stop and aborts the suite.
+Protection parameters are not relaxed. Clearance uses a conservative
+2D USD body envelope, not a PhysX contact sensor or safety certification.
+Results separately diagnose the first clearance breach. `stationary_moving_actor_intrusion`
+requires at least 0.25 s of verified linear/angular standstill, bounded pose drift,
+fresh continuously zero final commands, and verified actor telemetry; freezing the
+actor must remove the breach while freezing the robot must not. Missing evidence or
+recent robot motion is not classified as passive. `robot_motion_clearance_breach`
+means motion at the first breach; `insufficient_stationary_dwell` means the robot
+is stationary then but has not satisfied the preceding 0.25 s window.
+These are conservative envelope
+intrusions, not confirmed PhysX contacts. Classification never waives the 2 cm criterion:
+`collision_free_pass` and overall `pass` remain false for any unsafe clearance or overlap,
+and emergency stops still latch and abort the suite. Old recordings without angular
+velocity evidence cannot establish this stationary classification. Uncooperative moving
+actors can intrude into an already stationary robot; trajectory prediction is not implemented.
+A safe stop is not counted as successful navigation where reaching the goal is required.
+Runtime global/local footprint parameters are checked against the configuration before
+trials, and results record the planning-config hash and nominal corridor-width threshold.
+Blocked cases are observed for 12 s and then manually cancelled: safe holding is not
+proof of autonomous action rejection or successful replanning. In the 2026-10-02
+rerun (14 trials, using the temporary 1.62 m global planning footprint),
+0.6/1.4/1.6 m corridors safely held in both repetitions, 1.8 m
+completed once in two attempts, slow crossing completed twice, and fast crossing
+completed once with one clearance/overlap failure. The failed fast trial was
+stationary for only about 0.117 s before its first continuous-clearance breach,
+so it does not establish a verified stationary-actor intrusion. The 1.8 m failure
+still had Surround overlapping a wall; expanding global planning does not solve
+heading-dependent deadlocks. The consolidated local evidence is
+`ros2_ws/log/navigation_environment/summary_alignment_20261002_103944.json`.
+That temporary planning footprint has since been removed; the historical results
+are not a navigation acceptance run of the restored physical footprint.
+
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
-follows paths using the local obstacle costmap. Obstacles missing from the PGM,
+follows paths using the local obstacle costmap. Both footprints represent the
+physical robot: x [-0.20, 0.65], y +/-0.32 m, plus 1 cm padding (0.66 m total width).
+Surround is not included in the global footprint. NavFn still uses a 2D inflated
+grid, not a heading-aware safety-polygon sweep. Both obstacle layers retain the
+default `footprint_clearing_enabled: true`: only the physical footprint is cleared,
+not the Surround region. Self filtering remains upstream and scan raytracing remains enabled. Obstacles missing from the PGM,
 such as desks seen above the 2D slice or objects moved after mapping, are marked
 in both costmaps, so the 1 Hz replanning routes around them. Controller and
 recovery commands go to `/nav2/cmd_vel_nav`; Nav2's `velocity_smoother`

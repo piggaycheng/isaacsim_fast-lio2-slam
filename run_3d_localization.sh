@@ -13,6 +13,7 @@ global_fusion=false
 obstacle_cloud=false
 costmaps=false
 navigate=false
+adaptive_surround=false
 filter_editor=false
 filter_state="$project_dir/maps/costmap_filters/editor.json"
 filter_state_set=false
@@ -49,6 +50,8 @@ Options:
       --filter-state FILE
                       Persistent editor JSON inside the project (default:
                       maps/costmap_filters/editor.json).
+      --adaptive-surround
+                      Experimental low-speed Surround; requires --global-fusion --navigate.
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
       --box X,Y[,SX,SY,SZ]
@@ -86,6 +89,7 @@ while (($# > 0)); do
     --obstacle-cloud) obstacle_cloud=true; shift ;;
     --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
+    --adaptive-surround) adaptive_surround=true; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
     --box)
       if (($# < 2)); then
@@ -99,6 +103,11 @@ while (($# > 0)); do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$adaptive_surround" == true &&
+      ( "$global_fusion" != true || "$navigate" != true ) ]]; then
+  echo "--adaptive-surround requires --global-fusion --navigate" >&2
+  exit 2
+fi
 if [[ "$filter_editor" == true &&
       ( "$global_fusion" != true || "$costmaps" != true ) ]]; then
   echo "Costmap filters require --global-fusion and --costmaps or --navigate" >&2
@@ -162,7 +171,7 @@ launch_args=(map_pcd:="$container_pcd" map_pgm:="$container_pgm" rviz:="$rviz"
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
-    navigate:="$navigate" "${filter_args[@]}")
+    navigate:="$navigate" adaptive_surround:="$adaptive_surround" "${filter_args[@]}")
 fi
 start_ros launch isaac_localization_3d "$launch_file" "${launch_args[@]}"
 

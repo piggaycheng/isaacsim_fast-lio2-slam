@@ -121,7 +121,13 @@ costmap 是 2D 格子地圖，每格 0.05 m，存 0–255 的代價：0 是空�
 - **global 管「走哪條路」**，需要完整：包含 PGM 牆壁，並記得看過的障礙物，直到被清除。
 - **local 管「現在怎麼走」**，需要快而穩：它放在 `odom`，不會因 PCD 校正讓 `map -> odom` 跳動而跟著跳，controller 不會因此急轉或急停；它不載入 PGM，只看感測器，定位誤差時不會被對不準的地圖牆壁擋住。
 
-兩張設定相同的 `base_link` 矩形 footprint（前 0.65 m、後 0.20 m、左右各 0.32 m），並設定 `footprint_padding: 0.01` m。footprint 是車體在地面的占用輪廓，不是煞停區；目前涵蓋 Nova Carter 的車體幾何並保留裕度。0.9 m inflation 半徑用於產生導航代價，不是安全煞停距離。
+兩張 costmap 使用相同的 `base_link` 車體 footprint（前 0.65 m、後 0.20 m、左右各 0.32 m），涵蓋 Nova Carter 幾何並保留裕度；皆有 `footprint_padding: 0.01` m，含 padding 的寬度為 0.66 m。不再把 `PolygonSurround` 加入 global footprint：車體占用模型與 collision monitor 的預防性保護區分開處理。NavFn 的 2D 網格搜尋不是完整的朝向／轉動掃掠檢查，不能保證每條路線都符合 Surround。0.9 m inflation 半徑用於產生導航代價，不是安全煞停距離。
+
+global 與 local obstacle layer 都保留 Nav2 預設的 footprint 清除：只清除車體 footprint 內的格子，不把 Surround 當作清除範圍。輸入點雲的車身自體濾除及 `/scan` 的射線清除也維持原設定，後者負責清除實際觀測到的空間。
+
+下圖以等比例俯視呈現量測車體包絡、local footprint、每側 1 cm padding 與三個固定防撞 polygon；右側放大 footprint 的前左角。灰色是車體的矩形包絡，不是精確外形；灰色到藍色之間已有幾何裕度，只有藍色到綠色的 1 cm 才是 `footprint_padding`。座標為 `base_link`，x 正向為車頭、y 正向為車體左側。
+
+![車體包絡、footprint padding 與 collision monitor polygon 的等比例俯視圖](images/nav_safety_zones.svg)
 
 ### 障礙物標記與清除
 
@@ -344,9 +350,25 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 固定停車區需在車體輪廓外預留感測與控制延遲、物理煞停行程及安全裕度；發布零速不代表車體瞬間停止。`FootprintApproach` 使用 local costmap 發布的 footprint，但固定停車／減速區不會隨 footprint 自動更新。換車或提高速度時需重新調整並驗證，不能只修改 footprint。
 
+預設仍是上述固定區域。可用 `./run_nav.sh --mode 3d --navigate --adaptive-surround` 選用實驗性的兩段式速度自適應 Surround（`adaptive_surround.yaml`）；Humble 沒有原生 `VelocityPolygon`，因此不是不停更新 `points`，而是透過原生 `.enabled` 的原子參數服務切換兩個預先設定的區域：
+
+| 模式 | Surround（`base_link`） | 速度上限 |
+| :-- | :-- | :-- |
+| 一般 | x −0.80–1.10 m、y ±0.75 m；與預設相同 | 0.75 m/s、0.7 rad/s |
+| Crawl | x −0.45–0.90 m、y ±0.55 m；全寬 1.10 m | 0.10 m/s、0.20 rad/s |
+
+啟用時 RPP 的期望線速度改為 0.10 m/s、轉向速度改為 0.15 rad/s，smoother 的角速度上限改為 ±0.20 rad/s，避免追蹤曲線時的角速度讓低速車體反覆切回大區域。smoother 後新增 selector；只有命令在 Crawl 上限內，且 `/odometry/local` 的 twist 與相鄰位姿差分都在 0.12 m/s、0.22 rad/s 內持續 0.5 秒，才允許縮小。要求較快線速度或量測超過門檻時，先停車再擴大，原生 monitor 確認切換後才轉發命令。Crawl 仍不分行進方向，也會阻擋原地轉向；不是容許貼牆旋轉。
+
+切換先等待最終安全閘確認零速限制，再等待 monitor 的原子切換回覆；切換中一律發布零速。`cmd_vel_safety` 強制檢查帶 ROS 時戳的限速心跳，超過 0.2 秒沒有新心跳就停車（watchdog 週期 0.1 秒），舊的高速命令也受目前上限約束。缺少命令／里程計、無效數值、時鐘倒退、參數不符或切換失敗都不放行；selector 結束時保留安全 watchdog 執行，需重啟恢復。DDS 訊息可能比接收端的 `/clock` 先到；最多超前 0.05 秒的資料先暫存，時鐘追上才可使用，不提前當作新鮮證據。
+
+車體 footprint、padding、inflation、來源 watchdog、前方 Stop／Slow 與 FootprintApproach 都不變。RViz 的 Surround 顯示已確認的目前區域；上方幾何圖仍表示預設固定模式。這不是連續煞停距離縮放、朝向感知規劃或移動物體軌跡預測；1.10 m 也不是保證可通過的通道寬度。低速區只供目前 Carter 平地設定試用，不能提高限速或縮小區域後沿用驗證結論，移動物體仍可能侵入已停止的車體。
+
+目前 1.4 m 通道仍會在偏移／轉向時讓 Crawl 區域侵入側牆而停住；速度自適應不能取代保護區朝向／轉動掃掠的規劃與控制協調，因此尚不能視為窄道問題已解決。
+
 - 感測來源：`/perception/obstacles`（地面濾除後的 3D 點）和 `/scan`（2D 切片）。找不到地面時，`ground_obstacle_filter` 會停止發布，這時仍有 `/scan` 可用。
 - 不再排除半徑 0.5 m 內的所有點。`ground_obstacle_filter.yaml` 的 `self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]` 只排除車身矩形內的點（向上延伸，避免自體反射）；`min_range: 0.0`。導航的 `/scan` 使用同一份自體濾除點雲，並覆寫 `range_min: 0.0`、`range_max: 20.0`，所以車身外的近距離點可以同時進入 scan 與障礙點雲。
 - `PolygonSurround` 不分行進方向：側方或後方太近時，前進、倒退、原地旋轉都會被擋下。障礙物離開且新資料確認區域淨空後才恢復。
+- 停止區全寬 1.50 m 不代表 1.50 m 以上的通道必定可通過。車體修正航向時，長方形停止區在通道橫向的投影會變寬；即使車身尚有淨距，也可能因牆面進入停止區而卡住。
 - 這解決的是軟體距離濾除造成的盲區，不代表 LiDAR 沒有物理遮蔽、量測最短距離或點數不足的盲區。車身自體濾除範圍與保護區必須隨機器人幾何一起調整，必要時需加近距離感測器。
 - 停車區不分方向：障礙物在停車區內時，BackUp 後退也會被擋下，只能等障礙物離開，或在 recovery 用完後中止目標。
 - 來源時間戳落後目前 ROS 時間達 1 秒時，Humble 版會忽略該來源；最後一層 `cmd_vel_safety` 會在兩個來源都過期或尚未收到時強制停車。
@@ -362,6 +384,7 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | `/scan` 與 `/perception/obstacles` 都沒有 1 秒內的新資料 | 發布零速；任一來源恢復後才允許新的速度命令 |
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
 | 0.5 秒未收到新的速度命令 | 發布零速；下一個命令從零起步 |
+| 選用 adaptive 模式，但缺少有效限速心跳或正等待切換確認 | 發布零速；否則套用目前區域的線／角速度上限 |
 | 其他 | 限速 0.75 m/s、0.7 rad/s，再限制加速；減速與停車立即轉發 |
 
 最後一道關卡只限制速度大小增加：`max_linear_accel: 0.8` m/s²、`max_angular_accel: 1.5` rad/s²（`collision_monitor.yaml`，與 smoother 的 `max_accel` 一致）。collision monitor 發布零速、感測或定位校正過期、無效命令與 emergency stop 都立即歸零並重設起步狀態；安全停車不受減速度限制。恢復後必須收到新命令，從最後發布的零速逐步增加；倒退與原地旋轉也適用。方向反轉先輸出零速，再向相反方向加速。
@@ -393,6 +416,6 @@ flowchart LR
 - `collision_monitor` 的區域已通過 Office／Nova Carter 的平地模擬煞停驗證；點數門檻、稀疏／低矮障礙及更差的感測延遲仍未驗證，不能當成認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
 - 已支援可選 Keepout 禁行區與 Speed 限速區，使用 RViz 動態標註及 JSON 保存／還原。Binary 開關區未實作；Speed 不涵蓋 recovery、原地旋轉或直接速度命令，不能作為所有控制來源共用的硬性限速。
-- footprint 已量測並涵蓋 Carter 幾何；inflation、斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。固定 `PolygonSurround` 全寬 1.50 m，可能擋住車身本來能通過的窄門。
+- global 與 local footprint 都是量測車體的占用模型，不含 Surround。規劃與執行尚未實作完整的保護區朝向／轉動掃掠檢查；較寬通道仍可能因偏移或轉向讓牆面進入 `PolygonSurround`，阻擋修正動作。動態橫穿仍曾出現車體包絡與障礙物重疊，不能只因侵入當下速度接近零就認定煞停已驗證安全；需確認侵入前的持續停穩、最終零速命令與障礙物運動證據。目前沒有移動物體軌跡預測，停住機器人也不保證移動物體不會侵入它；驗證使用保守包絡，並非獨立確認的 PhysX 接觸。斜坡、複雜人流與完整動態清除行為仍需驗證。
 - topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。
 - 真實車輛導航安全尚未驗證。Office 模擬已包含實體箱子煞停與感測故障注入；使用時仍先在 RViz 確認 costmap 與規劃路徑。

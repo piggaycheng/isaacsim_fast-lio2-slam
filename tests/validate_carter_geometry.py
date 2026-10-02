@@ -68,8 +68,8 @@ def validate(stage):
         for name in ("global_costmap", "local_costmap")
     ]
     if footprints[0] != footprints[1]:
-        raise AssertionError("Global and local footprints differ")
-    footprint = np.asarray(footprints[0])
+        raise AssertionError("Global and local physical footprints differ")
+    footprint = np.asarray(footprints[1])
     fmin, fmax = footprint.min(axis=0), footprint.max(axis=0)
     filtering = yaml.safe_load(
         (ROOT / "ros2_ws/src/isaac_nav/config/ground_obstacle_filter.yaml").read_text()
@@ -82,7 +82,8 @@ def validate(stage):
     padding = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint_padding"]
     if padding != costmaps["global_costmap"]["global_costmap"]["ros__parameters"]["footprint_padding"]:
         raise AssertionError("Global and local footprint padding differs")
-    report = {"collider_count": len(colliders), "footprint": footprints[0],
+    report = {"collider_count": len(colliders), "footprint": footprints[1],
+              "planning_footprint": footprints[0],
               "footprint_padding": padding,
               "self_filter": filtering, "surround": surround.tolist()}
     for kind, chunks in clouds.items():

@@ -38,6 +38,7 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/global_localization_xyz.py
   scripts/wait_for_costmap_tf.py
   scripts/cmd_vel_safety.py
+  scripts/adaptive_surround.py
   scripts/wait_for_navigation.py
   scripts/costmap_filter_editor.py
   scripts/covariance_calibration.py

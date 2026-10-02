@@ -10,6 +10,7 @@ auto_jog=false
 rviz=true
 manual_initial_pose=false
 navigate=false
+adaptive_surround=false
 filter_editor=false
 filter_state=""
 boxes=()
@@ -27,6 +28,8 @@ Options:
       --manual-initial-pose
                        3d only: set initial pose in RViz instead of Office spawn.
       --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
+      --adaptive-surround
+                       Experimental speed-adaptive Surround; requires --navigate.
       --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
       --filter-state FILE
                        Persistent editor JSON (default: maps/costmap_filters/editor.json).
@@ -83,6 +86,7 @@ while (($# > 0)); do
       shift 2
       ;;
     --navigate) navigate=true; shift ;;
+    --adaptive-surround) adaptive_surround=true; shift ;;
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
     --no-rviz) rviz=false; shift ;;
@@ -104,6 +108,10 @@ if [[ "$mode" != 2d && "$mode" != 3d ]]; then
   usage >&2
   exit 2
 fi
+if [[ "$adaptive_surround" == true && ( "$mode" != 3d || "$navigate" != true ) ]]; then
+  echo "--adaptive-surround requires --mode 3d --navigate" >&2
+  exit 2
+fi
 args=()
 if [[ "$headless" == true ]]; then args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then args+=(--auto-jog); fi
@@ -121,6 +129,7 @@ fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
 if [[ "$navigate" == true ]]; then args+=(--navigate); fi
+if [[ "$adaptive_surround" == true ]]; then args+=(--adaptive-surround); fi
 if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
 if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
 exec "$project_dir/run_3d_localization.sh" --global-fusion --costmaps \

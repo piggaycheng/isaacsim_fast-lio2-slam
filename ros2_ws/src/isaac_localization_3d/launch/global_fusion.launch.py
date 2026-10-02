@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -81,6 +82,77 @@ def configure_filters(context, observation_config):
     ]
 
 
+def configure_surround(context, collision_config, navigation_config, adaptive_config):
+    enabled = LaunchConfiguration("adaptive_surround").perform(context).lower() == "true"
+    if not enabled:
+        return [
+            SetLaunchConfiguration("collision_config", collision_config),
+            SetLaunchConfiguration("navigation_config", navigation_config),
+        ]
+    if any(LaunchConfiguration(name).perform(context).lower() != "true"
+           for name in ("navigate", "costmaps", "obstacle_cloud")):
+        raise ValueError("Adaptive surround requires navigation, costmaps and obstacle cloud")
+    with open(collision_config, encoding="utf-8") as stream:
+        collision = yaml.safe_load(stream)
+    with open(navigation_config, encoding="utf-8") as stream:
+        navigation = yaml.safe_load(stream)
+    with open(adaptive_config, encoding="utf-8") as stream:
+        adaptive = yaml.safe_load(stream)["adaptive_surround"]["ros__parameters"]
+    with open(LaunchConfiguration("costmap_config").perform(context), encoding="utf-8") as stream:
+        local = yaml.safe_load(stream)["local_costmap"]["local_costmap"]["ros__parameters"]
+    monitor = collision["collision_monitor"]["ros__parameters"]
+    monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_adaptive"
+    monitor["PolygonSurround"]["visualize"] = False
+    monitor["polygons"].append("PolygonSurroundCrawl")
+    monitor["PolygonSurroundCrawl"] = dict(
+        monitor["PolygonSurround"], points=adaptive["crawl_points"], enabled=False,
+        polygon_pub_topic="/collision_monitor/polygon_surround_crawl",
+    )
+    collision["cmd_vel_safety"]["ros__parameters"]["require_adaptive_limits"] = True
+    controller = navigation["controller_server"]["ros__parameters"]["FollowPath"]
+    controller["desired_linear_vel"] = adaptive["crawl_linear"]
+    controller["rotate_to_heading_angular_vel"] = 0.15
+    smoother = navigation["velocity_smoother"]["ros__parameters"]
+    smoother["max_velocity"][2] = adaptive["crawl_angular"]
+    smoother["min_velocity"][2] = -adaptive["crawl_angular"]
+    directory = tempfile.TemporaryDirectory(prefix="isaac_adaptive_surround_")
+    paths = {}
+    for name, config in (("collision", collision), ("navigation", navigation)):
+        filename = os.path.join(directory.name, name + ".yaml")
+        with open(filename, "w", encoding="utf-8") as stream:
+            yaml.safe_dump(config, stream)
+        paths[name] = filename
+
+    def cleanup(event, context):
+        directory.cleanup()
+        return []
+
+    selector = Node(
+        package="isaac_localization_3d", executable="adaptive_surround.py",
+        name="adaptive_surround", output="screen",
+        parameters=[adaptive_config, {
+            "use_sim_time": True, "full_points": monitor["PolygonSurround"]["points"],
+            "physical_footprint": [
+                float(value) for point in json.loads(local["footprint"]) for value in point
+            ],
+            "footprint_padding": float(local["footprint_padding"]),
+        }],
+    )
+    return [
+        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
+        SetLaunchConfiguration("collision_config", paths["collision"]),
+        SetLaunchConfiguration("navigation_config", paths["navigation"]),
+        selector,
+        RegisterEventHandler(OnProcessExit(
+            target_action=selector,
+            on_exit=lambda event, context: [] if context.is_shutdown else [
+                # Leave the safety watchdog alive to stop on the expired heartbeat.
+                LogInfo(msg="ERROR: Adaptive surround exited; safety gates remain active, restart required"),
+            ],
+        )),
+    ]
+
+
 def generate_launch_description():
     package = get_package_share_directory("isaac_localization_3d")
     nav = get_package_share_directory("isaac_nav")
@@ -94,9 +166,9 @@ def generate_launch_description():
     sim = {"use_sim_time": True}
     nav_parameters = [os.path.join(nav, "config", "local_odometry.yaml"), sim]
     observation_config = LaunchConfiguration("costmap_config")
-    navigation_config = os.path.join(package, "config", "navigation.yaml")
+    navigation_config = LaunchConfiguration("navigation_config")
     fusion_config = os.path.join(package, "config", "global_fusion.yaml")
-    collision_config = os.path.join(package, "config", "collision_monitor.yaml")
+    collision_config = LaunchConfiguration("collision_config")
     observing = IfCondition(PythonExpression([
         "'", costmaps, "' == 'true' and '", navigate, "' == 'false'",
     ]))
@@ -144,6 +216,8 @@ def generate_launch_description():
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             DeclareLaunchArgument("costmaps", default_value="false"),
             DeclareLaunchArgument("navigate", default_value="false"),
+            DeclareLaunchArgument("adaptive_surround", default_value="false",
+                                  description="Experimental acknowledged low-speed surround profiles"),
             DeclareLaunchArgument("filter_editor", default_value="false",
                                   description="Enable live RViz polygon annotation"),
             DeclareLaunchArgument(
@@ -155,6 +229,12 @@ def generate_launch_description():
             OpaqueFunction(
                 function=configure_filters,
                 args=[os.path.join(package, "config", "observation_costmaps.yaml")],
+            ),
+            OpaqueFunction(
+                function=configure_surround,
+                args=[os.path.join(package, "config", filename) for filename in (
+                    "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
+                )],
             ),
             Node(
                 package="tf2_ros",

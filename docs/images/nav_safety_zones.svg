@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="850" viewBox="0 0 1320 850" font-size="16" fill="#0f172a" role="img" aria-labelledby="title description">
+  <title id="title">Carter body, footprint padding and collision monitor polygons</title>
+  <desc id="description">Equal-scale top view in base_link, with forward x pointing right and left y pointing up. The measured USD body envelope is gray, footprint blue, padded footprint green, surround stop magenta, front stop red and slowdown orange. A separate corner enlargement shows the one-centimeter padding.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#475569"/>
+    </marker>
+    <clipPath id="cornerClip">
+      <rect x="900" y="150" width="360" height="360"/>
+    </clipPath>
+    <style>
+      text { font-family: sans-serif; }
+      .small { font-size: 14px; fill: #475569; }
+      .heading { font-size: 19px; font-weight: bold; }
+      .dimension { stroke: #475569; stroke-width: 1.5; marker-start: url(#arrow); marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1320" height="850" fill="white"/>
+  <text x="40" y="38" font-size="26" font-weight="bold">Carter navigation geometry: top view in base_link</text>
+  <text x="40" y="66" class="small">Main view: 300 px/m, equal x/y scale. Gray is a measured bounding envelope, not the exact body contour.</text>
+
+  <line x1="90" y1="350" x2="830" y2="350" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+  <line x1="360" y1="620" x2="360" y2="95" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+  <text x="835" y="344" text-anchor="end">Front +x</text>
+  <text x="372" y="108">Left +y</text>
+
+  <rect id="surround" x="120" y="125" width="570" height="450" fill="#fae8ff" fill-opacity="0.45" stroke="#a21caf" stroke-width="3"/>
+  <rect id="slow" x="555" y="200" width="225" height="300" fill="#ffedd5" fill-opacity="0.7" stroke="#c2410c" stroke-width="3"/>
+  <rect id="stop" x="555" y="242" width="195" height="216" fill="#fee2e2" fill-opacity="0.65" stroke="#dc2626" stroke-width="3"/>
+  <rect id="padding" x="297" y="251" width="261" height="198" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
+  <rect id="footprint" x="300" y="254" width="255" height="192" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+  <rect id="body" x="317.9625" y="275.1503" width="218.3508" height="149.6994" fill="#cbd5e1" stroke="#334155" stroke-width="2"/>
+  <circle cx="360" cy="350" r="5" fill="white" stroke="#0f172a" stroke-width="2"/>
+  <text x="370" y="374" class="small">base_link (0, 0)</text>
+  <text x="460" y="331" text-anchor="middle" font-weight="bold">Body</text>
+  <text x="135" y="152" fill="#a21caf">PolygonSurround: STOP</text>
+  <text x="565" y="224" fill="#c2410c">PolygonSlow: 50%</text>
+  <text x="572" y="437" fill="#dc2626">PolygonStop: STOP</text>
+  <text x="427" y="474" text-anchor="middle" fill="#1d4ed8">Local footprint + padding</text>
+
+  <line x1="103" y1="125" x2="103" y2="575" class="dimension"/>
+  <text x="82" y="350" text-anchor="middle" transform="rotate(-90 82 350)">Surround width: 1.50 m</text>
+  <line x1="120" y1="602" x2="690" y2="602" class="dimension"/>
+  <text x="405" y="628" text-anchor="middle">Surround length: 1.90 m</text>
+  <text x="120" y="596" text-anchor="middle" class="small">x = -0.80</text>
+  <text x="690" y="596" text-anchor="middle" class="small">x = 1.10</text>
+
+  <text x="900" y="115" class="heading">Front-left corner: enlarged</text>
+  <rect x="900" y="150" width="360" height="360" fill="#f8fafc" stroke="#cbd5e1"/>
+  <g clip-path="url(#cornerClip)">
+    <rect x="-342" y="186" width="1566" height="1188" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <rect x="-324" y="204" width="1530" height="1152" fill="#dbeafe" stroke="#1d4ed8" stroke-width="3"/>
+    <rect x="-216.225" y="330.9018" width="1310.1048" height="898.1964" fill="#cbd5e1" stroke="#334155" stroke-width="3"/>
+  </g>
+  <text x="950" y="416" font-weight="bold">Body envelope</text>
+  <text x="1000" y="267" fill="#1d4ed8">Local footprint</text>
+  <line x1="1206" y1="169" x2="1224" y2="169" class="dimension"/>
+  <line x1="1206" y1="173" x2="1206" y2="204" stroke="#475569"/>
+  <line x1="1224" y1="173" x2="1224" y2="186" stroke="#475569"/>
+  <text x="1190" y="144" text-anchor="end" fill="#15803d">Padding: 10 mm</text>
+  <text x="900" y="542" class="small">Green is added outside the configured footprint.</text>
+  <text x="900" y="565" class="small">The blue-to-gray margin is not footprint_padding.</text>
+  <text x="900" y="600" class="small">FootprintApproach is not a fixed rectangle.</text>
+  <text x="900" y="622" class="small">It projects the footprint along the commanded</text>
+  <text x="900" y="644" class="small">motion for a 1.5 s time-to-collision check.</text>
+
+  <line x1="40" y1="665" x2="1280" y2="665" stroke="#cbd5e1"/>
+  <rect x="45" y="691" width="20" height="14" fill="#cbd5e1" stroke="#334155"/>
+  <text x="78" y="704">Body envelope: x [-0.140, 0.588], y +/-0.249 m</text>
+  <rect x="45" y="726" width="20" height="14" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="78" y="739">Local footprint: x [-0.20, 0.65], y +/-0.32 m</text>
+  <rect x="45" y="761" width="20" height="14" fill="#dcfce7" stroke="#15803d"/>
+  <text x="78" y="774">With padding: x [-0.21, 0.66], y +/-0.33 m</text>
+  <rect x="725" y="691" width="20" height="14" fill="#fae8ff" stroke="#a21caf"/>
+  <text x="758" y="704">Surround: x [-0.80, 1.10], y +/-0.75 m</text>
+  <rect x="725" y="726" width="20" height="14" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="758" y="739">Front stop: x [0.65, 1.30], y +/-0.36 m</text>
+  <rect x="725" y="761" width="20" height="14" fill="#ffedd5" stroke="#c2410c"/>
+  <text x="758" y="774">Slowdown: x [0.65, 1.40], y +/-0.50 m</text>
+  <text x="40" y="822" class="small">Zones overlap and are independent settings. Inflation is a cost gradient around obstacles, not a fixed robot-centered polygon.</text>
+</svg>
