@@ -28,7 +28,7 @@ class CostmapReadiness(Node):
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
         self.create_subscription(
-            OccupancyGrid, "/map", self.on_map,
+            OccupancyGrid, "map", self.on_map,
             QoSProfile(
                 depth=1,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,

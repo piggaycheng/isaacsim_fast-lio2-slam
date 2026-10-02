@@ -52,3 +52,40 @@ start_ros() {
   ros_compose logs -f --no-log-prefix ros &
   ros_logs_pid=$!
 }
+
+# One container per robot (as on real robots) plus e.g. one fleet RViz: each
+# is its own Compose project, so containers, logs and lifecycles are independent.
+ros_projects=()
+ros_log_pids=()
+
+ros_project() {
+  printf '%s-%s\n' "${ROBOT_PROJECT_PREFIX:-isaacsim-fastlio2}" "${1,,}"
+}
+
+stop_ros_containers() {
+  trap - EXIT INT TERM
+  local project pid down_pids=()
+  for project in "${ros_projects[@]}"; do
+    ros_compose -p "$project" down --remove-orphans >/dev/null 2>&1 &
+    down_pids+=("$!")
+  done
+  for pid in "${down_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+  for pid in "${ros_log_pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  wait 2>/dev/null || true
+}
+
+# start_ros_container NAME COMMAND [LAUNCH_ARGS...]
+# Starts container NAME (project <prefix>-NAME) in the background with its logs
+# prefixed by [NAME]. All of them stop when the calling script exits.
+start_ros_container() {
+  local name="$1" command="$2" project
+  shift 2
+  project="$(ros_project "$name")"
+  ros_projects+=("$project")
+  trap stop_ros_containers EXIT INT TERM
+  ROS_COMMAND="$command" ROS_LAUNCH_ARGS="$(printf '%s\n' "$@")" \
+    ros_compose -p "$project" up -d --force-recreate ros
+  ros_compose -p "$project" logs -f --no-log-prefix ros 2>&1 |
+    sed -u "s/^/[$name] /" &
+  ros_log_pids+=("$!")
+}

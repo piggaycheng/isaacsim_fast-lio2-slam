@@ -280,6 +280,22 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         self.node.on_odometry(odometry("camera_init", "body", 12))
         self.node.initial_pose_publisher.publish.assert_called_once()
 
+    def test_auto_init_sends_configured_spawn_pose(self):
+        self.node.auto_initial_pose = True
+        self.node.initial_pose = (3.0, -2.0, 0.1, math.pi / 2)
+        self.node.initial_pose_publisher.get_subscription_count = Mock(return_value=2)
+        self.node.get_subscriptions_info_by_topic = Mock(
+            return_value=[Mock(node_name="global_localization")]
+        )
+        self.input()
+        self.node.get_subscriptions_info_by_topic.assert_called_with("/initialpose")
+        initial = self.node.initial_pose_publisher.publish.call_args.args[0]
+        self.assertEqual(initial.pose.pose.position.x, 3.0)
+        self.assertEqual(initial.pose.pose.position.y, -2.0)
+        self.assertEqual(initial.pose.pose.position.z, 0.1)
+        self.assertAlmostEqual(initial.pose.pose.orientation.z, math.sin(math.pi / 4))
+        self.assertAlmostEqual(initial.pose.pose.orientation.w, math.cos(math.pi / 4))
+
     def test_clock_reset_discards_old_baseline_and_requires_fresh_inputs(self):
         self.input()
         self.correction()

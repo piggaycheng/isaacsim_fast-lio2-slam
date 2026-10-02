@@ -52,15 +52,15 @@ class AdaptiveSurround(Node):
         self.request_stamp = None
         self.zero_barrier_stamp = None
         self.gate_ack_stamp = None
-        self.publisher = self.create_publisher(Twist, "/nav2/cmd_vel_adaptive", 10)
-        self.limits = self.create_publisher(TwistStamped, "/navigation/adaptive_surround_limits", 10)
-        self.polygon = self.create_publisher(PolygonStamped, "/collision_monitor/polygon_surround", 10)
-        self.getter = self.create_client(GetParameters, "/collision_monitor/get_parameters")
-        self.setter = self.create_client(SetParametersAtomically, "/collision_monitor/set_parameters_atomically")
-        self.create_subscription(Twist, "/nav2/cmd_vel", self.on_command, 10)
-        self.create_subscription(Odometry, "/odometry/local", self.on_odometry, qos_profile_sensor_data)
+        self.publisher = self.create_publisher(Twist, "nav2/cmd_vel_adaptive", 10)
+        self.limits = self.create_publisher(TwistStamped, "navigation/adaptive_surround_limits", 10)
+        self.polygon = self.create_publisher(PolygonStamped, "collision_monitor/polygon_surround", 10)
+        self.getter = self.create_client(GetParameters, "collision_monitor/get_parameters")
+        self.setter = self.create_client(SetParametersAtomically, "collision_monitor/set_parameters_atomically")
+        self.create_subscription(Twist, "nav2/cmd_vel", self.on_command, 10)
+        self.create_subscription(Odometry, "odometry/local", self.on_odometry, qos_profile_sensor_data)
         self.create_subscription(
-            TwistStamped, "/navigation/adaptive_surround_limits_ack", self.on_gate_ack, 10,
+            TwistStamped, "navigation/adaptive_surround_limits_ack", self.on_gate_ack, 10,
         )
         self.create_timer(0.05, self.tick)
 

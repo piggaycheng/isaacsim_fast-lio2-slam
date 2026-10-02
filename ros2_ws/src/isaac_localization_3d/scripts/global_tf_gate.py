@@ -60,10 +60,10 @@ class GlobalTfGate(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.broadcaster = TransformBroadcaster(self)
         self.create_subscription(
-            Header, "/localization_3d/accepted_correction", self.on_correction, 10
+            Header, "localization_3d/accepted_correction", self.on_correction, 10
         )
         self.create_subscription(
-            Odometry, "/odometry/global", self.on_global_odometry, 10
+            Odometry, "odometry/global", self.on_global_odometry, 10
         )
 
     def on_correction(self, message):

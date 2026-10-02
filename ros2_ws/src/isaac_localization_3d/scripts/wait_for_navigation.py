@@ -16,7 +16,7 @@ def main():
         "velocity_smoother", "collision_monitor",
     )
     clients = {
-        name: node.create_client(GetState, f"/{name}/get_state")
+        name: node.create_client(GetState, f"{name}/get_state")
         for name in names
     }
     deadline = time.monotonic() + 35

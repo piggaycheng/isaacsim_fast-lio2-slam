@@ -1,29 +1,39 @@
 #!/home/user/isaacsim-6.1.0/python.sh
 
 import argparse
+import math
+import sys
+from pathlib import Path
 
-from cmd_vel_control import receiver
+from cmd_vel_control import receiver_for
 from isaacsim import SimulationApp
+
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent / "ros2_ws/src/isaac_localization_3d/launch"),
+)
+from robot_fleet import (  # noqa: E402
+    DEFAULT_ROBOT_TYPE, RobotSpec, load_robot_profile, namespaced_topic, parse_robot_specs,
+)
 
 
 OFFICE_ASSET_PATH = "/Isaac/Environments/Office/office.usd"
-CARTER_ASSET_PATH = "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd"
 SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
+# Prim of the single robot when no --robot is given (root ROS namespace).
 CARTER_PRIM_PATH = "/World/Carter"
-CARTER_ARTICULATION_PATH = f"{CARTER_PRIM_PATH}/chassis_link"
-CARTER_LIDAR_PRIM_PATH = f"{CARTER_PRIM_PATH}/chassis_link/sensors/XT_32/PandarXT_32_10hz"
-CARTER_IMU_PRIM_PATH = f"{CARTER_LIDAR_PRIM_PATH}/fastlio_imu"
-CARTER_SPAWN_POSITION = [0.0, 0.0, 0.05]
 GROUND_TRUTH_TOPIC = "/isaac/ground_truth/odom"
 BOX_PRIM_ROOT = "/World/TestBoxes"
 DEFAULT_BOX_SIZE = [0.6, 0.6, 1.0]
 LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 1.2
-CARTER_FORWARD_SIGN = -1.0
 FOLLOW_CAMERA_DISTANCE = 2.5
 FOLLOW_CAMERA_HEIGHT = 1.5
 FOLLOW_CAMERA_LOOK_AHEAD = 0.6
 FOLLOW_CAMERA_TARGET_HEIGHT = 0.5
+# Multi-robot overview: fixed top-down view over all spawn points.
+OVERVIEW_CAMERA_MARGIN = 5.0
+OVERVIEW_CAMERA_MIN_HEIGHT = 12.0
+# The Office ceiling is at about 3 m; clip everything above this height.
+OVERVIEW_CAMERA_CUT_HEIGHT = 2.6
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
     "--/app/renderer/skipGpuRenderProducts=false",
@@ -40,7 +50,13 @@ parser.add_argument(
 parser.add_argument("--test", action="store_true", help="Load the stage and exit after ten frames.")
 parser.add_argument(
     "--ros-cmd-vel", action="store_true",
-    help="Subscribe to ROS 2 /cmd_vel instead of keyboard or auto-jog.",
+    help="Subscribe to ROS 2 cmd_vel instead of keyboard or auto-jog.",
+)
+parser.add_argument(
+    "--robot", action="append", default=[], metavar="NAME[:TYPE]@X,Y[,YAW]",
+    help="Spawn a robot of TYPE (config/robots/TYPE.yaml, default "
+    f"{DEFAULT_ROBOT_TYPE}) at world X,Y (m) and YAW (rad) whose ROS topics and TF live "
+    "under /NAME. Repeat for more robots. Without --robot one robot uses root topics.",
 )
 parser.add_argument(
     "--lidar-motion-compensation",
@@ -58,6 +74,50 @@ if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
 if args.validation_control_dir and not args.ros_cmd_vel:
     parser.error("--validation-control-dir requires --ros-cmd-vel")
+if args.validation_control_dir and args.robot:
+    parser.error("--validation-control-dir supports only the single default robot")
+
+
+class SimRobot:
+    """One simulated robot: prim paths and ROS names from its robot-type profile."""
+
+    def __init__(self, spec: RobotSpec):
+        self.spec = spec
+        self.name = spec.name
+        self.profile = load_robot_profile(spec.robot_type)
+        simulation = self.profile["simulation"]
+        self.simulation = simulation
+        self.prim_path = f"/World/{spec.name}" if spec.name else CARTER_PRIM_PATH
+        self.articulation_path = f"{self.prim_path}/{simulation['articulation']}"
+        self.lidar_path = f"{self.prim_path}/{simulation['lidar']}"
+        self.imu_path = f"{self.prim_path}/{simulation['imu']}"
+        self.forward_sign = float(simulation["forward_sign"])
+        self.label = spec.name or "robot"
+        self.robot = None
+        self.controller = None
+        self.receiver = None
+
+    def topic(self, name: str) -> str:
+        return namespaced_topic(self.name, name)
+
+    def graph_path(self, base: str) -> str:
+        return f"{base}_{self.name}" if self.name else base
+
+    def drive(self, linear: float, angular: float) -> None:
+        self.robot.apply_wheel_actions(
+            self.controller.forward(command=[linear * self.forward_sign, angular])
+        )
+
+
+try:
+    robots = [
+        SimRobot(spec) for spec in (
+            parse_robot_specs(args.robot) if args.robot
+            else [RobotSpec("", DEFAULT_ROBOT_TYPE, 0.0, 0.0, 0.0)]
+        )
+    ]
+except ValueError as error:
+    parser.error(str(error))
 
 
 def parse_box(text: str) -> list[float]:
@@ -99,7 +159,7 @@ from isaacsim.sensors.experimental.physics import IMU
 from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from omni.kit.viewport.utility import get_active_viewport
-from pxr import UsdGeom, UsdPhysics
+from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
 app_utils.enable_extension("isaacsim.ros2.bridge")
 simulation_app.update()
@@ -109,7 +169,9 @@ pressed_keys = set()
 input_interface = None
 keyboard = None
 keyboard_subscription = None
-command_receiver = receiver if args.ros_cmd_vel else None
+if args.ros_cmd_vel:
+    for sim_robot in robots:
+        sim_robot.receiver = receiver_for(sim_robot.name)
 
 
 def on_keyboard_event(event, *_) -> bool:
@@ -122,6 +184,7 @@ def on_keyboard_event(event, *_) -> bool:
 
 
 def get_jog_command() -> list[float]:
+    """Keyboard (linear, angular) in the robot's forward convention."""
     if "SPACE" in pressed_keys:
         return [0.0, 0.0]
 
@@ -130,7 +193,7 @@ def get_jog_command() -> list[float]:
     left = int(bool(pressed_keys & {"A", "LEFT"}))
     right = int(bool(pressed_keys & {"D", "RIGHT"}))
     return [
-        (forward - backward) * LINEAR_JOG_SPEED * CARTER_FORWARD_SIGN,
+        (forward - backward) * LINEAR_JOG_SPEED,
         (left - right) * ANGULAR_JOG_SPEED,
     ]
 
@@ -148,11 +211,11 @@ def rotate_vector_by_quaternion(vector, quaternion) -> list[float]:
     ]
 
 
-def update_follow_camera(carter, camera_path: str) -> None:
-    positions, orientations = carter.get_world_poses()
+def update_follow_camera(sim_robot: SimRobot, camera_path: str) -> None:
+    positions, orientations = sim_robot.robot.get_world_poses()
     position = positions.numpy()[0]
     forward = rotate_vector_by_quaternion(
-        [CARTER_FORWARD_SIGN, 0.0, 0.0],
+        [sim_robot.forward_sign, 0.0, 0.0],
         orientations.numpy()[0],
     )
     eye = [
@@ -168,9 +231,66 @@ def update_follow_camera(carter, camera_path: str) -> None:
     ViewportManager.set_camera_view(camera_path, eye=eye, target=target)
 
 
-def create_ros2_publishers() -> None:
-    graph_path = "/World/FASTLIO_ROS2"
+class OverviewCamera:
+    """Fixed top-down view fitting all spawn points plus a margin.
+
+    The near plane cuts away the Office ceiling. It is reset to the default once
+    the user moves the camera, so zooming in does not clip the scene.
+    """
+
+    def __init__(self, robots: list[SimRobot], viewport) -> None:
+        stage = omni.usd.get_context().get_stage()
+        self.camera = UsdGeom.Camera(stage.GetPrimAtPath(str(viewport.camera_path)))
+        self.session_layer = stage.GetSessionLayer()
+        self.stage = stage
+        self.default_range = self.camera.GetClippingRangeAttr().Get()
+        self.eye = set_overview_camera(robots, viewport)
+
+    def update(self) -> None:
+        if self.eye is None:
+            return
+        position = self.camera.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation()
+        if (position - Gf.Vec3d(*self.eye)).GetLength() > 0.05:
+            with Usd.EditContext(self.stage, self.session_layer):
+                self.camera.GetClippingRangeAttr().Set(self.default_range)
+            self.eye = None
+
+
+def set_overview_camera(robots: list[SimRobot], viewport) -> list[float]:
+    """Fixed top-down view fitting all spawn points plus a margin; returns the eye."""
+    camera_path = str(viewport.camera_path)
+    stage = omni.usd.get_context().get_stage()
+    camera = UsdGeom.Camera(stage.GetPrimAtPath(camera_path))
+    width, height_px = viewport.resolution
+    tan_x = camera.GetHorizontalApertureAttr().Get() / (2.0 * camera.GetFocalLengthAttr().Get())
+    tan_y = tan_x * height_px / width
+    xs = [sim_robot.spec.x for sim_robot in robots]
+    ys = [sim_robot.spec.y for sim_robot in robots]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    height = max(
+        OVERVIEW_CAMERA_MIN_HEIGHT,
+        ((max(xs) - min(xs)) / 2.0 + OVERVIEW_CAMERA_MARGIN) / tan_x,
+        ((max(ys) - min(ys)) / 2.0 + OVERVIEW_CAMERA_MARGIN) / tan_y,
+    )
+    # A tiny -Y offset avoids the degenerate straight-down look-at and keeps
+    # world +Y up and +X right on screen, like a top-down RViz view.
+    eye = [cx, cy - 1e-3 * height, height]
+    ViewportManager.set_camera_view(camera_path, eye=eye, target=[cx, cy, 0.0])
+    # Kit's viewport cameras live in the session layer, which overrides the root layer.
+    with Usd.EditContext(stage, stage.GetSessionLayer()):
+        camera.GetClippingRangeAttr().Set(
+            Gf.Vec2f(height - OVERVIEW_CAMERA_CUT_HEIGHT, height + 100.0))
+    return eye
+
+
+def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
+    graph_path = sim_robot.graph_path("/World/FASTLIO_ROS2")
     keys = og.Controller.Keys
+    clock_nodes = [("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock")]
+    clock_connections = [
+        ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
+        ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+    ]
     og.Controller.edit(
         {"graph_path": graph_path, "evaluator_name": "execution"},
         {
@@ -180,7 +300,7 @@ def create_ros2_publishers() -> None:
                 ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
                 ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
                 ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
-                ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
+                *(clock_nodes if publish_clock else []),
                 ("ComputeGroundTruth", "isaacsim.core.nodes.IsaacComputeOdometry"),
                 ("PublishGroundTruth", "isaacsim.ros2.bridge.ROS2PublishOdometry"),
             ],
@@ -193,8 +313,7 @@ def create_ros2_publishers() -> None:
                 ("ReadIMU.outputs:sensorTime", "PublishIMU.inputs:timeStamp"),
                 ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
                 ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
-                ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
-                ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+                *(clock_connections if publish_clock else []),
                 ("OnPlaybackTick.outputs:tick", "ComputeGroundTruth.inputs:execIn"),
                 ("ComputeGroundTruth.outputs:execOut", "PublishGroundTruth.inputs:execIn"),
                 ("ComputeGroundTruth.outputs:position", "PublishGroundTruth.inputs:position"),
@@ -210,34 +329,37 @@ def create_ros2_publishers() -> None:
                 ("ReadSimTime.outputs:simulationTime", "PublishGroundTruth.inputs:timeStamp"),
             ],
             keys.SET_VALUES: [
-                ("PublishIMU.inputs:topicName", "/isaac/imu"),
+                ("PublishIMU.inputs:topicName", sim_robot.topic("/isaac/imu")),
                 ("PublishIMU.inputs:frameId", "imu_link"),
-                ("PublishJointState.inputs:topicName", "/isaac/joint_states"),
+                ("PublishJointState.inputs:topicName", sim_robot.topic("/isaac/joint_states")),
                 (
                     "PublishJointState.inputs:targetPrim",
-                    [usdrt.Sdf.Path(CARTER_ARTICULATION_PATH)],
+                    [usdrt.Sdf.Path(sim_robot.articulation_path)],
                 ),
-                ("PublishClock.inputs:topicName", "/clock"),
+                *([("PublishClock.inputs:topicName", "/clock")] if publish_clock else []),
                 # Simulator truth for covariance validation only; never fused.
-                ("PublishGroundTruth.inputs:topicName", GROUND_TRUTH_TOPIC),
+                ("PublishGroundTruth.inputs:topicName", sim_robot.topic(GROUND_TRUTH_TOPIC)),
                 ("PublishGroundTruth.inputs:odomFrameId", "isaac_world"),
-                ("PublishGroundTruth.inputs:chassisFrameId", "chassis_link"),
-                ("PublishGroundTruth.inputs:robotFront", [CARTER_FORWARD_SIGN, 0.0, 0.0]),
+                (
+                    "PublishGroundTruth.inputs:chassisFrameId",
+                    sim_robot.simulation["articulation"].rsplit("/", 1)[-1],
+                ),
+                ("PublishGroundTruth.inputs:robotFront", [sim_robot.forward_sign, 0.0, 0.0]),
             ],
         },
     )
     og.Controller.set(
         og.Controller.attribute(f"{graph_path}/ComputeGroundTruth.inputs:chassisPrim"),
-        [usdrt.Sdf.Path(CARTER_ARTICULATION_PATH)],
+        [usdrt.Sdf.Path(sim_robot.articulation_path)],
     )
     og.Controller.set(
         og.Controller.attribute(f"{graph_path}/ReadIMU.inputs:imuPrim"),
-        [usdrt.Sdf.Path(CARTER_IMU_PRIM_PATH)],
+        [usdrt.Sdf.Path(sim_robot.imu_path)],
     )
 
 
-def create_ros2_drive_subscriber() -> None:
-    graph_path = "/World/CarterROS2Drive"
+def create_ros2_drive_subscriber(sim_robot: SimRobot) -> None:
+    graph_path = sim_robot.graph_path("/World/CarterROS2Drive")
     keys = og.Controller.Keys
     _, nodes, _, _ = og.Controller.edit(
         {"graph_path": graph_path, "evaluator_name": "execution"},
@@ -252,7 +374,7 @@ def create_ros2_drive_subscriber() -> None:
                 ("SubscribeTwist.outputs:execOut", "RecordCommand.inputs:execIn"),
             ],
             keys.SET_VALUES: [
-                ("SubscribeTwist.inputs:topicName", "/cmd_vel"),
+                ("SubscribeTwist.inputs:topicName", sim_robot.topic("/cmd_vel")),
                 ("SubscribeTwist.inputs:queueSize", 1),
             ],
         },
@@ -270,14 +392,97 @@ def create_ros2_drive_subscriber() -> None:
         )
     script_node.get_attribute("inputs:script").set(
         "def compute(db):\n"
-        "    from cmd_vel_control import receiver\n"
+        "    from cmd_vel_control import receiver_for\n"
         "    try:\n"
-        "        receiver.accept_twist(db.inputs.linearVelocity, db.inputs.angularVelocity)\n"
+        f"        receiver_for({sim_robot.name!r}).accept_twist(\n"
+        "            db.inputs.linearVelocity, db.inputs.angularVelocity)\n"
         "    except ValueError as error:\n"
         "        db.log_error(str(error))\n"
     )
 
 
+def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
+    simulation = sim_robot.simulation
+    usd_path = assets_root_path + simulation["asset"]
+    if not is_file(usd_path):
+        raise FileNotFoundError(f"{sim_robot.spec.robot_type} asset was not found: {usd_path}")
+    yaw = sim_robot.spec.yaw
+    sim_robot.robot = WheeledRobot(
+        paths=sim_robot.prim_path,
+        wheel_dof_names=list(simulation["wheel_joints"]),
+        usd_path=usd_path,
+        positions=[sim_robot.spec.x, sim_robot.spec.y, float(simulation["spawn_height"])],
+        orientations=[math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)],
+    )
+    sim_robot.controller = DifferentialController(
+        wheel_radius=float(simulation["wheel_radius"]),
+        wheel_base=float(simulation["wheel_base"]),
+    )
+
+    lidar_prim = stage.GetPrimAtPath(sim_robot.lidar_path)
+    if not lidar_prim.IsValid():
+        raise RuntimeError(f"{sim_robot.label} LiDAR prim was not found: {sim_robot.lidar_path}")
+    lidar = Lidar(
+        sim_robot.lidar_path,
+        accumulate_outputs=None,
+        aux_output_level="BASIC",
+        attributes={
+            "omni:sensor:Core:outputMotionCompensationState":
+                lidar_motion_compensation_state,
+        },
+    )
+    motion_compensation_state = lidar.prims[0].GetAttribute(
+        "omni:sensor:Core:outputMotionCompensationState"
+    ).Get()
+    if motion_compensation_state != lidar_motion_compensation_state:
+        raise RuntimeError(
+            "RTX LiDAR motion compensation state mismatch: "
+            f"expected {lidar_motion_compensation_state}, got {motion_compensation_state}"
+        )
+    lidar_sensor = LidarSensor(lidar, annotators=[])
+    lidar_sensor.attach_writer(
+        "RtxLidarROS2PublishPointCloud",
+        topicName=sim_robot.topic("/isaac/lidar_points"),
+        frameId="lidar_link",
+        outputIntensity=True,
+        outputTimestamp=True,
+        outputEmitterId=True,
+        outputChannelId=True,
+    )
+    sim_robot.lidar_sensor = lidar_sensor
+
+    IMU.create(
+        sim_robot.imu_path,
+        translations=[[0.0, 0.0, 0.0]],
+        linear_acceleration_filter_size=3,
+        angular_velocity_filter_size=3,
+        orientation_filter_size=3,
+    )
+    print(
+        f"Added {sim_robot.spec.robot_type} {sim_robot.prim_path} at "
+        f"({sim_robot.spec.x:.2f}, {sim_robot.spec.y:.2f}, yaw {yaw:.2f}); "
+        f"ROS topics {sim_robot.topic('/isaac/*')}, cmd_vel {sim_robot.topic('/cmd_vel')}"
+    )
+
+
+def verify_spawn_poses(sim_robots) -> None:
+    """The ROS side derives each initial pose from the spec, so the spawn must match it."""
+    for sim_robot in sim_robots:
+        positions, orientations = sim_robot.robot.get_world_poses()
+        x, y = (float(value) for value in positions.numpy()[0][:2])
+        qw, qx, qy, qz = (float(value) for value in orientations.numpy()[0])
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        spec = sim_robot.spec
+        yaw_error = math.atan2(math.sin(yaw - spec.yaw), math.cos(yaw - spec.yaw))
+        print(f"{sim_robot.label} world pose after start: ({x:.3f}, {y:.3f}, yaw {yaw:.3f})")
+        if math.hypot(x - spec.x, y - spec.y) > 0.15 or abs(yaw_error) > 0.1:
+            raise RuntimeError(
+                f"{sim_robot.label} spawned at ({x:.3f}, {y:.3f}, yaw {yaw:.3f}) instead of "
+                f"({spec.x}, {spec.y}, yaw {spec.yaw})"
+            )
+
+
+lead = robots[0]
 try:
     assets_root_path = get_assets_root_path()
     if assets_root_path is None:
@@ -304,18 +509,6 @@ try:
         )
     UsdGeom.Imageable(buildings_prim).MakeInvisible()
 
-    carter_usd_path = assets_root_path + CARTER_ASSET_PATH
-    if not is_file(carter_usd_path):
-        raise FileNotFoundError(f"Nova Carter asset was not found: {carter_usd_path}")
-
-    carter = WheeledRobot(
-        paths=CARTER_PRIM_PATH,
-        wheel_dof_names=["joint_wheel_left", "joint_wheel_right"],
-        usd_path=carter_usd_path,
-        positions=CARTER_SPAWN_POSITION,
-    )
-    controller = DifferentialController(wheel_radius=0.14, wheel_base=0.4132)
-
     # Static (collision-only, no rigid body) boxes that Carter's LiDAR sees but cannot push.
     for index, (x, y, size_x, size_y, size_z) in enumerate(boxes):
         box_path = f"{BOX_PRIM_ROOT}/Box_{index}"
@@ -326,53 +519,18 @@ try:
         UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(box_path))
         print(f"Spawned static box at ({x:.2f}, {y:.2f}) size {size_x}x{size_y}x{size_z} m")
 
-    lidar_prim = stage.GetPrimAtPath(CARTER_LIDAR_PRIM_PATH)
-    if not lidar_prim.IsValid():
-        raise RuntimeError(f"Nova Carter LiDAR prim was not found: {CARTER_LIDAR_PRIM_PATH}")
-    lidar = Lidar(
-        CARTER_LIDAR_PRIM_PATH,
-        accumulate_outputs=None,
-        aux_output_level="BASIC",
-        attributes={
-            "omni:sensor:Core:outputMotionCompensationState":
-                lidar_motion_compensation_state,
-        },
-    )
-    motion_compensation_state = lidar.prims[0].GetAttribute(
-        "omni:sensor:Core:outputMotionCompensationState"
-    ).Get()
-    if motion_compensation_state != lidar_motion_compensation_state:
-        raise RuntimeError(
-            "RTX LiDAR motion compensation state mismatch: "
-            f"expected {lidar_motion_compensation_state}, got {motion_compensation_state}"
-        )
-    lidar_sensor = LidarSensor(lidar, annotators=[])
-    lidar_sensor.attach_writer(
-        "RtxLidarROS2PublishPointCloud",
-        topicName="/isaac/lidar_points",
-        frameId="lidar_link",
-        outputIntensity=True,
-        outputTimestamp=True,
-        outputEmitterId=True,
-        outputChannelId=True,
-    )
-
-    IMU.create(
-        CARTER_IMU_PRIM_PATH,
-        translations=[[0.0, 0.0, 0.0]],
-        linear_acceleration_filter_size=3,
-        angular_velocity_filter_size=3,
-        orientation_filter_size=3,
-    )
-    create_ros2_publishers()
-    if command_receiver is not None:
-        create_ros2_drive_subscriber()
+    for index, sim_robot in enumerate(robots):
+        spawn_robot(sim_robot, stage, assets_root_path)
+        create_ros2_publishers(sim_robot, publish_clock=index == 0)
+        if sim_robot.receiver is not None:
+            create_ros2_drive_subscriber(sim_robot)
+    command_receiver = lead.receiver
 
     validation_scene = None
     if args.validation_control_dir:
         from safety_validation_scene import SafetyValidationScene
 
-        validation_scene = SafetyValidationScene(args.validation_control_dir, stage, carter)
+        validation_scene = SafetyValidationScene(args.validation_control_dir, stage, lead.robot)
 
     SimulationManager.setup_simulation(dt=1.0 / 60.0, device="cpu")
     physics_scenes = SimulationManager.get_physics_scenes()
@@ -391,15 +549,14 @@ try:
 
     print(f"Loaded Office environment: {office_usd_path}")
     print(f"Hidden surrounding buildings: {SURROUNDING_BUILDINGS_PRIM_PATH}")
-    print(f"Added Nova Carter: {CARTER_PRIM_PATH}")
-    print(f"RTX LiDAR output motion compensation: {motion_compensation_state}")
-    print("ROS 2 LiDAR: /isaac/lidar_points [sensor_msgs/msg/PointCloud2]")
-    print("ROS 2 IMU: /isaac/imu [sensor_msgs/msg/Imu]")
-    print("ROS 2 joint states: /isaac/joint_states [sensor_msgs/msg/JointState]")
+    print(f"RTX LiDAR output motion compensation: {lidar_motion_compensation_state}")
+    print(f"ROS 2 LiDAR: {lead.topic('/isaac/lidar_points')} [sensor_msgs/msg/PointCloud2]")
+    print(f"ROS 2 IMU: {lead.topic('/isaac/imu')} [sensor_msgs/msg/Imu]")
+    print(f"ROS 2 joint states: {lead.topic('/isaac/joint_states')} [sensor_msgs/msg/JointState]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
-    print(f"ROS 2 simulator ground truth: {GROUND_TRUTH_TOPIC} [nav_msgs/msg/Odometry]")
+    print(f"ROS 2 simulator ground truth: {lead.topic(GROUND_TRUTH_TOPIC)} [nav_msgs/msg/Odometry]")
     if command_receiver is not None:
-        print("Carter command source: native ROS 2 /cmd_vel (0.5 s watchdog; keyboard disabled)")
+        print("Command source: native ROS 2 cmd_vel per robot (0.5 s watchdog; keyboard disabled)")
     if not args.headless and command_receiver is None:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
 
@@ -407,32 +564,41 @@ try:
     timeline.play()
     for _ in range(10):
         simulation_app.update()
+    verify_spawn_poses(robots)
 
     follow_camera_path = None
+    overview_camera = None
     if not args.headless:
         active_viewport = get_active_viewport()
         if active_viewport is None:
-            raise RuntimeError("Could not find the active viewport for the Carter follow camera")
-        follow_camera_path = str(active_viewport.camera_path)
-        update_follow_camera(carter, follow_camera_path)
-        print("Main viewport follows Nova Carter from behind")
+            raise RuntimeError("Could not find the active viewport for the follow camera")
+        if len(robots) > 1:
+            overview_camera = OverviewCamera(robots, active_viewport)
+            print("Main viewport: fixed top-down overview of all robots")
+        else:
+            follow_camera_path = str(active_viewport.camera_path)
+            update_follow_camera(lead, follow_camera_path)
+            print(f"Main viewport follows {lead.prim_path} from behind")
 
     if args.test:
-        start_position = carter.get_world_poses()[0].numpy()[0]
+        start_position = lead.robot.get_world_poses()[0].numpy()[0]
         for _ in range(60):
-            carter.apply_wheel_actions(
-                controller.forward(command=[0.2 * CARTER_FORWARD_SIGN, 0.0])
-            )
+            lead.drive(0.2, 0.0)
             if follow_camera_path is not None:
-                update_follow_camera(carter, follow_camera_path)
+                update_follow_camera(lead, follow_camera_path)
+            if overview_camera is not None:
+                overview_camera.update()
             simulation_app.update()
-        carter.apply_wheel_actions(controller.forward(command=[0.0, 0.0]))
-        end_position = carter.get_world_poses()[0].numpy()[0]
+        lead.drive(0.0, 0.0)
+        end_position = lead.robot.get_world_poses()[0].numpy()[0]
         displacement = end_position - start_position
         distance_moved = float((displacement**2).sum() ** 0.5)
         if distance_moved < 0.01:
             raise RuntimeError(f"Nova Carter jog test failed; moved only {distance_moved:.4f} m")
-        if displacement[0] >= -0.01:
+        forward = rotate_vector_by_quaternion(
+            [lead.forward_sign, 0.0, 0.0], lead.robot.get_world_poses()[1].numpy()[0],
+        )
+        if float(displacement[0] * forward[0] + displacement[1] * forward[1]) <= 0.01:
             raise RuntimeError(
                 f"Nova Carter forward jog moved in the wrong direction: displacement={displacement.tolist()}"
             )
@@ -449,26 +615,28 @@ try:
         while simulation_app.is_running():
             if validation_scene is not None:
                 validation_scene.update(SimulationManager.get_simulation_time())
-            if command_receiver is not None:
-                try:
-                    linear, angular = command_receiver.command()
-                except ValueError as error:
-                    carb.log_error(f"Rejected simulator drive command: {error}")
-                    linear, angular = 0.0, 0.0
-                command = [linear * CARTER_FORWARD_SIGN, angular]
-            else:
-                command = (
-                    [0.2 * CARTER_FORWARD_SIGN, 0.15]
-                    if args.auto_jog
-                    else get_jog_command()
-                )
-            carter.apply_wheel_actions(controller.forward(command=command))
+            for sim_robot in robots:
+                if sim_robot.receiver is not None:
+                    try:
+                        command = sim_robot.receiver.command()
+                    except ValueError as error:
+                        carb.log_error(f"Rejected {sim_robot.label} drive command: {error}")
+                        command = (0.0, 0.0)
+                elif args.auto_jog:
+                    command = (0.2, 0.15)
+                else:
+                    # Keyboard drives the followed (first) robot only.
+                    command = get_jog_command() if sim_robot is lead else (0.0, 0.0)
+                sim_robot.drive(*command)
             if follow_camera_path is not None:
-                update_follow_camera(carter, follow_camera_path)
+                update_follow_camera(lead, follow_camera_path)
+            if overview_camera is not None:
+                overview_camera.update()
             simulation_app.update()
 finally:
-    if command_receiver is not None:
-        carter.apply_wheel_actions(controller.forward(command=[0.0, 0.0]))
+    for sim_robot in robots:
+        if sim_robot.receiver is not None and sim_robot.robot is not None:
+            sim_robot.drive(0.0, 0.0)
     if input_interface is not None and keyboard_subscription is not None:
         input_interface.unsubscribe_to_keyboard_events(keyboard, keyboard_subscription)
     timeline = omni.timeline.get_timeline_interface()

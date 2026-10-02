@@ -93,6 +93,13 @@ class XYZGlobalLocalization(upstream_localization_class()):
         self.T_map_to_odom = result.transformation
         self.publish_odom(result.transformation)
 
+    def cb_initialize_pose(self, msg):
+        # Upstream tries the guess once and otherwise retries from identity, so a
+        # robot away from the map origin (or a guess sent before a usable scan)
+        # never localizes. Keep the guess as the retry seed until ICP accepts.
+        self.T_map_to_odom = self.pose_to_mat(msg.pose.pose)
+        super().cb_initialize_pose(msg)
+
     def publish_odom(self, transform):
         message = Odometry()
         message.header.stamp = self.get_clock().now().to_msg()

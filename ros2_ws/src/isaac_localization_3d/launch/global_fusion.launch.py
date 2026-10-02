@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 
 import yaml
@@ -10,11 +11,58 @@ from launch.actions import (
     DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, RegisterEventHandler,
     SetLaunchConfiguration,
 )
-from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.events import Shutdown
-from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node, PushRosNamespace
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from robot_fleet import (  # noqa: E402
+    DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, load_robot_profile, namespaced_topic,
+    normalize_namespace,
+)
+from robot_namespace import (  # noqa: E402
+    RobotParameterFile, load_parameters, namespaced_rviz_file, robot_parameter_file,
+)
+
+
+def robot_namespace(context):
+    return normalize_namespace(LaunchConfiguration("namespace", default="").perform(context))
+
+
+def robot_type(context):
+    return LaunchConfiguration("robot_type", default=DEFAULT_ROBOT_TYPE).perform(context)
+
+
+def push_robot_namespace(context):
+    """Run this robot under /<namespace> with its own /<namespace>/tf tree."""
+    namespace = robot_namespace(context)
+    load_robot_profile(robot_type(context))
+    if not namespace:
+        return []
+    # Copy rather than append so an enclosing scope's remap list is not mutated.
+    context.launch_configurations["ros_remaps"] = [
+        *context.launch_configurations.get("ros_remaps", []),
+        ("/tf", f"/{namespace}/tf"), ("/tf_static", f"/{namespace}/tf_static"),
+    ]
+    return [PushRosNamespace(namespace)]
+
+
+def sensor_transforms(context):
+    frames = load_robot_profile(robot_type(context))["sensor_frames"]
+    return [
+        Node(
+            package="tf2_ros", executable="static_transform_publisher",
+            name=f"base_to_{frame.removesuffix('_link')}_tf",
+            arguments=[
+                *(item for key in ("x", "y", "z", "roll", "pitch", "yaw")
+                  for item in (f"--{key}", str(float(frames[frame][key])))),
+                "--frame-id", "base_link", "--child-frame-id", frame,
+            ],
+            parameters=[{"use_sim_time": True}],
+        )
+        for frame in ("imu_link", "lidar_link")
+    ]
 
 
 def configure_filters(context, observation_config):
@@ -23,9 +71,12 @@ def configure_filters(context, observation_config):
         return [SetLaunchConfiguration("costmap_config", observation_config)]
     if LaunchConfiguration("costmaps").perform(context).lower() != "true":
         raise ValueError("Costmap filter editor requires costmaps:=true")
-    with open(observation_config, encoding="utf-8") as stream:
-        config = yaml.safe_load(stream)
-    mask_topics = [f"/costmap_filters/{kind}_mask" for kind in ("keepout", "speed")]
+    config = load_parameters(observation_config, robot_type(context))
+    namespace = robot_namespace(context)
+    mask_topics = [
+        namespaced_topic(namespace, f"/costmap_filters/{kind}_mask")
+        for kind in ("keepout", "speed")
+    ]
     for name in ("global_costmap", "local_costmap"):
         parameters = config[name][name]["ros__parameters"]
         parameters["filters"] = []
@@ -92,14 +143,13 @@ def configure_surround(context, collision_config, navigation_config, adaptive_co
     if any(LaunchConfiguration(name).perform(context).lower() != "true"
            for name in ("navigate", "costmaps", "obstacle_cloud")):
         raise ValueError("Adaptive surround requires navigation, costmaps and obstacle cloud")
-    with open(collision_config, encoding="utf-8") as stream:
-        collision = yaml.safe_load(stream)
-    with open(navigation_config, encoding="utf-8") as stream:
-        navigation = yaml.safe_load(stream)
-    with open(adaptive_config, encoding="utf-8") as stream:
-        adaptive = yaml.safe_load(stream)["adaptive_surround"]["ros__parameters"]
-    with open(LaunchConfiguration("costmap_config").perform(context), encoding="utf-8") as stream:
-        local = yaml.safe_load(stream)["local_costmap"]["local_costmap"]["ros__parameters"]
+    kind = robot_type(context)
+    collision = load_parameters(collision_config, kind)
+    navigation = load_parameters(navigation_config, kind)
+    adaptive = load_parameters(adaptive_config, kind)["adaptive_surround"]["ros__parameters"]
+    local = load_parameters(
+        LaunchConfiguration("costmap_config").perform(context), kind,
+    )["local_costmap"]["local_costmap"]["ros__parameters"]
     monitor = collision["collision_monitor"]["ros__parameters"]
     monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_adaptive"
     monitor["PolygonSurround"]["visualize"] = False
@@ -130,7 +180,9 @@ def configure_surround(context, collision_config, navigation_config, adaptive_co
     selector = Node(
         package="isaac_localization_3d", executable="adaptive_surround.py",
         name="adaptive_surround", output="screen",
-        parameters=[adaptive_config, {
+        parameters=[RobotParameterFile(
+            adaptive_config, LaunchConfiguration("namespace"), LaunchConfiguration("robot_type"),
+        ), {
             "use_sim_time": True, "full_points": monitor["PolygonSurround"]["points"],
             "physical_footprint": [
                 float(value) for point in json.loads(local["footprint"]) for value in point
@@ -153,64 +205,298 @@ def configure_surround(context, collision_config, navigation_config, adaptive_co
     ]
 
 
+def robot_nodes(context, package, nav):
+    """All per-robot nodes, with namespace-dependent names resolved to strings."""
+    namespace = robot_namespace(context)
+    kind = robot_type(context)
+
+    def value(name):
+        return LaunchConfiguration(name).perform(context)
+
+    def enabled(name):
+        return value(name).lower() == "true"
+
+    def topic(name):
+        return namespaced_topic(namespace, name)
+
+    def config(path):
+        return robot_parameter_file(path, namespace, kind)
+
+    sim = {"use_sim_time": True}
+    obstacle_cloud = enabled("obstacle_cloud")
+    costmaps = enabled("costmaps")
+    navigate = enabled("navigate")
+    nav_parameters = [config(os.path.join(nav, "config", "local_odometry.yaml")), sim]
+    observation_config = config(value("costmap_config"))
+    navigation_config = config(value("navigation_config"))
+    collision_config = config(value("collision_config"))
+    fusion_config = config(os.path.join(package, "config", "global_fusion.yaml"))
+    upstream = [(name, topic(name)) for name in UPSTREAM_TOPICS] if namespace else []
+    actions = [
+        *sensor_transforms(context),
+        Node(
+            package="isaac_nav", executable="wheel_encoder_odometry",
+            name="wheel_encoder_odometry", output="screen", parameters=nav_parameters,
+        ),
+        Node(
+            package="isaac_nav", executable="imu_covariance_adapter",
+            name="nav_imu_adapter", output="screen", parameters=nav_parameters,
+        ),
+        Node(
+            package="robot_localization", executable="ekf_node",
+            name="local_ekf", output="screen",
+            parameters=[*nav_parameters, {"reset_on_time_jump": True}],
+            remappings=[("odometry/filtered", topic("/odometry/local"))],
+        ),
+        Node(
+            package="pointcloud_to_laserscan",
+            executable="pointcloud_to_laserscan_node",
+            name="pointcloud_to_laserscan",
+            output="screen",
+            remappings=[
+                ("cloud_in", topic(
+                    "/perception/self_filtered_points" if obstacle_cloud
+                    else "/isaac/lidar_points"
+                )),
+                ("scan", topic("/scan")),
+            ],
+            parameters=[*nav_parameters, {
+                "range_min": 0.0 if obstacle_cloud else 0.5,
+                "range_max": 20.0 if obstacle_cloud else 30.0,
+            }],
+        ),
+    ]
+    if obstacle_cloud:
+        actions.append(Node(
+            package="isaac_nav", executable="ground_obstacle_filter",
+            name="ground_obstacle_filter", output="screen",
+            parameters=[config(os.path.join(nav, "config", "ground_obstacle_filter.yaml")), sim],
+        ))
+    actions += [
+        Node(
+            package="isaac_fastlio_adapter", executable="pointcloud2_to_livox",
+            output="screen", parameters=[sim, {
+                "input_topic": topic("/isaac/lidar_points"),
+                "output_topic": topic("/livox/lidar"),
+            }],
+        ),
+        Node(
+            package="fast_lio_localization", executable="fastlio_mapping",
+            name="localization_fastlio", output="screen",
+            parameters=[
+                config(os.path.join(package, "config", "fast_lio_localization_3d.yaml")), sim
+            ],
+            remappings=upstream,
+        ),
+        Node(
+            package="isaac_localization_3d", executable="global_localization_xyz.py",
+            name="global_localization", output="screen",
+            parameters=[{
+                "use_sim_time": True,
+                "pcd_map_path": value("map_pcd"),
+                "map_voxel_size": 0.4,
+                "scan_voxel_size": 0.1,
+                "freq_localization": 0.5,
+                "localization_threshold": 0.8,
+                "fov": 6.28319,
+                "fov_far": 30,
+            }],
+            remappings=upstream,
+        ),
+        Node(
+            package="isaac_localization_3d", executable="global_pose_adapter.py",
+            name="global_pose_adapter", output="screen",
+            parameters=[fusion_config, {
+                "use_sim_time": True, "auto_initial_pose": enabled("auto_initial_pose"),
+                **{f"initial_{axis}": float(value(f"initial_{axis}"))
+                   for axis in ("x", "y", "z", "yaw")},
+            }],
+        ),
+        Node(
+            package="robot_localization", executable="ekf_node",
+            name="global_ekf", output="screen",
+            parameters=[fusion_config, sim],
+            remappings=[("odometry/filtered", topic("/odometry/global"))],
+        ),
+        Node(
+            package="isaac_localization_3d", executable="global_tf_gate.py",
+            name="global_tf_gate", output="screen", parameters=[sim],
+        ),
+        Node(
+            package="nav2_map_server", executable="map_server",
+            name="map_server", output="screen",
+            parameters=[{"yaml_filename": value("map_pgm"), "use_sim_time": True}],
+        ),
+        Node(
+            package="nav2_lifecycle_manager", executable="lifecycle_manager",
+            name="lifecycle_manager_fusion_map", output="screen",
+            parameters=[{
+                "use_sim_time": True, "autostart": True, "node_names": ["map_server"]
+            }],
+        ),
+    ]
+    if costmaps and not navigate:
+        actions += [
+            Node(
+                package="isaac_localization_3d", executable="costmap_observer",
+                namespace=name, name=name, output="screen",
+                parameters=[observation_config, sim],
+            )
+            for name in ("global_costmap", "local_costmap")
+        ]
+    if navigate:
+        # Nav2 publishes relative cmd_vel; recovery motions go through the same
+        # smoother, collision_monitor and cmd_vel_safety gates as the controller.
+        nav_cmd = [(topic("/cmd_vel"), topic("/nav2/cmd_vel_nav"))]
+        actions += [
+            Node(
+                package="nav2_planner", executable="planner_server",
+                name="planner_server", output="screen",
+                parameters=[navigation_config, observation_config, sim],
+            ),
+            Node(
+                package="nav2_controller", executable="controller_server",
+                name="controller_server", output="screen",
+                parameters=[navigation_config, observation_config, sim],
+                remappings=nav_cmd,
+            ),
+            Node(
+                package="nav2_behaviors", executable="behavior_server",
+                name="behavior_server", output="screen",
+                parameters=[navigation_config, sim],
+                remappings=nav_cmd,
+            ),
+            Node(
+                package="nav2_bt_navigator", executable="bt_navigator",
+                name="bt_navigator", output="screen",
+                parameters=[
+                    navigation_config,
+                    {"default_nav_to_pose_bt_xml": os.path.join(
+                        package, "config", "navigate_to_pose.xml"
+                    ), "default_nav_through_poses_bt_xml": os.path.join(
+                        package, "config", "navigate_through_poses.xml"
+                    )}, sim,
+                ],
+            ),
+            Node(
+                package="nav2_velocity_smoother", executable="velocity_smoother",
+                name="velocity_smoother", output="screen",
+                parameters=[navigation_config, sim],
+                # Smooth before the safety gates so their stops stay immediate.
+                remappings=[
+                    ("cmd_vel", topic("/nav2/cmd_vel_nav")),
+                    ("cmd_vel_smoothed", topic("/nav2/cmd_vel")),
+                ],
+            ),
+            Node(
+                package="nav2_collision_monitor", executable="collision_monitor",
+                name="collision_monitor", output="screen",
+                parameters=[collision_config, sim],
+            ),
+            Node(
+                package="isaac_localization_3d", executable="cmd_vel_safety.py",
+                name="cmd_vel_safety", output="screen", parameters=[collision_config, sim],
+                remappings=[(topic("/nav2/cmd_vel"), topic("/nav2/cmd_vel_monitored"))],
+            ),
+        ]
+    if costmaps:
+        actions += readiness_actions(namespace, navigate, value("filter_mask_topics"))
+    if enabled("rviz"):
+        actions.append(Node(
+            package="rviz2", executable="rviz2", output="screen",
+            arguments=["-d", namespaced_rviz_file(
+                os.path.join(package, "config", "global_fusion.rviz"), namespace,
+            )],
+            parameters=[sim],
+        ))
+    return actions
+
+
+def readiness_actions(namespace, navigate, filter_mask_topics):
+    # Event handlers may run outside this robot's launch scope (fleet group) or
+    # inside its pushed namespace (robot.launch.py), so their nodes get an
+    # absolute namespace and need no TF.
+    label = namespace
+    namespace = f"/{namespace}" if namespace else namespace
+    readiness = Node(
+        package="isaac_localization_3d", executable="wait_for_costmap_tf.py",
+        output="screen", parameters=[{
+            "use_sim_time": True, "filter_mask_topics": yaml.safe_load(filter_mask_topics),
+        }],
+    )
+    if navigate:
+        manager = Node(
+            package="nav2_lifecycle_manager", executable="lifecycle_manager",
+            namespace=namespace, name="lifecycle_manager_navigation", output="screen",
+            parameters=[{
+                "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
+                "node_names": [
+                    "planner_server", "controller_server", "behavior_server", "bt_navigator",
+                    "velocity_smoother", "collision_monitor",
+                ],
+            }],
+        )
+        navigation_readiness = Node(
+            package="isaac_localization_3d", executable="wait_for_navigation.py",
+            namespace=namespace, output="screen", parameters=[{"use_sim_time": True}],
+        )
+        started = [manager, navigation_readiness]
+    else:
+        started = [Node(
+            package="nav2_lifecycle_manager", executable="lifecycle_manager",
+            namespace=namespace, name="lifecycle_manager_fusion_costmaps", output="screen",
+            # Standalone Costmap2DROS activates without creating a Nav2 lifecycle bond.
+            parameters=[{
+                "use_sim_time": True, "autostart": True,
+                "bond_timeout": 0.0,
+                "node_names": [
+                    "local_costmap/local_costmap",
+                    "global_costmap/global_costmap",
+                ],
+            }],
+        )]
+    label = f" [{label}]" if label else ""
+    actions = [
+        readiness,
+        RegisterEventHandler(OnProcessExit(
+            target_action=readiness,
+            on_exit=lambda event, context: started if event.returncode == 0 else [
+                LogInfo(msg=f"ERROR{label}: Costmaps not started: map or localization TF unavailable"),
+                EmitEvent(event=Shutdown(reason="Costmap readiness failed")),
+            ],
+        )),
+    ]
+    if navigate:
+        actions.append(RegisterEventHandler(OnProcessExit(
+            target_action=navigation_readiness,
+            on_exit=lambda event, _: [] if event.returncode == 0 else [
+                LogInfo(msg=f"ERROR{label}: Nav2 navigation stack failed to activate"),
+                EmitEvent(event=Shutdown(reason="Navigation activation failed")),
+            ],
+        )))
+    return actions
+
+
 def generate_launch_description():
     package = get_package_share_directory("isaac_localization_3d")
     nav = get_package_share_directory("isaac_nav")
-    map_pcd = LaunchConfiguration("map_pcd")
-    map_pgm = LaunchConfiguration("map_pgm")
-    rviz = LaunchConfiguration("rviz")
-    auto_initial_pose = LaunchConfiguration("auto_initial_pose")
-    obstacle_cloud = LaunchConfiguration("obstacle_cloud")
-    costmaps = LaunchConfiguration("costmaps")
-    navigate = LaunchConfiguration("navigate")
-    sim = {"use_sim_time": True}
-    nav_parameters = [os.path.join(nav, "config", "local_odometry.yaml"), sim]
-    observation_config = LaunchConfiguration("costmap_config")
-    navigation_config = LaunchConfiguration("navigation_config")
-    fusion_config = os.path.join(package, "config", "global_fusion.yaml")
-    collision_config = LaunchConfiguration("collision_config")
-    observing = IfCondition(PythonExpression([
-        "'", costmaps, "' == 'true' and '", navigate, "' == 'false'",
-    ]))
-    readiness = Node(
-        condition=IfCondition(costmaps),
-        package="isaac_localization_3d", executable="wait_for_costmap_tf.py",
-        output="screen", parameters=[sim, {
-            "filter_mask_topics": LaunchConfiguration("filter_mask_topics"),
-        }],
-    )
-    costmap_manager = Node(
-        package="nav2_lifecycle_manager", executable="lifecycle_manager",
-        name="lifecycle_manager_fusion_costmaps", output="screen",
-        # Standalone Costmap2DROS activates without creating a Nav2 lifecycle bond.
-        parameters=[{
-            "use_sim_time": True, "autostart": True,
-            "bond_timeout": 0.0,
-            "node_names": [
-                "local_costmap/local_costmap",
-                "global_costmap/global_costmap",
-            ],
-        }],
-    )
-    navigation_manager = Node(
-        package="nav2_lifecycle_manager", executable="lifecycle_manager",
-        name="lifecycle_manager_navigation", output="screen",
-        parameters=[{
-            "use_sim_time": True, "autostart": True, "bond_timeout": 10.0,
-            "node_names": [
-                "planner_server", "controller_server", "behavior_server", "bt_navigator",
-                "velocity_smoother", "collision_monitor",
-            ],
-        }],
-    )
-    navigation_readiness = Node(
-        package="isaac_localization_3d", executable="wait_for_navigation.py",
-        output="screen", parameters=[sim],
-    )
     return LaunchDescription(
         [
             DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
             DeclareLaunchArgument("map_pgm", description="Absolute Nav2 map YAML path"),
+            DeclareLaunchArgument(
+                "namespace", default_value="",
+                description="Robot namespace; also isolates TF on /<namespace>/tf",
+            ),
+            DeclareLaunchArgument(
+                "robot_type", default_value=DEFAULT_ROBOT_TYPE,
+                description="Profile in config/robots/<robot_type>.yaml",
+            ),
+            *(DeclareLaunchArgument(
+                f"initial_{axis}", default_value="0.0",
+                description="auto_initial_pose map -> camera_init guess; "
+                            "robot.launch.py derives it from the spawn",
+            ) for axis in ("x", "y", "z", "yaw")),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
@@ -225,6 +511,7 @@ def generate_launch_description():
                 default_value=os.path.join(os.getcwd(), "maps/costmap_filters/editor.json"),
                 description="Persistent JSON zone state for the RViz editor",
             ),
+            OpaqueFunction(function=push_robot_namespace),
             SetLaunchConfiguration("filter_mask_topics", '[""]'),
             OpaqueFunction(
                 function=configure_filters,
@@ -236,231 +523,6 @@ def generate_launch_description():
                     "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
                 )],
             ),
-            Node(
-                package="tf2_ros",
-                executable="static_transform_publisher",
-                name="base_to_imu_tf",
-                arguments=[
-                    "--x", "0.213", "--y", "-0.009", "--z", "0.526",
-                    "--roll", "0", "--pitch", "0", "--yaw", "3.141592654",
-                    "--frame-id", "base_link", "--child-frame-id", "imu_link",
-                ],
-                parameters=[sim],
-            ),
-            Node(
-                package="tf2_ros",
-                executable="static_transform_publisher",
-                name="base_to_lidar_tf",
-                arguments=[
-                    "--x", "0.213", "--y", "-0.009", "--z", "0.526",
-                    "--roll", "0", "--pitch", "0", "--yaw", "3.141592654",
-                    "--frame-id", "base_link", "--child-frame-id", "lidar_link",
-                ],
-                parameters=[sim],
-            ),
-            Node(
-                package="isaac_nav", executable="wheel_encoder_odometry",
-                name="wheel_encoder_odometry", output="screen", parameters=nav_parameters,
-            ),
-            Node(
-                package="isaac_nav", executable="imu_covariance_adapter",
-                name="nav_imu_adapter", output="screen", parameters=nav_parameters,
-            ),
-            Node(
-                package="robot_localization", executable="ekf_node",
-                name="local_ekf", output="screen",
-                parameters=[*nav_parameters, {"reset_on_time_jump": True}],
-                remappings=[("odometry/filtered", "/odometry/local")],
-            ),
-            Node(
-                package="pointcloud_to_laserscan",
-                executable="pointcloud_to_laserscan_node",
-                name="pointcloud_to_laserscan",
-                output="screen",
-                remappings=[
-                    ("cloud_in", PythonExpression([
-                        "'/perception/self_filtered_points' if '", obstacle_cloud,
-                        "' == 'true' else '/isaac/lidar_points'",
-                    ])),
-                    ("scan", "/scan"),
-                ],
-                parameters=[*nav_parameters, {
-                    "range_min": PythonExpression([
-                        "0.0 if '", obstacle_cloud, "' == 'true' else 0.5",
-                    ]),
-                    "range_max": PythonExpression([
-                        "20.0 if '", obstacle_cloud, "' == 'true' else 30.0",
-                    ]),
-                }],
-            ),
-            Node(
-                condition=IfCondition(obstacle_cloud),
-                package="isaac_nav",
-                executable="ground_obstacle_filter",
-                name="ground_obstacle_filter",
-                output="screen",
-                parameters=[
-                    os.path.join(nav, "config", "ground_obstacle_filter.yaml"), sim
-                ],
-            ),
-            Node(
-                package="isaac_fastlio_adapter", executable="pointcloud2_to_livox",
-                output="screen", parameters=[sim],
-            ),
-            Node(
-                package="fast_lio_localization", executable="fastlio_mapping",
-                name="localization_fastlio", output="screen",
-                parameters=[
-                    os.path.join(package, "config", "fast_lio_localization_3d.yaml"), sim
-                ],
-            ),
-            Node(
-                package="isaac_localization_3d", executable="global_localization_xyz.py",
-                name="global_localization", output="screen",
-                parameters=[{
-                    "use_sim_time": True,
-                    "pcd_map_path": map_pcd,
-                    "map_voxel_size": 0.4,
-                    "scan_voxel_size": 0.1,
-                    "freq_localization": 0.5,
-                    "localization_threshold": 0.8,
-                    "fov": 6.28319,
-                    "fov_far": 30,
-                }],
-            ),
-            Node(
-                package="isaac_localization_3d", executable="global_pose_adapter.py",
-                name="global_pose_adapter", output="screen",
-                parameters=[
-                    fusion_config,
-                    {"use_sim_time": True, "auto_initial_pose": auto_initial_pose},
-                ],
-            ),
-            Node(
-                package="robot_localization", executable="ekf_node",
-                name="global_ekf", output="screen",
-                parameters=[fusion_config, sim],
-                remappings=[("odometry/filtered", "/odometry/global")],
-            ),
-            Node(
-                package="isaac_localization_3d", executable="global_tf_gate.py",
-                name="global_tf_gate", output="screen", parameters=[sim],
-            ),
-            Node(
-                package="nav2_map_server", executable="map_server",
-                name="map_server", output="screen",
-                parameters=[{"yaml_filename": map_pgm, "use_sim_time": True}],
-            ),
-            Node(
-                package="nav2_lifecycle_manager", executable="lifecycle_manager",
-                name="lifecycle_manager_fusion_map", output="screen",
-                parameters=[{
-                    "use_sim_time": True, "autostart": True, "node_names": ["map_server"]
-                }],
-            ),
-            Node(
-                condition=observing,
-                package="isaac_localization_3d", executable="costmap_observer",
-                namespace="global_costmap", name="global_costmap",
-                output="screen",
-                parameters=[
-                    observation_config, sim
-                ],
-            ),
-            Node(
-                condition=observing,
-                package="isaac_localization_3d", executable="costmap_observer",
-                namespace="local_costmap", name="local_costmap",
-                output="screen",
-                parameters=[
-                    observation_config, sim
-                ],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_planner", executable="planner_server",
-                name="planner_server", output="screen",
-                parameters=[navigation_config, observation_config, sim],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_controller", executable="controller_server",
-                name="controller_server", output="screen",
-                parameters=[navigation_config, observation_config, sim],
-                remappings=[("/cmd_vel", "/nav2/cmd_vel_nav")],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_behaviors", executable="behavior_server",
-                name="behavior_server", output="screen",
-                parameters=[navigation_config, sim],
-                # Recovery motions go through the same smoother, collision_monitor
-                # and cmd_vel_safety gates as the controller.
-                remappings=[("/cmd_vel", "/nav2/cmd_vel_nav")],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_bt_navigator", executable="bt_navigator",
-                name="bt_navigator", output="screen",
-                parameters=[
-                    navigation_config,
-                    {"default_nav_to_pose_bt_xml": os.path.join(
-                        package, "config", "navigate_to_pose.xml"
-                    ), "default_nav_through_poses_bt_xml": os.path.join(
-                        package, "config", "navigate_through_poses.xml"
-                    )}, sim,
-                ],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_velocity_smoother", executable="velocity_smoother",
-                name="velocity_smoother", output="screen",
-                parameters=[navigation_config, sim],
-                # Smooth before the safety gates so their stops stay immediate.
-                remappings=[
-                    ("cmd_vel", "/nav2/cmd_vel_nav"), ("cmd_vel_smoothed", "/nav2/cmd_vel"),
-                ],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="nav2_collision_monitor", executable="collision_monitor",
-                name="collision_monitor", output="screen",
-                parameters=[collision_config, sim],
-            ),
-            Node(
-                condition=IfCondition(navigate),
-                package="isaac_localization_3d", executable="cmd_vel_safety.py",
-                name="cmd_vel_safety", output="screen", parameters=[collision_config, sim],
-                remappings=[("/nav2/cmd_vel", "/nav2/cmd_vel_monitored")],
-            ),
-            readiness,
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=readiness,
-                    on_exit=lambda event, context: (
-                        ([navigation_manager, navigation_readiness]
-                         if navigate.perform(context).lower() == "true"
-                         else [costmap_manager]) if event.returncode == 0 else [
-                            LogInfo(msg="ERROR: Costmaps not started: map or localization TF unavailable"),
-                            EmitEvent(event=Shutdown(reason="Costmap readiness failed")),
-                        ]
-                    ),
-                )
-            ),
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=navigation_readiness,
-                    on_exit=lambda event, _: [] if event.returncode == 0 else [
-                        LogInfo(msg="ERROR: Nav2 navigation stack failed to activate"),
-                        EmitEvent(event=Shutdown(reason="Navigation activation failed")),
-                    ],
-                )
-            ),
-            Node(
-                condition=IfCondition(rviz), package="rviz2", executable="rviz2",
-                output="screen",
-                arguments=["-d", os.path.join(package, "config", "global_fusion.rviz")],
-                parameters=[sim],
-            ),
+            OpaqueFunction(function=robot_nodes, args=[package, nav]),
         ]
     )

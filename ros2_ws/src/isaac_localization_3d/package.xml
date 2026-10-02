@@ -30,6 +30,7 @@
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>interactive_markers</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
   <depend>nav2_costmap_2d</depend>

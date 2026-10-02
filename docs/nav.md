@@ -417,5 +417,5 @@ flowchart LR
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物。
 - 已支援可選 Keepout 禁行區與 Speed 限速區，使用 RViz 動態標註及 JSON 保存／還原。Binary 開關區未實作；Speed 不涵蓋 recovery、原地旋轉或直接速度命令，不能作為所有控制來源共用的硬性限速。
 - global 與 local footprint 都是量測車體的占用模型，不含 Surround。規劃與執行尚未實作完整的保護區朝向／轉動掃掠檢查；較寬通道仍可能因偏移或轉向讓牆面進入 `PolygonSurround`，阻擋修正動作。動態橫穿仍曾出現車體包絡與障礙物重疊，不能只因侵入當下速度接近零就認定煞停已驗證安全；需確認侵入前的持續停穩、最終零速命令與障礙物運動證據。目前沒有移動物體軌跡預測，停住機器人也不保證移動物體不會侵入它；驗證使用保守包絡，並非獨立確認的 PhysX 接觸。斜坡、複雜人流與完整動態清除行為仍需驗證。
-- topic 與 TF frame 都是固定名稱，還不支援多台機器人（namespace）。
+- 多車：以 namespace 與每車獨立的 `/NAME/tf` 支援，一車一 container，見 [multi_robot.md](multi_robot.md)；車輛之間尚無協調。
 - 真實車輛導航安全尚未驗證。Office 模擬已包含實體箱子煞停與感測故障注入；使用時仍先在 RViz 確認 costmap 與規劃路徑。

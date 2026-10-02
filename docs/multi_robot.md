@@ -1,0 +1,112 @@
+# 多車導航
+
+一個腳本啟動 Isaac Sim、依參數生成 N 台車，每台車一個獨立的導航 container（與部署到真車時一車一台電腦相同），再加上一個顯示全部車輛的 RViz。
+
+```bash
+./run_multi_nav.sh                                   # 預設 carter1@0,0 與 carter2@3.5,0
+./run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
+./run_multi_nav.sh --headless --no-rviz              # 無 GUI
+./run_multi_nav.sh --help
+```
+
+車輛規格：`NAME[:TYPE]@X,Y[,YAW]`
+
+- `NAME`：namespace，英數字與底線，不分大小寫不可重複（同時作為 Compose project 名稱）。
+- `TYPE`：車種，對應 `config/robots/TYPE.yaml`，預設 `nova_carter`。
+- `X,Y,YAW`：Isaac world 位置（m）與 robot prim 航向（rad）。Office 地圖與 Isaac world 對齊，所以也是地圖座標。
+
+按 Ctrl+C 會停止 Isaac 並移除所有 container。
+
+多於一台車時，Isaac viewport 固定在所有生成點中心的正上方俯視（螢幕右方為 +X、上方為 +Y，與 RViz 一致），不跟隨任何車；高度依生成點範圍加 5 m 邊界自動計算，並裁切 2.6 m 以上的天花板。之後仍可用滑鼠自由移動視角（移動後會恢復預設裁切，拉近不會被裁掉）。單車時維持跟車視角。
+
+## 架構
+
+```mermaid
+flowchart LR
+  subgraph Isaac[Isaac Sim standalone.py]
+    R1[carter1] & R2[carter2]
+  end
+  subgraph C1[container isaacsim-fastlio2-carter1]
+    S1[FAST-LIO2 + 定位 + Nav2<br/>/carter1/*, /carter1/tf]
+  end
+  subgraph C2[container isaacsim-fastlio2-carter2]
+    S2[FAST-LIO2 + 定位 + Nav2<br/>/carter2/*, /carter2/tf]
+  end
+  subgraph F[container isaacsim-fastlio2-fleet-rviz]
+    Relay[fleet_relay] --> RViz
+  end
+  R1 <--> S1
+  R2 <--> S2
+  S1 & S2 --> Relay
+```
+
+- **一車一 container**：`robot.launch.py robot:=NAME[:TYPE]@X,Y,YAW` 啟動單車完整堆疊（`global_fusion.launch.py`），所有 topic、action、service 都在 `/NAME` 下。
+- **每車獨立 TF 樹**：TF 重映射到 `/NAME/tf`、`/NAME/tf_static`，frame 名稱不變（`map`、`odom`、`base_link`…）。因此各車設定檔、Nav2 參數與單車版本完全相同，真車部署時不需改 frame。
+- **Fleet RViz**：`fleet_rviz.launch.py robots:="carter1;carter2"` 執行 `fleet_relay.py`：
+  - `/NAME/tf(_static)` → `/fleet/tf(_static)`，frame 加上 `NAME/` 前綴（`map` 除外，所有車共用）。
+  - 機體座標系的 topic（`scan`、`perception/obstacles`、collision monitor polygon）轉發到 `/fleet/NAME/...` 並改寫 `frame_id`。
+  - 位於 `map` 座標系的 topic（路徑、global footprint、`odometry/global`、global costmap、地圖）RViz 直接訂閱 `/NAME/...`，不需轉發。
+  - RViz 設定由 `robot_fleet.fleet_rviz()` 產生：每車一個顏色的 display group，工具列每車一組「2D Pose Estimate／2D Goal Pose」（依 `--robot` 順序），分別發佈到 `/NAME/initialpose` 與 `/NAME/goal_pose`。
+- Isaac 端：`standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic。`/clock` 只由第一台車發佈；`/diagnostics` 為全域共用。
+
+## 送導航目標
+
+使用 fleet RViz 工具列，或：
+
+```bash
+ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 3.5, y: -2.5}, orientation: {w: 1.0}}}}"
+```
+
+## 初始位姿
+
+預設以生成位姿自動設定初始位姿（`--manual-initial-pose` 則改由 RViz 設定）。地圖是從參考車（`carter1` 在原點）的 body frame 錄製的，所以 `robot_fleet.initial_pose()` 將每台車的 body 位姿（robot prim 加上 profile 的 `sensor_frames`）轉換到參考車 body frame，作為 `map → camera_init` 的猜測值，再由 ICP 修正。
+
+上游 FAST_LIO_LOCALIZATION 的 `cb_initialize_pose` 只用猜測值做一次 ICP；若失敗，之後的重試會從 identity 開始而永遠收斂不了（遠離原點的車容易發生）。`global_localization_xyz.py` 覆寫此函式，先把猜測值寫入 `T_map_to_odom`，讓重試都從猜測值開始。
+
+## 部署到真車
+
+每台車的電腦執行與模擬相同的 launch，只換 namespace、車種與初始位姿：
+
+```bash
+ros2 launch isaac_localization_3d global_fusion.launch.py \
+  namespace:=carter1 robot_type:=nova_carter \
+  initial_x:=0.0 initial_y:=0.0 initial_z:=0.0 initial_yaw:=0.0 \
+  map_pcd:=... map_pgm:=...
+```
+
+或使用 `robot.launch.py robot:=carter1@X,Y,YAW`（從 Isaac world 生成位姿換算初始位姿）。監控端執行 `fleet_rviz.launch.py robots:="carter1;carter2"`。各車需使用相同的 `ROS_DOMAIN_ID`，且感測驅動需發佈到 `/NAME/...` 下對應的 topic。
+
+## 新增車種
+
+新增 `ros2_ws/src/isaac_localization_3d/config/robots/<type>.yaml`，鍵值與 `nova_carter.yaml` 相同：
+
+| 鍵 | 用途 |
+| :-- | :-- |
+| `simulation.*` | Isaac 資產、articulation／LiDAR／IMU prim、輪子關節、輪徑、輪距、前進方向、生成高度 |
+| `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF |
+| `parameter_overrides` | 深度合併到含有該節點鍵的所有參數檔，例如 footprint、collision monitor 區域、self filter、輪速里程計參數 |
+
+接著以 `--robot NAME:<type>@X,Y` 使用。目前導航參數是為 Nova Carter 調校的，其他車種需透過 `parameter_overrides` 調整並自行驗證。
+
+## 驗證
+
+```bash
+./tests/run_multi_robot_navigation.sh
+```
+
+以 headless Isaac 生成 carter1@(0,0,0) 與 carter2@(3.5,0,π/2)，每車一個 container，加上 fleet relay container。驗證項目：
+
+1. 兩車自動初始化後的定位誤差（對照 Isaac ground truth）。
+2. `/fleet/tf` 含每車 `map → NAME/odom → NAME/base_link`。
+3. 兩車同時導航到各自目標並成功。
+
+成功時輸出 `MULTI_ROBOT_NAVIGATION PASSED`，證據存於 `ros2_ws/log/multi_robot_navigation/<時間>/`（`probe.log`、`results.json`、`isaac.log`、`ros_NAME.log`、`fleet_relay.log`）。
+
+## 目前限制
+
+- 車輛之間沒有協調：彼此只當作 LiDAR 看到的障礙物，沒有路權、預約或交通管理；RPP 不會主動繞開移動中的障礙（含其他車），兩車對向時可能互相卡住（Surround 區域）。
+- 鍵盤操控只控制第一台車（多車時 `run_multi_nav.sh` 使用 ROS `cmd_vel`，鍵盤已停用）。
+- `filter_editor`（Keepout／Speed 標註）與單車的 validation 場景仍只支援單車。
+- Fleet RViz 不顯示 local costmap（位於 `odom` 且 Nav2 只送增量更新）。
+- 兩台以上車輛時模擬速度約為即時的 0.8 倍，車數增加後的效能未驗證。

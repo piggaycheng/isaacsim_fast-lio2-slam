@@ -34,19 +34,19 @@ class CostmapFilterEditor(Node):
         self.draft = []
         self.editing = None
         self.server = InteractiveMarkerServer(self, "costmap_filter_editor")
-        self.status = self.create_publisher(String, "/costmap_filters/editor_status", 10)
+        self.status = self.create_publisher(String, "costmap_filters/editor_status", 10)
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
         self.mask_publishers = {
-            kind: self.create_publisher(OccupancyGrid, f"/costmap_filters/{kind}_mask", qos)
+            kind: self.create_publisher(OccupancyGrid, f"costmap_filters/{kind}_mask", qos)
             for kind in ("keepout", "speed")
         }
         self.info_publishers = {
-            kind: self.create_publisher(CostmapFilterInfo, f"/costmap_filters/{kind}_info", qos)
+            kind: self.create_publisher(CostmapFilterInfo, f"costmap_filters/{kind}_info", qos)
             for kind in ("keepout", "speed")
         }
-        self.create_subscription(OccupancyGrid, "/map", self.on_map, qos)
-        self.create_subscription(PointStamped, "/clicked_point", self.on_point, 10)
+        self.create_subscription(OccupancyGrid, "map", self.on_map, qos)
+        self.create_subscription(PointStamped, "clicked_point", self.on_point, 10)
         self.menu = MenuHandler()
         self.menu.insert("Apply draft: Keepout", callback=lambda feedback: self.apply("keepout"))
         speed_menu = self.menu.insert("Apply draft: Speed")
@@ -145,7 +145,7 @@ class CostmapFilterEditor(Node):
             info = CostmapFilterInfo()
             info.header = message.header
             info.type = 0 if kind == "keepout" else 1
-            info.filter_mask_topic = f"/costmap_filters/{kind}_mask"
+            info.filter_mask_topic = self.mask_publishers[kind].topic_name
             info.base, info.multiplier = 0.0, 1.0
             self.info_publishers[kind].publish(info)
 

@@ -70,6 +70,13 @@ class GlobalPoseAdapter(Node):
     def __init__(self):
         super().__init__("global_pose_adapter")
         self.auto_initial_pose = self.declare_parameter("auto_initial_pose", False).value
+        # map -> camera_init guess (x, y, z, yaw) sent as the automatic initial pose.
+        self.initial_pose = tuple(
+            float(self.declare_parameter(f"initial_{name}", 0.0).value)
+            for name in ("x", "y", "z", "yaw")
+        )
+        if not all(math.isfinite(value) for value in self.initial_pose):
+            raise ValueError("initial_x, initial_y, initial_z and initial_yaw must be finite")
         self.upstream_node_name = self.declare_parameter(
             "upstream_node_name", "global_localization"
         ).value
@@ -115,18 +122,18 @@ class GlobalPoseAdapter(Node):
         self.initial_pose_received = False
         self.warned = set()
         self.pose_publisher = self.create_publisher(
-            PoseWithCovarianceStamped, "/localization_3d/global_pose", 10
+            PoseWithCovarianceStamped, "localization_3d/global_pose", 10
         )
         self.accepted_publisher = self.create_publisher(
-            Header, "/localization_3d/accepted_correction", 10
+            Header, "localization_3d/accepted_correction", 10
         )
         self.initial_pose_publisher = self.create_publisher(
-            PoseWithCovarianceStamped, "/initialpose", 10
+            PoseWithCovarianceStamped, "initialpose", 10
         )
-        self.create_subscription(PoseWithCovarianceStamped, "/initialpose", self.on_initial_pose, 10)
-        self.create_subscription(Odometry, "/Odometry", self.on_odometry, 10)
-        self.create_subscription(PointCloud2, "/cloud_registered", self.on_scan, 10)
-        self.create_subscription(Odometry, "/map_to_odom", self.on_correction, 10)
+        self.create_subscription(PoseWithCovarianceStamped, "initialpose", self.on_initial_pose, 10)
+        self.create_subscription(Odometry, "Odometry", self.on_odometry, 10)
+        self.create_subscription(PointCloud2, "cloud_registered", self.on_scan, 10)
+        self.create_subscription(Odometry, "map_to_odom", self.on_correction, 10)
 
     def reject(self, reason):
         if reason not in self.warned:
@@ -187,16 +194,25 @@ class GlobalPoseAdapter(Node):
             and self.initial_pose_publisher.get_subscription_count() > 1
             and any(
                 endpoint.node_name == self.upstream_node_name
-                for endpoint in self.get_subscriptions_info_by_topic("/initialpose")
+                for endpoint in self.get_subscriptions_info_by_topic(
+                    self.initial_pose_publisher.topic_name
+                )
             )
         ):
+            x, y, z, yaw = self.initial_pose
             initial = PoseWithCovarianceStamped()
             initial.header.stamp = message.header.stamp
             initial.header.frame_id = "map"
-            initial.pose.pose.orientation.w = 1.0
+            initial.pose.pose.position.x = x
+            initial.pose.pose.position.y = y
+            initial.pose.pose.position.z = z
+            initial.pose.pose.orientation.z = math.sin(yaw / 2)
+            initial.pose.pose.orientation.w = math.cos(yaw / 2)
             self.initial_pose_received = True
             self.initial_pose_publisher.publish(initial)
-            self.get_logger().info("Sent Office origin initial pose to 3D localizer")
+            self.get_logger().info(
+                f"Sent spawn initial pose ({x:.2f}, {y:.2f}, {yaw:.2f}) to 3D localizer"
+            )
 
     def on_scan(self, message):
         now = self.now()

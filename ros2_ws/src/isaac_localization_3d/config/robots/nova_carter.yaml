@@ -1,0 +1,32 @@
+# Robot-type profile: Nova Carter.
+#
+# Shared by Isaac Sim (standalone.py) and the ROS launch files. The navigation
+# configs in this package were tuned for Nova Carter, so it needs no
+# parameter_overrides. Another robot type adds config/robots/<type>.yaml with
+# the same keys; see docs/multi_robot.md.
+
+simulation:
+  # Isaac asset path relative to the assets root.
+  asset: /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd
+  # Prim paths relative to the robot prim.
+  articulation: chassis_link
+  lidar: chassis_link/sensors/XT_32/PandarXT_32_10hz
+  imu: chassis_link/sensors/XT_32/PandarXT_32_10hz/fastlio_imu
+  wheel_joints: [joint_wheel_left, joint_wheel_right]
+  wheel_radius: 0.14
+  wheel_base: 0.4132
+  # The asset drives backwards for a positive DifferentialController command.
+  forward_sign: -1.0
+  spawn_height: 0.05
+
+# base_link -> sensor frames published by static_transform_publisher (m, rad).
+sensor_frames:
+  lidar_link: {x: 0.213, y: -0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 3.141592654}
+  imu_link: {x: 0.213, y: -0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 3.141592654}
+
+# Deep-merged into every parameter file that contains the node key, e.g.
+#   local_costmap: {local_costmap: {ros__parameters: {footprint: "[[...]]"}}}
+#   collision_monitor: {ros__parameters: {PolygonStop: {points: [...]}}}
+#   ground_obstacle_filter: {ros__parameters: {self_filter_bounds: [...]}}
+#   wheel_encoder_odometry: {ros__parameters: {wheel_radius: ..., wheel_base: ...}}
+parameter_overrides: {}

@@ -23,7 +23,7 @@ class CmdVelReceiver:
         ):
             self.last_command = (0.0, 0.0)
             self.last_received = None
-            raise ValueError("Invalid or excessive ROS 2 /cmd_vel")
+            raise ValueError("Invalid or excessive ROS 2 cmd_vel")
         self.last_command = (linear[0], angular[2])
         self.last_received = time.monotonic()
 
@@ -34,3 +34,11 @@ class CmdVelReceiver:
 
 
 receiver = CmdVelReceiver()
+_receivers = {"": receiver}
+
+
+def receiver_for(name=""):
+    """Per-robot receiver; the root namespace keeps the module-level receiver."""
+    if name not in _receivers:
+        _receivers[name] = CmdVelReceiver()
+    return _receivers[name]

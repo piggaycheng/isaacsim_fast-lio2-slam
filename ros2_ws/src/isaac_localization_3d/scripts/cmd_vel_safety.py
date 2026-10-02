@@ -43,24 +43,24 @@ class CmdVelSafety(Node):
         self.last_output_time = None
         self.last_command_time = None
         self.sensors_stale = None
-        self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.publisher = self.create_publisher(Twist, "cmd_vel", 10)
         self.adaptive_ack = self.create_publisher(
-            TwistStamped, "/navigation/adaptive_surround_limits_ack", 10,
+            TwistStamped, "navigation/adaptive_surround_limits_ack", 10,
         )
         self.create_subscription(
-            LaserScan, "/scan", lambda msg: self.on_sensor("scan", msg),
+            LaserScan, "scan", lambda msg: self.on_sensor("scan", msg),
             qos_profile_sensor_data,
         )
         self.create_subscription(
-            PointCloud2, "/perception/obstacles",
+            PointCloud2, "perception/obstacles",
             lambda msg: self.on_sensor("obstacles", msg), qos_profile_sensor_data,
         )
         self.create_subscription(
-            Header, "/localization_3d/accepted_correction", self.on_correction, 10
+            Header, "localization_3d/accepted_correction", self.on_correction, 10
         )
-        self.create_subscription(Bool, "/navigation/emergency_stop", self.on_stop, 10)
-        self.create_subscription(Twist, "/nav2/cmd_vel", self.on_command, 10)
-        self.create_subscription(TwistStamped, "/navigation/adaptive_surround_limits", self.on_adaptive_limits, 10)
+        self.create_subscription(Bool, "navigation/emergency_stop", self.on_stop, 10)
+        self.create_subscription(Twist, "nav2/cmd_vel", self.on_command, 10)
+        self.create_subscription(TwistStamped, "navigation/adaptive_surround_limits", self.on_adaptive_limits, 10)
         self.create_timer(0.1, self.on_watchdog)
 
     def on_sensor(self, source, message):
