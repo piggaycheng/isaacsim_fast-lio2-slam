@@ -110,6 +110,57 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 | `docker/entrypoint.sh` | 容器入口，載入 ROS 環境並執行命令，不需從主機直接啟動 |
 | `docker/ros_compose.sh` | 啟動腳本共用的 Compose helper，供其他腳本 `source` 使用 |
 
+## 3. 更換車種：footprint 與 covariance
+
+換成非 Nova Carter 的車種時，不能直接沿用 Carter 的車體尺寸、輪徑、輪距、感測器外參與 covariance。先新增 `ros2_ws/src/slam_localization_3d/config/robots/<type>.yaml`，設定 `simulation`、`sensor_frames` 與 `parameter_overrides`；多車入口可用 `--robot NAME:<type>@X,Y` 選擇新車種，設定格式見[新增車種](docs/multi_robot.md#新增車種)。
+
+| 工具 | 用途 |
+|---|---|
+| `scripts/usd_bbox.py` | 從 USD 模型量測車體 bounding box，輸出 Nav2 footprint |
+| `slam_localization_3d` 的 `covariance_drive.py` | 發布校正路線的速度指令，收集靜止、直行與旋轉樣本；**不是計算 covariance 的工具** |
+| `ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py` | 離線分析 rosbag，估計輪速、IMU 與 PCD 定位的 covariance |
+
+### 量測 footprint
+
+在主機使用 **Isaac Sim 的 Python launcher**，將下列路徑與 frame 換成新車的模型及 ROS `base_link` 對應的 USD prim：
+
+```bash
+isaac_python=/path/to/isaacsim/python.sh
+"$isaac_python" scripts/usd_bbox.py /path/to/new_robot.usd \
+  --frame base_link --yaw-deg 0 --padding 0.06
+```
+
+`--yaw-deg` 必須符合 USD frame 與 ROS `base_link` 的方向差，**不要直接套用 Carter 的 180 度**。`--padding 0.06` 只是示例，不是所有車種都適用的安全距離；`--shape hull` 可改為凸包，`--json` 可輸出完整量測結果。沒有 USD 模型的實機，需以實測尺寸或可信的車體模型建立 footprint。
+
+將輸出的 footprint 同步填入 global／local costmap（`config/observation_costmaps.yaml`），並調整 `slam_nav/config/ground_obstacle_filter.yaml` 的 `self_filter_bounds`，以及 `config/collision_monitor.yaml` 的停止／減速區域。以上相對路徑的 `config/` 位於 `slam_localization_3d`；新車種優先透過 profile 的 `parameter_overrides` 設定，避免改動其他車種的共用預設值。工具**不會自動寫入設定，也不會量測煞停距離**；修改後仍需驗證車體包絡與碰撞停止行為。
+
+### 校正 covariance（協方差）
+
+先確認新車的輪子幾何與感測器外參正確，並啟動定位、關閉 Nav2 自主導航。以下是 **ROS 容器已啟動、使用無 namespace topics** 時的範例；錄製 bag 與駕駛需在不同終端執行：
+
+```bash
+# 終端 1：錄製；校正路線完成後按 Ctrl+C 停止錄製
+docker compose exec ros /workspace/docker/entrypoint.sh \
+  ros2 bag record -o cov_bag \
+  /wheel/odom /nav/imu /Odometry /localization_3d/global_pose
+
+# 終端 2：模擬環境中的校正路線；也可改用手動駕駛收集樣本
+docker compose exec ros /workspace/docker/entrypoint.sh \
+  ros2 run slam_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
+
+# 錄製完成後，離線計算建議值；預設不修改 YAML
+docker compose run --rm ros \
+  python3 ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py cov_bag \
+  --local-config ros2_ws/src/slam_nav/config/local_odometry.yaml \
+  --fusion-config ros2_ws/src/slam_localization_3d/config/global_fusion.yaml
+```
+
+**`covariance_drive.py` 會直接發布 `/cmd_vel`，不經 Nav2 或碰撞檢查。** 實機應改用 `use_sim_time:=false`，先確認指令接到正確底盤、準備足夠淨空與急停；不要直接照模擬範例讓真車行駛。
+
+換車時，分析指令需用 `--lio-body-to-base X Y Z YAW` 指定新車的 LIO body 到 `base_link` 轉換（公尺／弧度），否則仍沿用 Carter 預設值。若有 namespace，錄製時改用該車的完整 topic，分析時透過 `--wheel-topic`、`--imu-topic`、`--lio-topic`、`--pcd-topic` 指定；駕駛節點也需 remap `/cmd_vel`。`--fusion-config` 必須反映錄製當下實際使用的 covariance floor，不能忽略 profile overrides。
+
+確認建議值後，單車設定可加 `--apply` 寫回指定 YAML；**工具不會自動更新車種 profile**，多車／多車種應將結果整理到各自的 `parameter_overrides`。重新建置並重啟後再驗證，完整流程、輸出判讀與限制見[協方差校正](docs/covariance_calibration.md)。
+
 ## 詳細文件
 
 - [ROS 工作區整合與操作手冊](ros2_ws/README.md)
@@ -117,3 +168,4 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 - [3D 定位架構](docs/3d_localization.md)
 - [導航、安全限制與驗證](docs/nav.md)
 - [多車架構、車種設定與部署](docs/multi_robot.md)
+- [更換車輛後的協方差校正](docs/covariance_calibration.md)
