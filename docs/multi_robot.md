@@ -46,12 +46,16 @@ flowchart LR
   - `/NAME/tf(_static)` → `/fleet/tf(_static)`，frame 加上 `NAME/` 前綴（`map` 除外，所有車共用）。
   - 機體座標系的 topic（`scan`、`perception/obstacles`、collision monitor polygon）轉發到 `/fleet/NAME/...` 並改寫 `frame_id`。
   - 位於 `map` 座標系的 topic（路徑、global footprint、`odometry/global`、global costmap、地圖）RViz 直接訂閱 `/NAME/...`，不需轉發。
-  - RViz 設定由 `robot_fleet.fleet_rviz()` 產生：每車一個顏色的 display group，工具列每車一組「2D Pose Estimate／2D Goal Pose」（依 `--robot` 順序），分別發佈到 `/NAME/initialpose` 與 `/NAME/goal_pose`。
+  - RViz 設定由 `robot_fleet.fleet_rviz()` 產生：每車一個顏色的 display group，加上 **Fleet Control** 選車面板及一組共用的「2D Pose Estimate／2D Goal Pose」工具。
 - Isaac 端：`standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic。`/clock` 只由第一台車發佈；`/diagnostics` 為全域共用。
 
 ## 送導航目標
 
-使用 fleet RViz 工具列，或：
+在 RViz 的 **Fleet Control** 面板，用下拉選單選擇車輛，再按 **Set navigation goal**，於地圖上按住左鍵拖曳，設定目標位置與航向。面板會顯示實際目的 topic，例如 `/carter2/goal_pose`。
+
+**Set initial pose** 用來重新設定選中車輛的定位，不是導航目標。工具列原有的 **2D Goal Pose／2D Pose Estimate** 也會同步使用目前選中的車輛，不必手動修改 topic。切車不會取消已送出的導航、不會隱藏其他車；若正在拖曳但尚未放開滑鼠，切車會中止這次未完成的操作，避免把目標送錯車。選車狀態可隨 RViz 設定保存。
+
+或直接指定車輛的 action：
 
 ```bash
 ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose \
@@ -102,6 +106,14 @@ ros2 launch isaac_localization_3d global_fusion.launch.py \
 3. 兩車同時導航到各自目標並成功。
 
 成功時輸出 `MULTI_ROBOT_NAVIGATION PASSED`，證據存於 `ros2_ws/log/multi_robot_navigation/<時間>/`（`probe.log`、`results.json`、`isaac.log`、`ros_NAME.log`、`fleet_relay.log`）。
+
+選車面板另有 GUI 整合測試（需可用的圖形顯示，先 build workspace，保留 `BUILD_TESTING`）：
+
+```bash
+./tests/run_fleet_panel.sh
+```
+
+測試會載入實際 RViz plugin、切換車輛並模擬地圖拖曳，訂閱兩車的 topic 確認目標與初始位姿不會送錯車，同時檢查拖曳途中切車、設定保存／還原與缺少車輛設定時停用面板。
 
 ## 目前限制
 

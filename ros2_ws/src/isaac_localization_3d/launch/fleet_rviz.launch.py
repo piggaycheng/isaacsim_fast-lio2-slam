@@ -2,7 +2,7 @@
 
 robots:="carter1;carter2" (names or NAME[:TYPE]@X,Y[,YAW] specs, ";"-separated). fleet_relay
 merges each /<ns>/tf into /fleet/tf as <ns>/<frame>; RViz reads that tree.
-Toolbar: one "2D Pose Estimate" + "2D Goal Pose" pair per robot, in order.
+Fleet Control panel selects the robot for the shared goal and initial-pose tools.
 """
 
 import os

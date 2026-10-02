@@ -242,7 +242,7 @@ class FleetRvizTest(unittest.TestCase):
             return [t for item in value for t in self.topics(item)]
         return []
 
-    def test_one_group_and_tool_pair_per_robot(self):
+    def test_one_group_per_robot_and_shared_tools_with_selector(self):
         config = robot_fleet.fleet_rviz(["carter1", "carter2"])
         manager = config["Visualization Manager"]
         groups = [d for d in manager["Displays"] if d["Class"] == "rviz_common/Group"]
@@ -250,8 +250,11 @@ class FleetRvizTest(unittest.TestCase):
         tool_topics = [t["Topic"]["Value"] for t in manager["Tools"] if "Topic" in t]
         self.assertEqual(tool_topics, [
             "/carter1/initialpose", "/carter1/goal_pose",
-            "/carter2/initialpose", "/carter2/goal_pose",
         ])
+        panel = next(p for p in config["Panels"]
+                     if p["Class"] == "isaac_localization_3d/FleetPanel")
+        self.assertEqual(panel["Robots"], ["carter1", "carter2"])
+        self.assertEqual(panel["Selected Robot"], "carter1")
         self.assertEqual(manager["Global Options"]["Fixed Frame"], "map")
 
     def test_robot_frame_topics_come_from_the_relay(self):

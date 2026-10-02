@@ -12,6 +12,14 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(rviz_common REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
+
+add_library(fleet_panel SHARED src/fleet_panel.cpp)
+target_link_libraries(fleet_panel Qt5::Widgets)
+ament_target_dependencies(fleet_panel rviz_common pluginlib)
+pluginlib_export_plugin_description_file(rviz_common fleet_plugins.xml)
+install(TARGETS fleet_panel LIBRARY DESTINATION lib)
 find_path(NAV2_COSTMAP_INCLUDE_DIR nav2_costmap_2d/costmap_2d_ros.hpp
   PATH_SUFFIXES include/nav2_costmap_2d REQUIRED)
 find_path(NAV2_UTIL_INCLUDE_DIR nav2_util/lifecycle_node.hpp
@@ -50,5 +58,12 @@ install(FILES scripts/xyz_cloud.py scripts/costmap_zone_geometry.py DESTINATION 
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(Qt5 REQUIRED COMPONENTS Test)
+  add_executable(test_fleet_panel test/test_fleet_panel.cpp)
+  target_link_libraries(test_fleet_panel Qt5::Widgets Qt5::Test)
+  ament_target_dependencies(test_fleet_panel rviz_common rclcpp geometry_msgs)
+endif()
 
 ament_package()

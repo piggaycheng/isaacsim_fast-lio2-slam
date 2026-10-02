@@ -266,7 +266,7 @@ def fleet_rviz(names):
     """One RViz config showing every robot; TF comes merged from fleet_relay.py.
 
     Map-frame topics are read straight from /<ns>/...; robot-frame topics from
-    the /fleet/<ns>/... relay. Each robot gets its own goal/initial-pose tools.
+    the /fleet/<ns>/... relay. A panel selects the robot for shared pose tools.
     """
     names = [normalize_namespace(name) for name in names]
     if not names or not all(names):
@@ -319,14 +319,16 @@ def fleet_rviz(names):
                                  durability="Transient Local")},
             ],
         })
-        tools += [
-            {"Class": "rviz_default_plugins/SetInitialPose",
-             "Topic": _topic(f"/{name}/initialpose")},
-            {"Class": "rviz_default_plugins/SetGoal", "Topic": _topic(f"/{name}/goal_pose")},
-        ]
+    tools += [
+        {"Class": "rviz_default_plugins/SetInitialPose",
+         "Topic": _topic(f"/{names[0]}/initialpose")},
+        {"Class": "rviz_default_plugins/SetGoal", "Topic": _topic(f"/{names[0]}/goal_pose")},
+    ]
     return {
         "Panels": [{"Class": "rviz_common/Displays", "Name": "Displays"},
-                   {"Class": "rviz_common/Tool Properties", "Name": "Tool Properties"}],
+                   {"Class": "rviz_common/Tool Properties", "Name": "Tool Properties"},
+                   {"Class": "isaac_localization_3d/FleetPanel", "Name": "Fleet Control",
+                    "Robots": names, "Selected Robot": names[0]}],
         "Visualization Manager": {
             "Class": "", "Displays": displays, "Enabled": True,
             "Global Options": {"Background Color": "48; 48; 48", "Fixed Frame": "map",

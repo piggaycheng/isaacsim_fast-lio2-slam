@@ -35,8 +35,9 @@ Options:
                        Place a static box obstacle at Office map X,Y (m).
   -h, --help           Show this help.
 
-Send goals per robot with the fleet RViz toolbar (one "2D Pose Estimate" and
-"2D Goal Pose" pair per robot, in --robot order), or:
+In RViz's Fleet Control panel, select a robot, click "Set navigation goal",
+then click and drag on the map. The shared toolbar pose tools use that robot too.
+Or send a goal directly:
   ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose ...
 
 Examples:
