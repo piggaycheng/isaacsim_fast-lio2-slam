@@ -24,7 +24,8 @@ Options:
                        Spawn a robot of TYPE (config/robots/TYPE.yaml, default
                        nova_carter) at Isaac world X,Y (m), YAW (rad) of the
                        robot prim (world is aligned with the Office map).
-                       Repeat per robot. Default: carter1@0,0 and carter2@3.5,0.
+                       Repeat per robot. Default: carter1:nova_carter@0,0 and
+                       carter2:carter_v1@3.5,0.
   -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
       --pcd FILE       PCD map (default: maps/office/map.pcd).
       --manual-initial-pose
@@ -67,7 +68,7 @@ while (($# > 0)); do
   esac
 done
 
-if ((${#robots[@]} == 0)); then robots=("carter1@0,0,0" "carter2@3.5,0,0"); fi
+if ((${#robots[@]} == 0)); then robots=("carter1@0,0,0" "carter2:carter_v1@3.5,0,0"); fi
 spec="$(IFS=';'; printf '%s' "${robots[*]}")"
 # Fail before starting anything; robot.launch.py and standalone.py check again.
 if ! python3 - "$project_dir" "$spec" <<'EOF'

@@ -16,6 +16,11 @@ The estimates only use quantities available on a real vehicle:
   wheel/LIO disagreement cannot be split between them. All of it is booked to
   the wheel (an upper bound, which is the safe side for the EKF):
       wheel distance variance = k * distance + k_turn * turned angle
+* The hat assumes independent errors, but a gyro scale error grows with the
+  turned angle just like wheel yaw error. The IMU/LIO yaw disagreement alone
+  is therefore also fitted (an upper bound that includes the small LIO
+  error), and the larger of the two IMU estimates is used. The IMU yaw scale
+  against LIO is reported.
   A differential drive cannot slide sideways, so lateral disagreement during
   low-translation windows measures FAST-LIO error; it is reported for
   information (LIO error is not isotropic, so it is not subtracted).
@@ -48,11 +53,7 @@ import yaml
 from scipy.optimize import least_squares, nnls
 from scipy.ndimage import median_filter
 
-# Fallback only; the default comes from the robot profile's sensor_frames.imu_link.
-BODY_TO_BASE_XYZ = (0.213, -0.009, -0.526)
-BODY_TO_BASE_YAW = math.pi
-# The shared base configs hold this robot type's defaults (see its profile header).
-BASE_ROBOT_TYPE = "nova_carter"
+DEFAULT_ROBOT_TYPE = "nova_carter"
 PROFILE_PREFIX = ("parameter_overrides",)
 CONSISTENT_RATIO = (0.5, 2.0)
 # Overstated variance only slows the filter; understated variance makes it overconfident.
@@ -408,6 +409,16 @@ def fit_increment_noise(windows):
         ]
         targets += [(wheel - imu) ** 2, (wheel - lio) ** 2, (imu - lio) ** 2]
     yaw, yaw_keep = weighted_nnls(rows, targets)
+    # The hat assumes independent white errors. A gyro scale error grows with the turned
+    # angle like the wheel yaw error, so the two correlate and the hat books the IMU part
+    # to the wheel. FAST-LIO yaw is far more accurate, so the IMU/LIO disagreement alone
+    # bounds the IMU error from above (it also contains the small LIO error).
+    imu_lio = np.array([w.imu_yaw - w.lio[2] for w in windows])
+    imu_pair, _ = weighted_nnls([[w.duration] for w in windows], imu_lio ** 2)
+    lio_turn = np.array([w.lio[2] for w in windows])
+    imu_scale = float(
+        np.sum(np.array([w.imu_yaw for w in windows]) * lio_turn) / max(np.sum(lio_turn ** 2), 1e-15)
+    )
     # Along-track: wheel error + LIO error; the constant absorbs per-window LIO/timing noise.
     distance, distance_keep = weighted_nnls(
         [[w.distance, w.turn, 1.0] for w in windows],
@@ -425,6 +436,8 @@ def fit_increment_noise(windows):
         "yaw_variance_per_meter": yaw[0],
         "yaw_variance_per_radian": yaw[1],
         "imu_yaw_variance_per_second": yaw[2],
+        "imu_lio_yaw_variance_per_second": imu_pair[0],
+        "imu_yaw_scale_vs_lio": imu_scale,
         "lio_yaw_variance_per_window": yaw[3],
         "distance_variance_per_meter": distance[0],
         "position_variance_per_radian": distance[1],
@@ -707,13 +720,11 @@ def robot_profile_path(args):
     if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", args.robot_type):
         raise SystemExit(f"Invalid robot type {args.robot_type!r}")
     if args.profile_dir is None:
-        return None
+        raise SystemExit("Robot profile directory not found; pass --profile-dir")
     path = Path(args.profile_dir) / f"{args.robot_type}.yaml"
-    if path.is_file():
-        return path
-    if args.robot_type != BASE_ROBOT_TYPE:
+    if not path.is_file():
         raise SystemExit(f"Robot profile {path} not found")
-    return None
+    return path
 
 
 def profile_body_to_base(path):
@@ -762,25 +773,20 @@ def parse_args(argv):
                         help="Validate against simulator truth (Isaac Sim only)")
     parser.add_argument("--truth-topic", default="/isaac/ground_truth/odom")
     parser.add_argument("--truth-yaw-offset", type=float, default=math.pi,
-                        help="base_link yaw minus the truth frame yaw (Carter: pi)")
-    parser.add_argument("--local-config", type=Path,
-                        default=default_config("slam_nav/config/local_odometry.yaml"))
-    parser.add_argument("--fusion-config", type=Path,
-                        default=default_config("slam_localization_3d/config/global_fusion.yaml"))
-    parser.add_argument("--robot-type", default=BASE_ROBOT_TYPE,
+                        help="base_link yaw minus the truth frame yaw (Nova Carter: pi; Carter v1: 0)")
+    parser.add_argument("--robot-type", default=DEFAULT_ROBOT_TYPE,
                         help="Robot profile (config/robots/<type>.yaml) whose overrides were "
                              "active while recording and that --apply updates")
     parser.add_argument("--profile-dir", type=Path,
                         default=default_config("slam_localization_3d/config/robots"))
     parser.add_argument("--apply", action="store_true",
-                        help="Write the recommended values into the robot profile; for "
-                             f"{BASE_ROBOT_TYPE} also into the base config files")
-    parser.add_argument("--min-imu-variance", type=float, default=1e-6)
+                        help="Write the recommended values into the robot profile")
+    parser.add_argument("--min-imu-variance", type=float, default=1e-6,
+                        help="Minimum gyro measurement variance (rad^2/s^2); use an independently "
+                             "measured floor when motion/filter errors defeat the noise fit")
     args = parser.parse_args(argv)
     if args.lio_body_to_base is None:
-        profile = robot_profile_path(args)
-        args.lio_body_to_base = (profile_body_to_base(profile) if profile is not None
-                                 else [*BODY_TO_BASE_XYZ, BODY_TO_BASE_YAW])
+        args.lio_body_to_base = profile_body_to_base(robot_profile_path(args))
     return args
 
 
@@ -807,17 +813,15 @@ def main(argv=None):
         raise SystemExit(f"Only {len(windows)} usable windows; record a longer drive")
     noise = fit_increment_noise(windows)
     imu_variance = max(
-        imu_static_variance, noise["imu_yaw_variance_per_second"] / imu_dt, args.min_imu_variance
+        imu_static_variance,
+        max(noise["imu_yaw_variance_per_second"], noise["imu_lio_yaw_variance_per_second"]) / imu_dt,
+        args.min_imu_variance,
     )
     systematic_yaw, distance_scale = wheel_systematic(windows)
     profile = robot_profile_path(args)
 
     def fusion_parameter(key, default):
-        value = None
-        if profile is not None:
-            value = read_parameter(profile, "global_pose_adapter", key, PROFILE_PREFIX)
-        if value is None and args.fusion_config:
-            value = read_parameter(args.fusion_config, "global_pose_adapter", key)
+        value = read_parameter(profile, "global_pose_adapter", key, PROFILE_PREFIX)
         return default if value is None else value
 
     # Values active while the bag was recorded; they are removed from the published covariance.
@@ -849,8 +853,12 @@ def main(argv=None):
     print(f"  wheel position variance per radian {noise['position_variance_per_radian']:.3e} m^2/rad")
     print(f"  wheel yaw variance per meter       {noise['yaw_variance_per_meter']:.3e} rad^2/m")
     print(f"  wheel yaw variance per radian      {noise['yaw_variance_per_radian']:.3e} rad^2/rad")
-    print(f"  IMU integrated yaw variance        {noise['imu_yaw_variance_per_second']:.3e} rad^2/s"
+    print(f"  IMU integrated yaw variance        hat {noise['imu_yaw_variance_per_second']:.3e}, "
+          f"IMU/LIO bound {noise['imu_lio_yaw_variance_per_second']:.3e} rad^2/s"
           f" -> angular_velocity_variance {imu_variance:.3e}")
+    imu_scale = noise["imu_yaw_scale_vs_lio"]
+    print(f"  IMU yaw scale vs LIO {imu_scale:.4f}"
+          + (" (gyro scale error; the IMU/LIO bound covers it)" if abs(imu_scale - 1) > 0.01 else ""))
     print(f"  LIO yaw / along-track per window   {noise['lio_yaw_variance_per_window']:.3e} rad^2,"
           f" {noise['lio_distance_variance_per_window']:.3e} m^2")
     print(f"  LIO lateral (low-translation)      {noise['lio_lateral_variance_per_window']:.3e} m^2"
@@ -880,13 +888,13 @@ def main(argv=None):
     passed = True
     if args.ground_truth:
         validation = ground_truth_validation(
-            data, windows, noise, noise["imu_yaw_variance_per_second"], pcd_predicted
+            data, windows, noise, imu_variance * imu_dt, pcd_predicted
         )
         print("Ground-truth validation (ratio = true squared error / predicted variance):")
         for name, values in validation.items():
             if name == "pcd":
                 continue
-            result = verdict(values[0], upper_bound=name == "wheel_distance")
+            result = verdict(values[0], upper_bound=name in ("wheel_distance", "imu_yaw"))
             passed &= result != "FAIL"
             print(f"  {name:15s} ratio {values[0]:6.2f} {result}; "
                   f"truth-fitted {', '.join(f'{v:.3e}' for v in values[1:])}")
@@ -925,24 +933,15 @@ def main(argv=None):
     if args.apply:
         if not passed:
             raise SystemExit("Ground-truth validation failed; not applying")
-        if profile is None:
-            raise SystemExit(f"--apply requires the {args.robot_type} profile in --profile-dir")
         updates = [
-            ("wheel_encoder_odometry", wheel, args.local_config),
-            ("nav_imu_adapter", {"angular_velocity_variance": imu_variance}, args.local_config),
+            ("wheel_encoder_odometry", wheel),
+            ("nav_imu_adapter", {"angular_velocity_variance": imu_variance}),
         ]
         if pcd_parameters is not None:
-            updates.append(("global_pose_adapter", pcd_parameters, args.fusion_config))
-        targets = [profile]
-        if args.robot_type == BASE_ROBOT_TYPE:
-            if args.local_config is None or args.fusion_config is None:
-                raise SystemExit("--apply requires --local-config and --fusion-config")
-            targets += [args.local_config, args.fusion_config]
-        for section, values, base in updates:
+            updates.append(("global_pose_adapter", pcd_parameters))
+        for section, values in updates:
             write_parameters(profile, section, values, PROFILE_PREFIX)
-            if args.robot_type == BASE_ROBOT_TYPE:
-                write_parameters(base, section, values)
-        print("Applied to " + ", ".join(str(path) for path in dict.fromkeys(targets)))
+        print(f"Applied to {profile}")
     return 0 if passed else 1
 
 

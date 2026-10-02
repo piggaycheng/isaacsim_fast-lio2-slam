@@ -5,13 +5,13 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-isaac_python=/home/user/isaacsim-6.1.0/python.sh
+isaac_python="${ISAAC_PYTHON:-/home/yu/isaacsim-6.1.0/python.sh}"
 directory="$project_dir/ros2_ws/log/multi_robot_navigation/$(date +%Y%m%d_%H%M%S)"
 export ROS_DOMAIN_ID="${VALIDATION_ROS_DOMAIN_ID:-188}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROBOT_PROJECT_PREFIX=isaacsim-multi-validation
 sim_pid=""
-robots=("carter1@0,0,0" "carter2@3.5,0,1.5707963")
+robots=("carter1@0,0,0" "carter2:carter_v1@3.5,0,0")
 # Map X,Y,YAW goals in the free room around the Office spawn.
 goals=("0.5,2.5,1.5707963" "3.7,-2.5,-1.5707963")
 
@@ -38,16 +38,17 @@ cleanup() {
 
 mkdir -p "$directory"
 echo "Validation evidence: $directory"
+names=()
 for robot in "${robots[@]}"; do
   name="${robot%%@*}"
   name="${name%%:*}"
+  names+=("$name")
   start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
     map_pcd:=/workspace/maps/office/map.pcd map_pgm:=/workspace/maps/office/map_2d.yaml \
     rviz:=false > "$directory/ros_$name.log" 2>&1
 done
-names="$(IFS=';'; printf '%s' "${robots[*]%%@*}")"
 start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
-  "robots:=$names" rviz:=false > "$directory/fleet_relay.log" 2>&1
+  "robots:=$(IFS=';'; printf '%s' "${names[*]}")" rviz:=false > "$directory/fleet_relay.log" 2>&1
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM

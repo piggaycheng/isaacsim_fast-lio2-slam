@@ -1,8 +1,13 @@
 import math
 import sys
 import unittest
+from contextlib import ExitStack, redirect_stdout
+from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import yaml
@@ -82,6 +87,36 @@ class TestCovarianceCalibration(unittest.TestCase):
         self.assertLess(report["wheel_distance"][0], 1.0)
         self.assertNotEqual(calibration.verdict(report["wheel_distance"][0], True), "FAIL")
 
+    def test_imu_lio_bound_covers_gyro_scale_error_correlated_with_wheels(self):
+        rng = np.random.default_rng(5)
+        windows = []
+        for _ in range(2000):
+            kind = rng.integers(3)
+            distance = (0.0, 0.5, 0.6)[kind]
+            turn = (1.6, 0.0, 0.6)[kind]
+            w = window(rng, distance, turn, 2.0, (2e-4, 1e-4), 5e-6, 2e-6, (1e-4, 2e-5), (3e-6, 5e-5))
+            true_yaw = rng.choice((-1.0, 1.0)) * turn
+            shift = true_yaw - w.truth[2]
+            # Gyro and wheels both overstate turns: their errors are correlated.
+            windows.append(replace(
+                w,
+                imu_yaw=w.imu_yaw + shift + 0.05 * true_yaw,
+                wheel=w.wheel + np.array([0.0, 0.0, shift + 0.03 * true_yaw]),
+                lio=w.lio + np.array([0.0, 0.0, shift]),
+                truth=np.array([w.truth[0], 0.0, true_yaw]),
+            ))
+        noise = calibration.fit_increment_noise(windows)
+        self.assertAlmostEqual(noise["imu_yaw_scale_vs_lio"], 1.05, delta=0.005)
+        hat = calibration.ground_truth_validation(
+            FakeTruthData(), windows, noise, noise["imu_yaw_variance_per_second"]
+        )
+        self.assertGreater(hat["imu_yaw"][0], 2.0)
+        bound = calibration.ground_truth_validation(
+            FakeTruthData(), windows, noise, noise["imu_lio_yaw_variance_per_second"]
+        )
+        self.assertNotEqual(calibration.verdict(bound["imu_yaw"][0], True), "FAIL")
+        self.assertLess(bound["imu_yaw"][0], 1.25)
+
     def test_weighted_nnls_drops_gross_outliers(self):
         rng = np.random.default_rng(1)
         x = rng.uniform(0.1, 1.0, 400)
@@ -124,6 +159,52 @@ class TestCovarianceCalibration(unittest.TestCase):
         self.assertEqual(calibration.verdict(0.2), "FAIL")
         self.assertEqual(calibration.verdict(0.2, upper_bound=True), "UPPER BOUND")
         self.assertEqual(calibration.verdict(3.0, upper_bound=True), "FAIL")
+
+    def test_ground_truth_checks_recommended_imu_variance_including_floors(self):
+        data = SimpleNamespace(
+            wheel_t=np.arange(0.0, 10.0, 0.1), wheel_vx=np.zeros(100),
+            wheel_wz=np.zeros(100), imu_t=np.arange(0.0, 10.0, 0.02),
+            imu_wz=np.tile([-0.1, 0.1], 250),
+        )
+        noise = {**_noise(), **dict.fromkeys((
+            "imu_yaw_variance_per_second", "imu_lio_yaw_variance_per_second",
+            "lio_yaw_variance_per_window",
+            "lio_distance_variance_per_window", "lio_lateral_variance_per_window",
+            "lio_lateral_variance_per_radian",
+        ), 1e-8), "imu_yaw_scale_vs_lio": 1.0, "yaw_rows_used": 60, "yaw_rows": 60}
+        report = {
+            "imu_yaw": (1.0, 1e-4),
+            "pcd": {"ratio": [1.0] * 3, "rmse_xy": 0.01, "rmse_yaw": 0.001,
+                    "yaw_bias": 0.0, "count": 20},
+        }
+        for minimum in (0.03, 1e-6):
+            with self.subTest(minimum=minimum), ExitStack() as stack:
+                stack.enter_context(redirect_stdout(StringIO()))
+                stack.enter_context(patch.object(calibration, "load_data", return_value=data))
+                stack.enter_context(patch.object(calibration, "build_windows",
+                                                return_value=[None] * 20))
+                stack.enter_context(patch.object(calibration, "fit_increment_noise",
+                                                return_value=noise))
+                stack.enter_context(patch.object(calibration, "wheel_systematic",
+                                                return_value=(0.0, 1.0)))
+                stack.enter_context(patch.object(calibration, "pcd_error_variance",
+                                                return_value=None))
+                stack.enter_context(patch.object(calibration, "pcd_repeatability",
+                                                return_value=None))
+                validation = stack.enter_context(patch.object(
+                    calibration, "ground_truth_validation", return_value=report))
+                self.assertEqual(calibration.main([
+                    "bag", "--ground-truth", "--keep-lever",
+                    "--min-imu-variance", str(minimum),
+                ]), 0)
+                segments = calibration.static_segments(
+                    data.wheel_t, data.wheel_vx, data.wheel_wz, 5.0, 1.0)
+                static_variance = np.var(
+                    data.imu_wz[calibration.in_segments(data.imu_t, segments)], ddof=1)
+                self.assertAlmostEqual(
+                    validation.call_args.args[3],
+                    max(minimum, static_variance) * np.median(np.diff(data.imu_t)),
+                )
 
     def test_align_se2(self):
         source = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 2.0]])
@@ -200,13 +281,9 @@ class TestCovarianceCalibration(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "ros2_ws/src"
         profile = calibration.robot_profile_path(calibration.parse_args(["bag"]))
         self.assertEqual(profile, root / "slam_localization_3d/config/robots/nova_carter.yaml")
-        fusion = root / "slam_localization_3d/config/global_fusion.yaml"
         for key in ("registration_covariance_scale", "min_covariance_xy", "min_covariance_yaw"):
-            self.assertEqual(
-                calibration.read_parameter(profile, "global_pose_adapter", key,
-                                           calibration.PROFILE_PREFIX),
-                calibration.read_parameter(fusion, "global_pose_adapter", key),
-            )
+            self.assertIsNotNone(calibration.read_parameter(
+                profile, "global_pose_adapter", key, calibration.PROFILE_PREFIX))
         for robot_type in ("missing_robot", "../nova_carter"):
             with self.subTest(robot_type=robot_type), self.assertRaises(SystemExit):
                 calibration.robot_profile_path(
@@ -233,20 +310,21 @@ class TestCovarianceCalibration(unittest.TestCase):
         self.assertEqual(calibration.yaml_float(8.3806e-06), "8.3806e-06")
         self.assertEqual(calibration.yaml_float(0.000886391), "0.000886391")
 
-    def test_repository_configs_define_calibrated_parameters(self):
+    def test_repository_profiles_define_calibrated_parameters(self):
         root = Path(__file__).resolve().parents[1] / "ros2_ws/src"
-        local = root / "slam_nav/config/local_odometry.yaml"
-        fusion = root / "slam_localization_3d/config/global_fusion.yaml"
-        for key in (
-            "distance_variance_per_meter", "yaw_variance_per_meter", "yaw_variance_per_radian"
-        ):
-            self.assertIsNotNone(calibration.read_parameter(local, "wheel_encoder_odometry", key))
-        self.assertIsNotNone(
-            calibration.read_parameter(local, "nav_imu_adapter", "angular_velocity_variance")
-        )
-        for key in ("registration_covariance_scale", "min_covariance_xy", "min_covariance_yaw"):
-            self.assertIsNotNone(calibration.read_parameter(fusion, "global_pose_adapter", key))
-
+        prefix = calibration.PROFILE_PREFIX
+        for profile in sorted((root / "slam_localization_3d/config/robots").glob("*.yaml")):
+            with self.subTest(profile=profile.name):
+                for key in ("distance_variance_per_meter", "position_variance_per_radian",
+                            "yaw_variance_per_meter", "yaw_variance_per_radian"):
+                    self.assertIsNotNone(calibration.read_parameter(
+                        profile, "wheel_encoder_odometry", key, prefix))
+                self.assertIsNotNone(calibration.read_parameter(
+                    profile, "nav_imu_adapter", "angular_velocity_variance", prefix))
+                for key in ("registration_covariance_scale", "min_covariance_xy",
+                            "min_covariance_yaw"):
+                    self.assertIsNotNone(calibration.read_parameter(
+                        profile, "global_pose_adapter", key, prefix))
 
 def _noise():
     return {key: 0.0 for key in (

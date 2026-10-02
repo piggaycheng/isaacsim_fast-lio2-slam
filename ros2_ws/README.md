@@ -174,7 +174,9 @@ point order and timing.
 `slam_nav` provides wheel encoder odometry, the navigation IMU adapter,
 ground obstacle filtering, the Nav2 goal-heading controller and goal checker
 plugins, and the shared Local EKF/scan settings in
-`config/local_odometry.yaml`. `slam_localization_2d` owns the AMCL settings,
+`config/local_odometry.yaml`. Vehicle-specific wheel and covariance values are
+not in that file; launches merge them from the robot profile in
+`slam_localization_3d/config/robots/`. `slam_localization_2d` owns the AMCL settings,
 2D map/AMCL launch and RViz configuration. The 3D fusion launch reuses the
 shared inputs without starting AMCL. `isaac_fastlio_adapter` remains dedicated
 to FAST-LIO mapping inputs.

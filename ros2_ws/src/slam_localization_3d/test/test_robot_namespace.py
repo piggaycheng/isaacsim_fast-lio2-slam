@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import math
 import sys
@@ -61,18 +62,65 @@ class RobotProfileTest(unittest.TestCase):
         self.assertAlmostEqual(profile["sensor_frames"]["lidar_link"]["yaw"], math.pi, places=6)
 
     def test_nova_carter_overrides_match_base_configs(self):
-        # The base configs are Carter's defaults; the profile documents them as a template.
+        # Required vehicle parameters exist only in profiles; the remaining overrides
+        # (footprint, safety zones, speeds) keep Nova Carter's values as base defaults.
         overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
         for node in ("wheel_encoder_odometry", "nav_imu_adapter", "global_pose_adapter",
                      "local_costmap", "collision_monitor", "ground_obstacle_filter"):
             self.assertIn(node, overrides)
+        defaults = copy.deepcopy(overrides)
+        for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+            for key in keys:
+                del defaults[node]["ros__parameters"][key]
         used = set()
         for path in (*CONFIG.glob("*.yaml"), *(PACKAGE.parent / "slam_nav/config").glob("*.yaml")):
             config = yaml.safe_load(path.read_text())
             used |= set(overrides) & set(config)
             with self.subTest(path=path.name):
-                self.assertEqual(robot_fleet.merge_overrides(config, overrides), config)
+                self.assertEqual(robot_fleet.merge_overrides(config, defaults), config)
+                for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+                    parameters = config.get(node, {}).get("ros__parameters", {})
+                    self.assertFalse(set(keys) & set(parameters), (node, path.name))
         self.assertEqual(used, set(overrides))
+
+    def test_profiles_must_define_vehicle_parameters(self):
+        for robot_type in ("nova_carter", "carter_v1"):
+            robot_fleet.load_robot_profile(robot_type)
+        overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
+        for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+            with self.subTest(node=node), tempfile.TemporaryDirectory() as directory:
+                incomplete = copy.deepcopy(overrides)
+                del incomplete[node]["ros__parameters"][keys[-1]]
+                write_profile(directory, "incomplete", parameter_overrides=incomplete)
+                with self.assertRaisesRegex(ValueError, f"{node}.ros__parameters needs {keys[-1]}"):
+                    robot_fleet.load_robot_profile("incomplete", directory)
+
+    def test_carter_v1_has_independent_geometry_and_drive_parameters(self):
+        profile = robot_fleet.load_robot_profile("carter_v1")
+        simulation = profile["simulation"]
+        self.assertEqual(simulation["wheel_joints"], ["left_wheel", "right_wheel"])
+        self.assertEqual(simulation["forward_sign"], 1.0)
+        self.assertEqual(robot_fleet.imu_mount(profile), [-0.06, 0.0, 0.50, 0.0, 0.0, 0.0])
+        self.assertEqual(simulation["lidar_translation"], robot_fleet.imu_mount(profile)[:3])
+        overrides = profile["parameter_overrides"]
+        wheel = overrides["wheel_encoder_odometry"]["ros__parameters"]
+        self.assertEqual(wheel["wheel_radius"], simulation["wheel_radius"])
+        self.assertEqual(wheel["wheel_base"], simulation["wheel_base"])
+        self.assertEqual([wheel["left_joint"], wheel["right_joint"]], simulation["wheel_joints"])
+        config = yaml.safe_load((CONFIG / "observation_costmaps.yaml").read_text())
+        merged = robot_fleet.merge_overrides(config, overrides)
+        self.assertNotEqual(merged, config)
+        footprint = merged["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"]
+        self.assertEqual(footprint,
+                         merged["global_costmap"]["global_costmap"]["ros__parameters"]["footprint"])
+        self.assertEqual(overrides["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"],
+                         [-0.50, 0.35, -0.38, 0.38])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "local_odometry.yaml"
+            path.write_text(yaml.safe_dump({"wheel_encoder_odometry": {"ros__parameters": {}}}))
+            merged_path = robot_namespace.robot_parameter_file(str(path), "carter2", "carter_v1")
+            result = yaml.safe_load(Path(merged_path).read_text())
+            self.assertEqual(result["carter2"]["wheel_encoder_odometry"]["ros__parameters"], wheel)
 
     def test_unknown_and_incomplete_profiles_fail_early(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -81,6 +129,15 @@ class RobotProfileTest(unittest.TestCase):
                 robot_fleet.load_robot_profile("missing", directory)
             with self.assertRaisesRegex(ValueError, "sensor_frames"):
                 robot_fleet.load_robot_profile("no_frames", directory)
+
+    def test_invalid_lidar_mount_override_is_rejected(self):
+        for translation in ([0.0, 0.0], [0.0, 0.0, float("nan")], "0,0,0"):
+            with self.subTest(translation=translation), tempfile.TemporaryDirectory() as directory:
+                simulation = dict(robot_fleet.load_robot_profile("carter_v1")["simulation"])
+                simulation["lidar_translation"] = translation
+                write_profile(directory, "invalid_mount", simulation=simulation)
+                with self.assertRaisesRegex(ValueError, "lidar_translation"):
+                    robot_fleet.load_robot_profile("invalid_mount", directory)
 
     def test_overrides_only_touch_nodes_in_the_file(self):
         config = {"a": {"ros__parameters": {"x": 1, "nested": {"y": 2, "z": 3}}}}

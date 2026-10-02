@@ -49,10 +49,9 @@ global_ekf:
 global_pose_adapter:
   ros__parameters:
     # Published x/y/yaw covariance = scale * (propagated ICP covariance + minimums).
-    # Calibrate with scripts/covariance_calibration.py (docs/covariance_calibration.md).
-    registration_covariance_scale: 1.0
-    min_covariance_xy: 0.000147573
-    min_covariance_yaw: 1.4647e-06
+    # registration_covariance_scale and min_covariance_xy/yaw are vehicle-specific and
+    # live only in the robot profile (config/robots/<type>.yaml); calibrate them with
+    # scripts/covariance_calibration.py (docs/covariance_calibration.md).
     # Fallback only when a correction carries no ICP covariance.
     covariance_xy: 0.25
     covariance_yaw: 0.09

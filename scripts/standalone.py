@@ -422,6 +422,8 @@ def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
     lidar_prim = stage.GetPrimAtPath(sim_robot.lidar_path)
     if not lidar_prim.IsValid():
         raise RuntimeError(f"{sim_robot.label} LiDAR prim was not found: {sim_robot.lidar_path}")
+    if "lidar_translation" in simulation:
+        lidar_prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(*simulation["lidar_translation"]))
     lidar = Lidar(
         sim_robot.lidar_path,
         accumulate_outputs=None,

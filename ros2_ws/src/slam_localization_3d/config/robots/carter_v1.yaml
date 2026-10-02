@@ -1,0 +1,104 @@
+# Robot-type profile: Carter v1 (Isaac Sim 6.1 asset).
+# Geometry measured from the USD; the LiDAR mount is raised as described below.
+# Wheel, gyro and PCD covariance come from the truth-free calibration tool
+# (default flags) in the Office scene on 2026-10-03; ground truth was used only to
+# validate them. See docs/covariance_calibration.md for evidence and limitations.
+simulation:
+  asset: /Isaac/Robots/NVIDIA/Carter/carter_v1.usd
+  articulation: chassis_link
+  lidar: chassis_link/XT_32_10Hz
+  # Raise the RTX sensor above the stock model's LiDAR housing.
+  lidar_translation: [-0.06, 0.0, 0.50]
+  # Create a co-located IMU so FAST-LIO's zero LiDAR-to-IMU extrinsic stays valid.
+  imu: chassis_link/XT_32_10Hz/fastlio_imu
+  wheel_joints: [left_wheel, right_wheel]
+  wheel_radius: 0.24
+  # Separation of the collision cylinders' rolling centers, not the joint pivots.
+  wheel_base: 0.538410
+  forward_sign: 1.0
+  spawn_height: 0.26
+
+# base_link -> LiDAR / co-located FAST-LIO body (m, rad).
+sensor_frames:
+  lidar_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  imu_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+parameter_overrides:
+  wheel_encoder_odometry:
+    ros__parameters:
+      left_joint: left_wheel
+      right_joint: right_wheel
+      wheel_radius: 0.24
+      wheel_base: 0.538410
+      encoder_ticks_per_revolution: 2048
+      left_distance_scale: 1.0
+      right_distance_scale: 1.0
+      left_direction: 1.0
+      right_direction: 1.0
+      distance_noise_ratio: 0.005
+      # covariance_calibration.py, default four-cycle covariance_drive route.
+      distance_variance_per_meter: 4.50555e-05
+      position_variance_per_radian: 0.000946136
+      yaw_variance_per_meter: 0.0044976
+      yaw_variance_per_radian: 0.000594103
+  nav_imu_adapter:
+    ros__parameters:
+      orientation_variance: 0.01
+      # IMU/LIO bound: covers the ~5% gyro yaw scale error seen against LIO.
+      angular_velocity_variance: 0.0242269
+      linear_acceleration_variance: 0.04
+  global_pose_adapter:
+    ros__parameters:
+      registration_covariance_scale: 1.0
+      min_covariance_xy: 0.000199663
+      min_covariance_yaw: 1.24068e-06
+
+  # Conservative USD visible + collision bounds, rounded outward with 6 cm margin.
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        footprint: '[[0.35, 0.38], [0.35, -0.38], [-0.50, -0.38], [-0.50, 0.38]]'
+        footprint_padding: 0.01
+        inflation_layer: {inflation_radius: 0.9}
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        footprint: '[[0.35, 0.38], [0.35, -0.38], [-0.50, -0.38], [-0.50, 0.38]]'
+        footprint_padding: 0.01
+        inflation_layer: {inflation_radius: 0.9}
+  ground_obstacle_filter:
+    ros__parameters:
+      self_filter_bounds: [-0.50, 0.35, -0.38, 0.38]
+      # Ground plane measured from LiDAR in base_link (24 cm wheel axle height).
+      ground_z: -0.24
+      ground_search_height: 0.35
+
+  # Same geometric margins as Nova Carter, relative to Carter v1's own footprint.
+  # Braking clearances require separate validation for this vehicle.
+  collision_monitor:
+    ros__parameters:
+      PolygonStop: {points: [1.00, 0.42, 1.00, -0.42, 0.35, -0.42, 0.35, 0.42]}
+      PolygonSurround: {points: [0.80, 0.81, 0.80, -0.81, -1.10, -0.81, -1.10, 0.81]}
+      PolygonSlow: {points: [1.10, 0.56, 1.10, -0.56, 0.35, -0.56, 0.35, 0.56]}
+  adaptive_surround:
+    ros__parameters:
+      crawl_points: [0.60, 0.61, 0.60, -0.61, -0.75, -0.61, -0.75, 0.61]
+      max_linear_speed: 1.0
+      max_angular_speed: 0.75
+  controller_server:
+    ros__parameters:
+      FollowPath:
+        desired_linear_vel: 1.0
+        rotate_to_heading_angular_vel: 0.75
+  velocity_smoother:
+    ros__parameters:
+      max_velocity: [1.0, 0.0, 0.75]
+      min_velocity: [-1.0, 0.0, -0.75]
+      max_accel: [0.8, 0.0, 1.5]
+      max_decel: [-1.5, 0.0, -2.0]
+  cmd_vel_safety:
+    ros__parameters:
+      max_linear_accel: 0.8
+      max_angular_accel: 1.5
+      max_linear_speed: 1.0
+      max_angular_speed: 0.75

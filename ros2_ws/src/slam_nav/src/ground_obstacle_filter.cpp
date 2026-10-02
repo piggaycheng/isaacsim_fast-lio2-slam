@@ -34,6 +34,7 @@ public:
     self_filter_bounds_ = declare_parameter<std::vector<double>>(
       "self_filter_bounds", {-0.20, 0.65, -0.32, 0.32});
     max_range_ = declare_parameter<double>("max_range", 20.0);
+    ground_z_ = declare_parameter<double>("ground_z", 0.0);
     ground_search_height_ = declare_parameter<double>("ground_search_height", 0.25);
     ground_distance_ = declare_parameter<double>("ground_distance", 0.04);
     min_obstacle_height_ = declare_parameter<double>("min_obstacle_height", 0.06);
@@ -41,7 +42,7 @@ public:
     voxel_size_ = declare_parameter<double>("voxel_size", 0.08);
     min_ground_points_ = declare_parameter<int>("min_ground_points", 50);
     if (base_frame_.empty() || min_range_ < 0 || max_range_ <= min_range_ ||
-      ground_search_height_ <= 0 || ground_distance_ <= 0 ||
+      !std::isfinite(ground_z_) || ground_search_height_ <= 0 || ground_distance_ <= 0 ||
       min_obstacle_height_ <= ground_distance_ ||
       max_obstacle_height_ <= min_obstacle_height_ || voxel_size_ <= 0 ||
       min_ground_points_ < 3)
@@ -143,7 +144,7 @@ private:
       const double distance_squared = point.x * point.x + point.y * point.y;
       if (distance_squared >= min_range_squared &&
         distance_squared <= max_range_squared &&
-        std::abs(point.z) <= ground_search_height_)
+        std::abs(point.z - ground_z_) <= ground_search_height_)
       {
         ground_candidates->push_back(point);
       }
@@ -177,10 +178,12 @@ private:
     const auto & c = plane.values;
     const double normal_length = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
     if (!std::isfinite(normal_length) || normal_length == 0 ||
-      !std::isfinite(c[3]) || std::abs(c[3]) / normal_length > ground_distance_)
+      !std::isfinite(c[3]) ||
+      std::abs(c[2] * ground_z_ + c[3]) / normal_length > ground_distance_)
     {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 5000, "Ground plane is not near base_link z=0");
+        get_logger(), *get_clock(), 5000,
+        "Ground plane is not near configured base_link ground_z=%.3f", ground_z_);
       return;
     }
     const double orientation = c[2] < 0 ? -1.0 : 1.0;
@@ -220,6 +223,7 @@ private:
   std::vector<double> self_filter_bounds_;
   double min_range_;
   double max_range_;
+  double ground_z_;
   double ground_search_height_;
   double ground_distance_;
   double min_obstacle_height_;

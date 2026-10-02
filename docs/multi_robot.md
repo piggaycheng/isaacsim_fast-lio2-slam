@@ -3,7 +3,8 @@
 一個腳本啟動 Isaac Sim、依參數生成 N 台車，每台車一個獨立的導航 container（與部署到真車時一車一台電腦相同），再加上一個顯示全部車輛的 RViz。
 
 ```bash
-./scripts/run_multi_nav.sh                                   # 預設 carter1@0,0 與 carter2@3.5,0
+./scripts/run_multi_nav.sh                                   # Nova Carter + Carter v1
+./scripts/run_multi_nav.sh --robot carter1@0,0 --robot carter2:carter_v1@3.5,0
 ./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 ./scripts/run_multi_nav.sh --headless --no-rviz              # 無 GUI
 ./scripts/run_multi_nav.sh --help
@@ -16,6 +17,8 @@
 - `X,Y,YAW`：Isaac world 位置（m）與 robot prim 航向（rad）。Office 地圖與 Isaac world 對齊，所以也是地圖座標。
 
 按 Ctrl+C 會停止 Isaac 並移除所有 container。
+
+不指定任何 `--robot` 時，預設是 `carter1:nova_carter@0,0,0` 與 `carter2:carter_v1@3.5,0,0`。自行指定規格時省略 TYPE 仍為 Nova Carter；要恢復兩台 Nova Carter，可執行 `--robot carter1@0,0 --robot carter2@3.5,0`。
 
 多於一台車時，Isaac viewport 固定在所有生成點中心的正上方俯視（螢幕右方為 +X、上方為 +Y，與 RViz 一致），不跟隨任何車；高度依生成點範圍加 5 m 邊界自動計算，並裁切 2.6 m 以上的天花板。之後仍可用滑鼠自由移動視角（移動後會恢復預設裁切，拉近不會被裁掉）。單車時維持跟車視角。
 
@@ -88,28 +91,52 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 | 鍵 | 用途 |
 | :-- | :-- |
 | `simulation.*` | Isaac 資產、articulation／LiDAR／IMU prim、輪子關節、輪徑、輪距、前進方向、生成高度 |
+| `simulation.lidar_translation`（選用） | 覆寫 LiDAR prim 相對 parent 的位置（m）；同步更新 `sensor_frames`，避免點雲與 ROS TF 的安裝位置不同 |
 | `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF |
 | `parameter_overrides` | 深度合併到含有該節點鍵的所有參數檔（list 整個取代）。Carter profile 列出全部車種相關值：輪速里程計與 covariance、IMU covariance、PCD covariance floor、costmap footprint／inflation、self filter、collision monitor 與 adaptive surround 區域、速度與加速度上限 |
 
-接著以 `--robot NAME:<type>@X,Y` 使用。共用的 base 設定檔是 Nova Carter 的預設值，`nova_carter.yaml` 的 overrides 必須與其相同（`test_robot_namespace.py` 會檢查）；其他車種在自己的 profile 逐項替換並自行驗證。
+接著以 `--robot NAME:<type>@X,Y` 使用。輪速里程計（關節、輪徑、輪距、encoder 模型）與輪速／IMU／PCD covariance 只寫在 profile，共用的 `local_odometry.yaml`、`global_fusion.yaml` 不含這些值；profile 缺少任何一項（`robot_fleet.REQUIRED_OVERRIDES`）會在載入時報錯。footprint、安全區域與速度則仍以 Nova Carter 的值作為共用設定檔預設，`nova_carter.yaml` 的這些 overrides 必須與其相同（`test_robot_namespace.py` 會檢查）；其他車種在自己的 profile 逐項替換並自行驗證。
 
 `sensor_frames.imu_link` 是 FAST-LIO body 的安裝位置：launch 把它以 `imu_mount` 參數傳給 `localization_3d_pose`、`global_pose_adapter`，反推 body → `base_link`；`covariance_calibration.py` 也由此推得 `--lio-body-to-base` 預設值。速度上限是 `cmd_vel_safety` 與 `adaptive_surround` 的 `max_linear_speed`／`max_angular_speed`。
 
-2D 定位模式（`localization_2d.launch.py`）仍不使用 profile，直接讀共用 YAML 與自己的靜態 TF，換車時需另外調整。
+`ground_obstacle_filter.ros__parameters.ground_z` 也是 profile 必填值：地面相對 `base_link` 的高度，Nova Carter 為 `0.0`，Carter v1 為 `-0.24` m。地面搜尋與平面驗證都以它為基準，量測方式見 [障礙點雲說明](nav.md)。
+
+2D 定位模式（`localization_2d.launch.py`）只支援 Nova Carter：固定合併 `nova_carter` profile 的 `local_odometry.yaml` 參數，靜態 TF 仍寫在 launch 內，換車時需另外調整。
+
+## Carter v1
+
+`config/robots/carter_v1.yaml` 使用 Isaac Sim 6.1 的 `/Isaac/Robots/NVIDIA/Carter/carter_v1.usd`，不是 Nova Carter 的改名：
+
+- 輪子關節為 `left_wheel`／`right_wheel`，輪半徑 0.24 m，輪子 collision cylinder 中心間距約 0.538410 m，車體朝 USD +x 前進。
+- 可見與 collision 幾何量測後，使用 footprint x `[-0.50, 0.35]`、y `[-0.38, 0.38]`，兩種幾何均有至少約 6 cm 包絡餘量；LiDAR 點雲量測地面 `ground_z=-0.24` m，地面候選搜尋範圍為此高度周圍 ±0.35 m。
+- 原始 RTX LiDAR 在 `chassis_link/XT_32_10Hz` 的 `(-0.06, 0, 0.38)` 無法輸出點雲；實測抬高至 `(-0.06, 0, 0.50)` 後恢復，避免車體 LiDAR housing 的自體遮擋。profile 的 `lidar_translation` 與 `sensor_frames` 均使用此模擬安裝位置。另建立與 LiDAR 同位置的 IMU，保留 FAST-LIO 的零 LiDAR／IMU 外參。
+- 輪速、IMU 角速度與 PCD covariance 已在 2026-10-03 依文件路線以**不使用真值**的校正工具（預設參數）求得並寫入，真值只用於驗證；另一份完整路線 bag 固定參數驗證，六項真值 ratio 全部 PASS。PCD 定位 RMSE 約 1.99 cm、0.080°；數值、指令與證據見 [covariance_calibration.md](covariance_calibration.md#carter-v1-校正紀錄)。IMU orientation／linear acceleration 仍是預設值，實機與不同速度／場景需重新驗證，煞停距離也需另行量測。
+
+量測包絡可執行：
+
+```bash
+/home/yu/isaacsim-6.1.0/python.sh tests/validate_carter_geometry.py --robot-type carter_v1
+```
 
 ## 驗證
 
 ```bash
-./tests/run_multi_robot_navigation.sh
+bash tests/run_multi_robot_navigation.sh
 ```
 
-以 headless Isaac 生成 carter1@(0,0,0) 與 carter2@(3.5,0,π/2)，每車一個 container，加上 fleet relay container。驗證項目：
+以 headless Isaac 生成 Nova Carter carter1@(0,0,0) 與 Carter v1 carter2@(3.5,0,0)，與多車入口預設相同，每車一個 container，加上 fleet relay container。可透過 `ISAAC_PYTHON` 指定 launcher。驗證項目：
 
 1. 兩車自動初始化後的定位誤差（對照 Isaac ground truth）。
 2. `/fleet/tf` 含每車 `map → NAME/odom → NAME/base_link`。
 3. 兩車同時導航到各自目標並成功。
 
 成功時輸出 `MULTI_ROBOT_NAVIGATION PASSED`，證據存於 `ros2_ws/log/multi_robot_navigation/<時間>/`（`probe.log`、`results.json`、`isaac.log`、`ros_NAME.log`、`fleet_relay.log`）。
+
+2026-10-02 混合車種實測通過：`20261002_234437/` 驗證 Carter v1 生成 yaw=π/2，`20261002_234714/` 驗證與多車入口完全相同的預設生成位姿。後者兩車均成功到達並行目標，Carter v1 起始定位位置誤差約 0.019 m，目標位置誤差約 0.082 m。這是基本定位與導航測試，不是完整碰撞／煞停安全驗證。
+
+2026-10-03 寫入不使用真值的校正 covariance 後再測：`20261003_010317/` 兩車均成功完成並行導航，Carter v1 起始定位位置誤差約 0.019 m，目標位置誤差約 0.118 m。
+
+2026-10-03 地面高度修正後，另以 Carter v1 加入地圖中沒有的 0.6 m 方箱測試：`ros2_ws/log/ground_height/20261003_014443/` 的地面量測值為 `-0.24` m，障礙點雲正常發布，global costmap 將箱子標為 lethal（100），規劃路徑繞過箱子。這是感知與路徑規劃檢查，並未執行該路徑的駕駛或煞停驗證。
 
 選車面板另有 GUI 整合測試（需可用的圖形顯示，先 build workspace，保留 `BUILD_TESTING`）：
 

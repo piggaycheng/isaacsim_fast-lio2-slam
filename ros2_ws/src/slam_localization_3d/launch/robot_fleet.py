@@ -38,6 +38,23 @@ SIMULATION_KEYS = (
 )
 FRAME_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
 SENSOR_FRAMES = ("lidar_link", "imu_link")
+# Vehicle-specific parameters that the base configs omit: every profile must set them.
+REQUIRED_OVERRIDES = {
+    "wheel_encoder_odometry": (
+        "left_joint", "right_joint", "wheel_radius", "wheel_base",
+        "encoder_ticks_per_revolution", "left_distance_scale", "right_distance_scale",
+        "left_direction", "right_direction", "distance_noise_ratio",
+        "distance_variance_per_meter", "position_variance_per_radian",
+        "yaw_variance_per_meter", "yaw_variance_per_radian",
+    ),
+    "nav_imu_adapter": (
+        "orientation_variance", "angular_velocity_variance", "linear_acceleration_variance",
+    ),
+    "global_pose_adapter": (
+        "registration_covariance_scale", "min_covariance_xy", "min_covariance_yaw",
+    ),
+    "ground_obstacle_filter": ("ground_z",),
+}
 MIN_SPAWN_SEPARATION = 1.5
 
 
@@ -124,6 +141,12 @@ def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):
         raise ValueError(f"{path}: simulation needs {', '.join(SIMULATION_KEYS)}")
     if len(simulation["wheel_joints"]) != 2:
         raise ValueError(f"{path}: wheel_joints must list the left and right joints")
+    if "lidar_translation" in simulation:
+        translation = simulation["lidar_translation"]
+        if (not isinstance(translation, list) or len(translation) != 3
+                or not all(isinstance(value, (int, float)) and math.isfinite(value)
+                           for value in translation)):
+            raise ValueError(f"{path}: lidar_translation needs three finite values")
     frames = profile.get("sensor_frames")
     if not isinstance(frames, dict) or set(frames) != set(SENSOR_FRAMES):
         raise ValueError(f"{path}: sensor_frames must define {', '.join(SENSOR_FRAMES)}")
@@ -136,6 +159,13 @@ def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):
     overrides = profile.setdefault("parameter_overrides", {}) or {}
     if not isinstance(overrides, dict):
         raise ValueError(f"{path}: parameter_overrides must be a mapping")
+    for node, keys in REQUIRED_OVERRIDES.items():
+        parameters = ((overrides.get(node) or {}).get("ros__parameters") or {})
+        missing = [key for key in keys if key not in parameters]
+        if missing:
+            raise ValueError(
+                f"{path}: parameter_overrides.{node}.ros__parameters needs {', '.join(missing)}"
+            )
     profile["parameter_overrides"] = overrides
     profile["robot_type"] = robot_type
     return profile

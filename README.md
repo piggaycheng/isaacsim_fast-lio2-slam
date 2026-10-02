@@ -91,12 +91,12 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ### 多車導航
 
 ```bash
-./scripts/run_multi_nav.sh                     # 預設生成兩台 Nova Carter
-./scripts/run_multi_nav.sh --robot carter1@0,0 --robot carter2@3.5,0,1.57
+./scripts/run_multi_nav.sh                     # carter1：Nova Carter；carter2：Carter v1
+./scripts/run_multi_nav.sh --robot carter1@0,0 --robot carter2:carter_v1@3.5,0,1.57
 ./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 ```
 
-`--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定。位置單位為公尺、航向為弧度，車種預設 `nova_carter`。每車各有一個導航 container；RViz 的 **Fleet Control** 下拉選單選車，再按 **Set navigation goal** 並在地圖上拖曳。
+`--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定。位置單位為公尺、航向為弧度；自行指定 `--robot` 時，省略 TYPE 仍代表 `nova_carter`。不指定任何 `--robot` 時，第二台預設使用 `carter_v1` 的獨立 profile（LiDAR 安裝與待校正參數見[多車文件](docs/multi_robot.md#carter-v1)）。每車各有一個導航 container；RViz 的 **Fleet Control** 下拉選單選車，再按 **Set navigation goal** 並在地圖上拖曳。
 
 多車時 Isaac viewport 預設固定俯視，不跟隨第一台車。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。**目前沒有車輛間的路權／交通協調**，狹窄通道可能互相卡住。
 
@@ -150,16 +150,14 @@ docker compose exec ros /workspace/docker/entrypoint.sh \
 
 # 錄製完成後，離線計算建議值；預設不修改 YAML
 docker compose run --rm ros \
-  python3 ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py cov_bag \
-  --local-config ros2_ws/src/slam_nav/config/local_odometry.yaml \
-  --fusion-config ros2_ws/src/slam_localization_3d/config/global_fusion.yaml
+  python3 ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py cov_bag
 ```
 
 **`covariance_drive.py` 會直接發布 `/cmd_vel`，不經 Nav2 或碰撞檢查。** 實機應改用 `use_sim_time:=false`，先確認指令接到正確底盤、準備足夠淨空與急停；不要直接照模擬範例讓真車行駛。
 
-LIO body 到 `base_link` 的轉換預設由 `--robot-type` profile 的 `sensor_frames.imu_link` 反推；要測試其他值時可用 `--lio-body-to-base X Y Z YAW`（公尺／弧度）覆寫。若有 namespace，錄製時改用該車的完整 topic，分析時透過 `--wheel-topic`、`--imu-topic`、`--lio-topic`、`--pcd-topic` 指定；駕駛節點也需 remap `/cmd_vel`。以 `--robot-type <type>` 指定車種（預設 `nova_carter`），工具會優先讀取該 profile 中錄製當下使用的 covariance floor。
+LIO body 到 `base_link` 的轉換預設由 `--robot-type` profile 的 `sensor_frames.imu_link` 反推；要測試其他值時可用 `--lio-body-to-base X Y Z YAW`（公尺／弧度）覆寫。若有 namespace，錄製時改用該車的完整 topic，分析時透過 `--wheel-topic`、`--imu-topic`、`--lio-topic`、`--pcd-topic` 指定；駕駛節點也需 remap `/cmd_vel`。以 `--robot-type <type>` 指定車種（預設 `nova_carter`），工具會讀取該 profile 中錄製當下使用的 covariance floor。
 
-確認建議值後加 `--apply`，結果會寫入該車種 profile 的 `parameter_overrides`；`nova_carter` 另同步寫回共用預設 YAML，因為它們是 Carter 的預設值，2D 模式也直接使用。重新建置並重啟後再驗證，完整流程、輸出判讀與限制見[協方差校正](docs/covariance_calibration.md)。
+確認建議值後加 `--apply`，結果只會寫入該車種 profile 的 `parameter_overrides`；共用的 `local_odometry.yaml`、`global_fusion.yaml` 不含輪速、IMU、PCD covariance 等車種相關值（2D 模式也從 Nova Carter profile 讀取）。重新建置並重啟後再驗證，完整流程、輸出判讀與限制見[協方差校正](docs/covariance_calibration.md)。
 
 ## 詳細文件
 

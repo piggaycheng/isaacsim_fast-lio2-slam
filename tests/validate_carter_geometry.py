@@ -13,13 +13,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from usd_bbox import box_corners, summarize, transform_points, yaw_rotation
+sys.path.insert(0, str(ROOT / "ros2_ws/src/slam_localization_3d/launch"))
+from robot_fleet import load_robot_profile, merge_overrides
 
 
-def validate(stage):
+def validate(stage, profile):
     from pxr import Usd, UsdGeom, UsdPhysics
 
     robot = stage.GetDefaultPrim()
-    frame = stage.GetPrimAtPath(f"{robot.GetPath()}/chassis_link")
+    simulation = profile["simulation"]
+    frame = stage.GetPrimAtPath(f"{robot.GetPath()}/{simulation['articulation']}")
     if not frame:
         raise RuntimeError("Carter chassis_link not found")
     cache = UsdGeom.XformCache()
@@ -53,7 +56,8 @@ def validate(stage):
                 raise RuntimeError(f"No collider bounds: {prim.GetPath()}")
             local = box_corners(extent[0], extent[1])
         matrix = cache.GetLocalToWorldTransform(prim) * inverse
-        points = transform_points(local, matrix) @ yaw_rotation(180)
+        yaw = 180 if simulation["forward_sign"] < 0 else 0
+        points = transform_points(local, matrix) @ yaw_rotation(yaw)
         points *= UsdGeom.GetStageMetersPerUnit(stage)
         if collision:
             clouds["collision"].append(points)
@@ -62,7 +66,10 @@ def validate(stage):
             clouds["visible"].append(points)
 
     config = ROOT / "ros2_ws/src/slam_localization_3d/config"
-    costmaps = yaml.safe_load((config / "observation_costmaps.yaml").read_text())
+    def parameters(path):
+        return merge_overrides(yaml.safe_load(path.read_text()), profile["parameter_overrides"])
+
+    costmaps = parameters(config / "observation_costmaps.yaml")
     footprints = [
         ast.literal_eval(costmaps[name][name]["ros__parameters"]["footprint"])
         for name in ("global_costmap", "local_costmap")
@@ -71,18 +78,19 @@ def validate(stage):
         raise AssertionError("Global and local physical footprints differ")
     footprint = np.asarray(footprints[1])
     fmin, fmax = footprint.min(axis=0), footprint.max(axis=0)
-    filtering = yaml.safe_load(
-        (ROOT / "ros2_ws/src/slam_nav/config/ground_obstacle_filter.yaml").read_text()
+    filtering = parameters(
+        ROOT / "ros2_ws/src/slam_nav/config/ground_obstacle_filter.yaml"
     )["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"]
     np.testing.assert_allclose(filtering, [fmin[0], fmax[0], fmin[1], fmax[1]])
-    monitor = yaml.safe_load((config / "collision_monitor.yaml").read_text())
+    monitor = parameters(config / "collision_monitor.yaml")
     surround = np.asarray(
         monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"]
     ).reshape(-1, 2)
     padding = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint_padding"]
     if padding != costmaps["global_costmap"]["global_costmap"]["ros__parameters"]["footprint_padding"]:
         raise AssertionError("Global and local footprint padding differs")
-    report = {"collider_count": len(colliders), "footprint": footprints[1],
+    report = {"robot_type": profile["robot_type"],
+              "collider_count": len(colliders), "footprint": footprints[1],
               "planning_footprint": footprints[0],
               "footprint_padding": padding,
               "self_filter": filtering, "surround": surround.tolist()}
@@ -105,6 +113,7 @@ def validate(stage):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--robot-type", default="nova_carter")
     args = parser.parse_args()
     from isaacsim import SimulationApp
 
@@ -117,10 +126,11 @@ if __name__ == "__main__":
         root = get_assets_root_path()
         if root is None:
             raise RuntimeError("Isaac assets root not found")
-        stage = Usd.Stage.Open(root + "/Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd")
+        profile = load_robot_profile(args.robot_type)
+        stage = Usd.Stage.Open(root + profile["simulation"]["asset"])
         if stage is None:
             raise RuntimeError("Cannot load Carter asset")
-        report = validate(stage)
+        report = validate(stage, profile)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + "\n")

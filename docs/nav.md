@@ -53,10 +53,14 @@ flowchart TD
 
 1. 按原始訊息時間戳，使用 TF 把點轉到 `base_link`，去除非有限座標。
 2. 去除車身矩形內的點（x −0.20–0.65 m、y ±0.32 m，不限高度），並保留水平距離 0–20 m 的點。這一步先發布 `/perception/self_filtered_points`，保留地面、尚未體素降採樣，不是把車身附近整個圓形範圍排除。
-3. 從 `base_link` 高度 ±0.25 m 的候選點，以 RANSAC 估計近水平地面；目前至少需要 50 個地面內點，平面距離門檻為 0.04 m。
+3. 從 profile 指定的 `ground_z` 周圍 ±`ground_search_height` 的候選點，以 RANSAC 估計近水平地面；目前至少需要 50 個地面內點，平面距離門檻為 0.04 m。估計平面還必須通過距離 `(0, 0, ground_z)` 不超過 0.04 m 的驗證，避免把桌面當成地面。
 4. 依點到估計地面沿平面法線的有號距離，保留地面上方 0.06–2.0 m 的點，再以 0.08 m × 0.08 m × 0.08 m 體素降採樣，減少點數。
 
 因此它不只是原始點雲降採樣，還包含座標轉換、自體濾除與地面／高度篩選。輸出保留原始時間戳，座標系為 `base_link`。TF 無效時警告且不發布兩份點雲；找不到可靠地面時只停止發布 `/perception/obstacles`，self-filtered 分支仍可供 `/scan` 使用。導航時兩個來源都過期會由 watchdog 停車。
+
+`ground_z` 是地面在 `base_link` 的預期 z 座標（m），不是車體生成高度，也不是 USD 幾何最低點。它只寫在 `config/robots/<type>.yaml` 的 `parameter_overrides.ground_obstacle_filter.ros__parameters`，缺漏會在 profile 載入時報錯；Nova Carter 為 `0.0`，Carter v1 在 Office 的 LiDAR 點雲量測值為 `-0.24`。新增車種時，在平地將點雲轉到 `base_link`，量測地面平面在車體原點正下方的 z 值；保留平面驗證容差，不要藉由放大 `ground_distance` 接受錯誤地面。
+
+修改後可建置 `slam_nav`、`slam_localization_3d`，在 ROS 容器內執行 `python3 -m unittest discover -s tests -p test_ground_obstacle_filter.py -v`。測試包含零高度地面、輪軸座標的負高度地面、偏移後的搜尋範圍，以及錯誤高度必須拒絕發布。
 
 #### `/scan`：把高度切片投影成 2D 雷射
 

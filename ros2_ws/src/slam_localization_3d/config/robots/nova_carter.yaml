@@ -1,11 +1,13 @@
 # Robot-type profile: Nova Carter.
 #
-# Shared by Isaac Sim (standalone.py) and the ROS launch files. The base
-# navigation configs are Nova Carter's defaults; parameter_overrides repeats
-# every vehicle-specific value so this file is the template for a new robot
-# type (copy to config/robots/<type>.yaml and replace them; see
-# docs/multi_robot.md). test_robot_namespace keeps these values equal to the
-# base configs.
+# Shared by Isaac Sim (standalone.py) and the ROS launch files, and the template
+# for a new robot type (copy to config/robots/<type>.yaml and replace every value;
+# see docs/multi_robot.md). parameter_overrides lists every vehicle-specific value:
+# - Drive train, IMU and PCD covariance exist only here; the base files
+#   (local_odometry.yaml, global_fusion.yaml) omit them and launch fails if a
+#   profile lacks one (robot_fleet.REQUIRED_OVERRIDES).
+# - Footprint, safety zones and speeds also keep Nova Carter's values as the
+#   base-config defaults; test_robot_namespace keeps those copies equal.
 
 simulation:
   # Isaac asset path relative to the assets root.
@@ -79,6 +81,7 @@ parameter_overrides:
   # slam_nav/config/ground_obstacle_filter.yaml: [x_min, x_max, y_min, y_max]
   ground_obstacle_filter:
     ros__parameters:
+      ground_z: 0.0
       self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]
 
   # --- Safety zones, x/y pairs in base_link (config/collision_monitor.yaml) ---
