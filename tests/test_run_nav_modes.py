@@ -1,9 +1,10 @@
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 
-RUN_NAV = Path(__file__).resolve().parents[1] / "run_nav.sh"
+RUN_NAV = Path(__file__).resolve().parents[1] / "scripts/run_nav.sh"
 RUN_2D = RUN_NAV.with_name("run_2d_localization.sh")
 
 
@@ -15,6 +16,40 @@ def launch(*args):
 
 
 class TestRunNavModes(unittest.TestCase):
+    def test_help_uses_scripts_directory(self):
+        for name in ("run_nav.sh", "run_2d_localization.sh",
+                     "run_3d_localization.sh", "run_multi_nav.sh", "save_map.sh"):
+            script = RUN_NAV.with_name(name)
+            with self.subTest(script=name):
+                result = subprocess.run(
+                    [str(script), "--help"], capture_output=True, text=True,
+                    timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"scripts/{name}", result.stdout)
+
+    def test_relative_map_paths_do_not_depend_on_working_directory(self):
+        cases = (
+            (RUN_NAV, ("--mode", "2d", "--map", "missing.yaml"), "missing.yaml"),
+            (RUN_2D, ("--map", "missing.yaml"), "missing.yaml"),
+            (RUN_NAV, ("--mode", "3d", "--pcd", "missing.pcd"), "missing.pcd"),
+            (RUN_NAV.with_name("run_3d_localization.sh"),
+             ("--pcd", "missing.pcd"), "missing.pcd"),
+            (RUN_NAV.with_name("run_multi_nav.sh"),
+             ("--pcd", "missing.pcd"), "missing.pcd"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for script, args, filename in cases:
+                with self.subTest(script=script.name, args=args):
+                    result = subprocess.run(
+                        [str(script), *args], cwd=directory, capture_output=True,
+                        text=True, timeout=10, check=False,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(
+                        str(RUN_NAV.parents[1] / filename), result.stderr,
+                    )
+
     def test_mode_is_required(self):
         result = launch()
         self.assertEqual(result.returncode, 2)

@@ -1,16 +1,16 @@
 # 2D 與 3D 定位及導航架構
 
-`run_nav.sh --mode 2d` 使用 2D 定位：輪式里程計與 IMU 進 Local EKF，由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
+`scripts/run_nav.sh --mode 2d` 使用 2D 定位：輪式里程計與 IMU 進 Local EKF，由 Local EKF 發布 `odom -> base_link`；3D LiDAR 投影成 `/scan` 供 AMCL，由 AMCL **獨自**發布 `map -> odom`。沒有啟動 Global EKF 或 3D 定位。
 
-停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF 在缺少全域校正時繼續預測出不合理的位移。此入口將 2D 啟動交給可單獨執行的 `run_2d_localization.sh`。
+停車時 AMCL 若沒有新位姿，`map -> odom` 會保持不變，避免 Global EKF 在缺少全域校正時繼續預測出不合理的位移。此入口將 2D 啟動交給可單獨執行的 `scripts/run_2d_localization.sh`。
 
 3D 融合導航需使用與 PGM 同座標系的 PCD：停用 AMCL（PGM 只供 Nav2 costmap 使用），將 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2) 的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，由校正時效閘控節點（correction freshness gate，`global_tf_gate`）獨自發布 `map -> odom`。**2D AMCL 與 3D 融合模式不能同時發布這條 TF。**
 
-獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作方式見 [`ros2_ws/README.md`](../ros2_ws/README.md)。
+獨立的 3D 定位模式已由 `isaac_localization_3d` 套件及 `./scripts/run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作方式見 [`ros2_ws/README.md`](../ros2_ws/README.md)。
 
 ## 只有 PGM：純 2D 定位（目前已實作）
 
-以下是 `run_nav.sh --mode 2d` 的定位資料流；PGM 同時可供後續 Nav2 的 global costmap 使用。此模式不載入 PCD、不啟動 FAST_LIO_LOCALIZATION2 或 Global EKF。
+以下是 `scripts/run_nav.sh --mode 2d` 的定位資料流；PGM 同時可供後續 Nav2 的 global costmap 使用。此模式不載入 PCD、不啟動 FAST_LIO_LOCALIZATION2 或 Global EKF。
 
 ```mermaid
 flowchart TD
@@ -37,7 +37,7 @@ flowchart TD
 
 ## PGM + PCD 模式：3D 定位與全域融合
 
-下圖只畫 `run_nav.sh --mode 3d` 的定位資料流，終點是兩條 TF。之後 costmap、planner、controller 與 recovery 的導航流程見 [`nav.md`](nav.md)。
+下圖只畫 `scripts/run_nav.sh --mode 3d` 的定位資料流，終點是兩條 TF。之後 costmap、planner、controller 與 recovery 的導航流程見 [`nav.md`](nav.md)。
 
 ```mermaid
 flowchart TD
@@ -102,8 +102,8 @@ flowchart TD
 
 | 模式                   | `map -> odom` 唯一發布者     | `odom -> base_link` |
 | :--------------------- | :--------------------------- | :------------------ |
-| `run_nav.sh --mode 2d` | AMCL（`amcl`，`tf_broadcast: true`） | Local EKF（`local_ekf`） |
-| `run_nav.sh --mode 3d` | 校正時效閘控節點（`global_tf_gate`） | Local EKF（`local_ekf`） |
+| `scripts/run_nav.sh --mode 2d` | AMCL（`amcl`，`tf_broadcast: true`） | Local EKF（`local_ekf`） |
+| `scripts/run_nav.sh --mode 3d` | 校正時效閘控節點（`global_tf_gate`） | Local EKF（`local_ekf`） |
 
 LiDAR 與 IMU 的固定座標轉換由 `robot_state_publisher` 或 static TF 提供。
 
@@ -126,12 +126,12 @@ Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速�
 
 | 入口                                | 功能                                                                             |
 | :---------------------------------- | :------------------------------------------------------------------------------- |
-| `./run_3d_localization.sh`          | 獨立 3D 配準展示，不啟動融合導航                                                 |
-| `./run_nav.sh --mode 2d`            | PGM + AMCL 定位                                                                  |
-| `./run_nav.sh --mode 3d`            | PCD 融合與 costmap 觀察，不啟動自動導航                                          |
-| `./run_nav.sh --mode 3d --navigate` | 再啟動 Nav2 planner、controller 與導航，從 RViz「2D Goal Pose」發送 `/goal_pose` |
+| `./scripts/run_3d_localization.sh`          | 獨立 3D 配準展示，不啟動融合導航                                                 |
+| `./scripts/run_nav.sh --mode 2d`            | PGM + AMCL 定位                                                                  |
+| `./scripts/run_nav.sh --mode 3d`            | PCD 融合與 costmap 觀察，不啟動自動導航                                          |
+| `./scripts/run_nav.sh --mode 3d --navigate` | 再啟動 Nav2 planner、controller 與導航，從 RViz「2D Goal Pose」發送 `/goal_pose` |
 
-`run_nav.sh --mode 3d` 會以 `--global-fusion --costmaps` 呼叫 `run_3d_localization.sh`；若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
+`scripts/run_nav.sh --mode 3d` 會以 `--global-fusion --costmaps` 呼叫 `scripts/run_3d_localization.sh`；若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./scripts/run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
 
 加上 `--navigate` 後的 costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈見 [`nav.md`](nav.md)。導航時不能同時使用鍵盤或 auto-jog。
 

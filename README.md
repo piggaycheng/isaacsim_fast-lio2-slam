@@ -8,7 +8,7 @@
 
 - Linux、NVIDIA GPU 與可用的 NVIDIA 驅動。
 - Docker、Docker Compose v2、NVIDIA Container Toolkit。
-- Isaac Sim 安裝在 `/home/user/isaacsim-6.1.0`；目前腳本使用此路徑，若安裝位置不同，需調整 `standalone.py` 的 shebang 與測試腳本中的 `isaac_python`。
+- Isaac Sim 安裝在 `/home/user/isaacsim-6.1.0`；目前腳本使用此路徑，若安裝位置不同，需調整 `scripts/standalone.py` 的 shebang 與測試腳本中的 `isaac_python`。
 - GUI 模式需要可用的 X11／XWayland 顯示環境及 `DISPLAY`；若使用 Xauthority 驗證，需設定 `XAUTHORITY` 指向可用的授權檔。
 - Isaac Sim 的 Office／Nova Carter 資產需可存取。
 
@@ -37,12 +37,12 @@ docker compose run --rm ros build --packages-select isaac_localization_3d
 
 ## 2. 各個 sh 如何使用
 
-以下指令皆在**專案根目錄**執行。一般啟動腳本會自動啟動 ROS container、RViz 與 Isaac Sim，按 **Ctrl+C** 結束並清理 container。除多車模式外，不要同時啟動多套建圖／定位／導航腳本。
+專案級啟動腳本與 Python 工具集中在 `scripts/`；ROS 套件、`docker/` 與 `tests/` 內的腳本維持原位。以下指令皆在**專案根目錄**執行，地圖等資料仍放在 `maps/`。一般啟動腳本會自動啟動 ROS container、RViz 與 Isaac Sim，按 **Ctrl+C** 結束並清理 container。除多車模式外，不要同時啟動多套建圖／定位／導航腳本。
 
 ### 建圖與存圖
 
 ```bash
-./run_slam.sh
+./scripts/run_slam.sh
 ```
 
 啟動 FAST-LIO2、PGO 回環與 RViz。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車。
@@ -50,29 +50,29 @@ docker compose run --rm ros build --packages-select isaac_localization_3d
 建圖期間保持上述程式運行，另開終端存圖：
 
 ```bash
-./save_map.sh
-./save_map.sh --output-dir maps/office --voxel-size 0.05 --save-patches true
+./scripts/save_map.sh
+./scripts/save_map.sh --output-dir maps/office --voxel-size 0.05 --save-patches true
 ```
 
 預設輸出到 `maps/office`，包含 `map.pcd`、`poses.txt` 與 keyframe `patches/`。導航所需的 2D 地圖可再由 PCD 轉換：
 
 ```bash
-./pcd2pgm.py
+./scripts/pcd2pgm.py
 ```
 
 ### 單車定位與導航
 
 | 腳本 | 用途與範例 |
 |---|---|
-| `run_nav.sh` | 統一入口，必須指定 `--mode 2d` 或 `--mode 3d` |
-| `run_2d_localization.sh` | 2D AMCL 定位；例如 `./run_2d_localization.sh --map maps/office/map_2d.yaml` |
-| `run_3d_localization.sh` | 3D ICP 定位顯示；加 `--global-fusion` 啟動輪速／IMU／PCD 融合 |
+| `scripts/run_nav.sh` | 統一入口，必須指定 `--mode 2d` 或 `--mode 3d` |
+| `scripts/run_2d_localization.sh` | 2D AMCL 定位；例如 `./scripts/run_2d_localization.sh --map maps/office/map_2d.yaml` |
+| `scripts/run_3d_localization.sh` | 3D ICP 定位顯示；加 `--global-fusion` 啟動輪速／IMU／PCD 融合 |
 
 ```bash
-./run_nav.sh --mode 2d                 # AMCL 定位，不啟動自主導航
-./run_nav.sh --mode 3d                 # PCD 融合定位與 costmap 觀察，不啟動自主導航
-./run_nav.sh --mode 3d --navigate      # 完整 Nav2 導航
-./run_3d_localization.sh              # 獨立的 3D 定位顯示
+./scripts/run_nav.sh --mode 2d                 # AMCL 定位，不啟動自主導航
+./scripts/run_nav.sh --mode 3d                 # PCD 融合定位與 costmap 觀察，不啟動自主導航
+./scripts/run_nav.sh --mode 3d --navigate      # 完整 Nav2 導航
+./scripts/run_3d_localization.sh              # 獨立的 3D 定位顯示
 ```
 
 導航堆疊啟動完成後，用 RViz 的 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。
@@ -80,25 +80,25 @@ docker compose run --rm ros build --packages-select isaac_localization_3d
 常用參數：
 
 - `--headless`：關閉 Isaac GUI；`--no-rviz`：關閉 RViz，兩者可一起使用。
-- `--map FILE`：指定地圖 YAML，不是直接指定 PGM；直接使用 `run_3d_localization.sh` 時改用 `--pgm FILE`。
+- `--map FILE`：指定地圖 YAML，不是直接指定 PGM；直接使用 `scripts/run_3d_localization.sh` 時改用 `--pgm FILE`。
 - `--pcd FILE`：指定 3D PCD 地圖（3D 模式）。
 - `--manual-initial-pose`：改用 RViz 的 **2D Pose Estimate** 手動初始化（3D 模式）。
 - `--box X,Y[,SX,SY,SZ]`：加入靜態箱子障礙物。
-- `--filter-editor`：RViz Keepout／Speed 區域標註，例如 `./run_nav.sh --mode 3d --navigate --filter-editor`。
+- `--filter-editor`：RViz Keepout／Speed 區域標註，例如 `./scripts/run_nav.sh --mode 3d --navigate --filter-editor`。
 
 ### 多車導航
 
 ```bash
-./run_multi_nav.sh                     # 預設生成兩台 Nova Carter
-./run_multi_nav.sh --robot carter1@0,0 --robot carter2@3.5,0,1.57
-./run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
+./scripts/run_multi_nav.sh                     # 預設生成兩台 Nova Carter
+./scripts/run_multi_nav.sh --robot carter1@0,0 --robot carter2@3.5,0,1.57
+./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 ```
 
 `--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定。位置單位為公尺、航向為弧度，車種預設 `nova_carter`。每車各有一個導航 container；RViz 的 **Fleet Control** 下拉選單選車，再按 **Set navigation goal** 並在地圖上拖曳。
 
 多車時 Isaac viewport 預設固定俯視，不跟隨第一台車。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。**目前沒有車輛間的路權／交通協調**，狹窄通道可能互相卡住。
 
-各腳本完整參數可用 `--help` 查看；`run_slam.sh` 沒有參數介面。
+各腳本完整參數可用 `--help` 查看；`scripts/run_slam.sh` 沒有參數介面。
 
 ### 內部腳本
 

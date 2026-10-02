@@ -1,7 +1,7 @@
 # FASTLIO2 ROS 2 bridge
 
 This workspace includes FASTLIO2_ROS2, `livox_ros_driver2`, Livox-SDK2, and
-Sophus 1.22.10 as Git submodules. `standalone.py` publishes:
+Sophus 1.22.10 as Git submodules. `scripts/standalone.py` publishes:
 
 - `/isaac/lidar_points` (`sensor_msgs/msg/PointCloud2`)
 - `/isaac/imu` (`sensor_msgs/msg/Imu`)
@@ -19,10 +19,10 @@ publishes the corrected input on `/livox/imu`.
 
 `src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
 `src/isaac_localization_3d` contains the separate 3D localization launch,
-ROS pose/TF publisher, and RViz configuration. `run_nav.sh --mode 3d` starts
+ROS pose/TF publisher, and RViz configuration. `scripts/run_nav.sh --mode 3d` starts
 this package; `--mode 2d` uses `isaac_localization_2d` and shared `isaac_nav` inputs. The Docker
 workspace build below also builds the 3D packages. Launch the Office
-simulator and RViz together with `./run_3d_localization.sh` (use `--help` for
+simulator and RViz together with `./scripts/run_3d_localization.sh` (use `--help` for
 map, headless, and initialization options). The Office spawn near `(0, 0)` is
 sent as an approximate initial pose by default; use RViz's **2D Pose Estimate**
 to reinitialize at the robot's current location, or `--manual-initial-pose`
@@ -34,14 +34,14 @@ synthesizing RGB/intensity or changing the original `/isaac/lidar_points`
 FAST-LIO input. The redundant `/cur_scan_in_map` copy is not published;
 ICP still consumes `/cloud_registered` directly. This mode owns
 `map -> camera_init` only;
-do not run it alongside `run_nav.sh`, whose AMCL owns `map -> odom`.
+do not run it alongside `scripts/run_nav.sh`, whose AMCL owns `map -> odom`.
 
 ## Docker setup
 
 The ROS 2 Humble nodes (FASTLIO2, PGO, localization, Nav2 and RViz) run in the
-`ros` Docker Compose service; Isaac Sim (`standalone.py`) runs on the host.
+`ros` Docker Compose service; Isaac Sim (`scripts/standalone.py`) runs on the host.
 Requirements: Docker with Compose v2, the NVIDIA Container Toolkit, an X11
-display, and Isaac Sim installed at the path in `standalone.py`'s shebang. The host
+display, and Isaac Sim installed at the path in `scripts/standalone.py`'s shebang. The host
 does not need ROS 2.
 
 `docker/Dockerfile` installs every apt/pip dependency (GTSAM, Nav2,
@@ -64,7 +64,7 @@ user matches UID/GID 1000 by default; if your IDs differ, build with
 `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build`.
 
 Each `run_*.sh` script validates its options, starts the `ros` service with
-`docker compose up`, follows its logs, then launches `standalone.py` on the
+`docker compose up`, follows its logs, then launches `scripts/standalone.py` on the
 host with matching options. The container is stopped when Isaac Sim exits or
 on Ctrl+C. The container uses host networking and IPC, so DDS (including
 shared-memory transport) reaches Isaac Sim's ROS 2 bridge directly;
@@ -83,7 +83,7 @@ Run the GUI simulation, adapters, FASTLIO2, its existing PGO backend, and RViz
 together:
 
 ```bash
-./run_slam.sh
+./scripts/run_slam.sh
 ```
 
 RViz opens with `lidar` as its fixed frame and displays
@@ -103,22 +103,22 @@ FASTLIO2 submodule is restored after the build so it remains clean.
 Save the optimized PCD map and optional keyframe patches after mapping:
 
 ```bash
-./save_map.sh
+./scripts/save_map.sh
 ```
 
-Run `./save_map.sh --help` to list the named options. The output directory
+Run `./scripts/save_map.sh --help` to list the named options. The output directory
 defaults to `maps/office`, keyframe patch saving defaults to `true`, and the
 voxel size defaults to the PGO configuration. For example, save with 5 cm
 voxels using:
 
 ```bash
-./save_map.sh --voxel-size 0.05
+./scripts/save_map.sh --voxel-size 0.05
 ```
 
 To select every option explicitly:
 
 ```bash
-./save_map.sh \
+./scripts/save_map.sh \
   --output-dir maps/office \
   --save-patches false \
   --voxel-size 0.1
@@ -137,7 +137,7 @@ verify a closure.
 Convert the optimized 3D PCD into a Nav2-compatible 2D occupancy map:
 
 ```bash
-./pcd2pgm.py
+./scripts/pcd2pgm.py
 ```
 
 The defaults read `maps/office/map.pcd` and write
@@ -145,7 +145,7 @@ The defaults read `maps/office/map.pcd` and write
 points between 0.1 m and 2.0 m at 0.05 m resolution. For example:
 
 ```bash
-./pcd2pgm.py maps/office/map.pcd maps/office/map_2d \
+./scripts/pcd2pgm.py maps/office/map.pcd maps/office/map_2d \
   --z-min 0.1 --z-max 2.0 --resolution 0.05
 ```
 
@@ -156,7 +156,7 @@ merged PCD contains obstacle returns but not the original LiDAR rays, the
 converter cannot reconstruct observed free and unknown space exactly; its
 default free background matches common PCD-to-PGM tools.
 
-The IMU is colocated with the RTX LiDAR in `standalone.py`, so the supplied
+The IMU is colocated with the RTX LiDAR in `scripts/standalone.py`, so the supplied
 `isaac_lio.yaml` uses identity LiDAR-to-IMU extrinsics. Drive Carter with
 W/S/A/D or the arrow keys; press Space to stop. The main Isaac Sim viewport
 automatically follows Carter from behind while jogging.
@@ -192,24 +192,24 @@ skips the replacement once the apt tf2 contains the fix.
 Start Isaac Sim and the 2D localization stack with the default Office map:
 
 ```bash
-./run_nav.sh --mode 2d
+./scripts/run_nav.sh --mode 2d
 ```
 
-`run_nav.sh` requires `--mode` and delegates 2D startup to
-`run_2d_localization.sh`; the latter can also be run directly with the same
+`scripts/run_nav.sh` requires `--mode` and delegates 2D startup to
+`scripts/run_2d_localization.sh`; the latter can also be run directly with the same
 2D options, without `--mode`.
 
 The default map is `maps/office/map_2d.yaml`; that YAML loads
 `maps/office/map_2d.pgm`. Select another Nav2 map YAML with:
 
 ```bash
-./run_nav.sh --mode 2d --map maps/warehouse/map.yaml
+./scripts/run_nav.sh --mode 2d --map maps/warehouse/map.yaml
 ```
 
 For a headless automatic localization test:
 
 ```bash
-./run_nav.sh --mode 2d --headless --auto-jog --no-rviz
+./scripts/run_nav.sh --mode 2d --headless --auto-jog --no-rviz
 ```
 
 The localization stack:
@@ -238,7 +238,7 @@ updates. To test PCD-based **global fusion without Nav2 costmaps**, build the
 workspace (see [Docker setup](#docker-setup)), then use:
 
 ```bash
-./run_3d_localization.sh --global-fusion
+./scripts/run_3d_localization.sh --global-fusion
 ```
 
 This isolated mode uses 3D map registration as a gated global pose observation
@@ -257,7 +257,7 @@ this is a 2D obstacle projection, **not** ground segmentation or a 3D costmap.
 Obstacles below 0.1 m or beyond the sensor/range limits may be missed; Nav2
 does not consume `/scan` until its costmap is configured and launched.
 For experimental 3D perception, run
-`./run_3d_localization.sh --global-fusion --obstacle-cloud`.
+`./scripts/run_3d_localization.sh --global-fusion --obstacle-cloud`.
 The optional ground filter transforms the raw LiDAR cloud into `base_link`,
 fits a near-horizontal ground plane with RANSAC, and publishes height-limited,
 8 cm voxelized `/perception/obstacles` as a `PointCloud2`. It warns and
@@ -267,21 +267,21 @@ motion, or handle ramps; it is not safe obstacle avoidance.
 To observe Nav2 costmaps without starting a planner or controller:
 
 ```bash
-./run_3d_localization.sh --global-fusion --costmaps
+./scripts/run_3d_localization.sh --global-fusion --costmaps
 ```
 
-The unified entry point is `./run_nav.sh --mode 3d`. It launches this same
+The unified entry point is `./scripts/run_nav.sh --mode 3d`. It launches this same
 PCD fusion and costmap observation mode, not autonomous driving. Both modes
 require `--mode` explicitly: `2d` starts AMCL, while `3d` starts PCD localization
 and costmaps without AMCL. `--map` selects a PGM map in either mode; `--pcd`
 and `--manual-initial-pose` apply only to `3d`. The separate
-`run_3d_localization.sh` remains available directly for its visualization-only and
+`scripts/run_3d_localization.sh` remains available directly for its visualization-only and
 fusion-without-costmaps variants. Never run the modes concurrently.
 
 To navigate with Nav2 in the Office simulation, start:
 
 ```bash
-./run_nav.sh --mode 3d --navigate
+./scripts/run_nav.sh --mode 3d --navigate
 ```
 
 After the planner, controller and navigator report active, click RViz's
@@ -292,7 +292,7 @@ this RViz tool does not drive Carter. The navigation architecture (costmaps,
 planner/controller, recovery and the `cmd_vel` safety chain) is described in
 `docs/nav.md`; the localization data flow is in `docs/3d_localization.md`.
 
-For live RViz annotation, run `./run_nav.sh --mode 3d --navigate --filter-editor`.
+For live RViz annotation, run `./scripts/run_nav.sh --mode 3d --navigate --filter-editor`.
 Use **Publish Point** to draw polygon vertices, then **Interact** and right-click
 the draft's center cube to apply Keepout or a percentage Speed zone. Existing
 zones have menus for vertex editing and deletion. Updates are published live and
@@ -309,8 +309,8 @@ waits for both masks before activation. See `docs/nav.md` for the workflow
 and limitations.
 
 For experimental speed-adaptive Surround on Humble, run
-`./run_nav.sh --mode 3d --navigate --adaptive-surround` (or
-`run_3d_localization.sh --global-fusion --navigate --adaptive-surround`).
+`./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround` (or
+`scripts/run_3d_localization.sh --global-fusion --navigate --adaptive-surround`).
 The default remains the original fixed Surround. The opt-in selector atomically
 switches native polygon enable flags, not unsupported runtime point updates:
 full x [-0.80, 1.10], y +/-0.75 m; crawl x [-0.45, 0.90], y +/-0.55 m.
@@ -509,7 +509,7 @@ meters; repeat it for more boxes. It works in both modes. Carter spawns at
 (0, 0) facing -x, and x from -1 to 4.5 m is open floor, for example:
 
 ```bash
-./run_nav.sh --mode 3d --navigate --box 2.0,0.0
+./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0
 ```
 
 The box is not in the saved PGM/PCD maps; the costmaps only see it through the
@@ -528,8 +528,8 @@ other maps or a different starting location. Both costmaps use the same
 `base_link`-relative rectangular footprint (front 0.65 m, rear 0.20 m, left
 and right 0.32 m). It approximates the Nova Carter USD body and wheels with
 about 6 cm of clearance; replace it when changing robots. To measure another
-robot, run the repository-root `usd_bbox.py` with Isaac Sim's Python, for example
-`./usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd --frame chassis_link --yaw-deg 180 --padding 0.06`
+robot, run `scripts/usd_bbox.py` from the repository root with Isaac Sim's Python, for example
+`./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd --frame chassis_link --yaw-deg 180 --padding 0.06`
 (Carter's ROS `base_link` is USD `chassis_link` turned 180°). It prints the
 bounding box and a Nav2 `footprint` string (`--shape hull` for a convex hull,
 `--json` for machine-readable output). The collision_monitor stop and slowdown
@@ -540,7 +540,7 @@ Low obstacles absent from the height-filtered
 `/scan` might not clear reliably after moving; verify marking and clearing
 in your scene before using these layers for navigation. Without `--navigate`,
 this mode does not publish driving commands or start autonomous navigation.
-Do not run it alongside `run_nav.sh` or the original 3D demo. Custom PCD/PGM
+Do not run it alongside `scripts/run_nav.sh` or the original 3D demo. Custom PCD/PGM
 maps require `--manual-initial-pose` and an approximate position from RViz.
 The ICP node publishes its registration covariance; the adapter adds the
 calibrated `min_covariance_xy/yaw` floors and stamps the pose with the FAST-LIO
@@ -553,4 +553,4 @@ covariance geometry: unobserved height/tilt axes carry deliberately large
 variances and otherwise draw misleading vertical lines. Covariance remains in
 the published message for the EKF.
 
-Use `./run_nav.sh --help` for all options.
+Use `./scripts/run_nav.sh --help` for all options.

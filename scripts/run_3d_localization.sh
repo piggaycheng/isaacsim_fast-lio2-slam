@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/docker/ros_compose.sh"
 map_pcd="$project_dir/maps/office/map.pcd"
 map_pgm="$project_dir/maps/office/map_2d.yaml"
@@ -22,10 +22,10 @@ boxes=()
 
 usage() {
   cat <<'EOF'
-Usage: ./run_3d_localization.sh [OPTIONS]
+Usage: ./scripts/run_3d_localization.sh [OPTIONS]
 
 Run Isaac Sim Office and isolated FAST_LIO_LOCALIZATION2 with a PGM map in RViz.
-Do not run this alongside run_nav.sh.
+Do not run this alongside scripts/run_nav.sh.
 
 Options:
       --pcd FILE      PCD map used by 3D ICP (default: maps/office/map.pcd).
@@ -180,4 +180,4 @@ if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then isaac_args+=(--auto-jog); fi
 if [[ "$navigate" == true || "$ros_cmd_vel" == true ]]; then isaac_args+=(--ros-cmd-vel); fi
 isaac_args+=("${boxes[@]}")
-"$project_dir/standalone.py" "${isaac_args[@]}"
+"$project_dir/scripts/standalone.py" "${isaac_args[@]}"

@@ -25,7 +25,7 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 
 1. **先確認幾何設定**：輪徑、輪距、LiDAR 外參先填入新車的量測值，並重新建置。
 2. **啟動定位（不啟動 Nav2）**：
-   - Isaac Sim：`./run_3d_localization.sh --global-fusion --ros-cmd-vel`
+   - Isaac Sim：`./scripts/run_3d_localization.sh --global-fusion --ros-cmd-vel`
    - 真車：啟動相同的定位節點，並確保 `/cmd_vel` 可以驅動底盤，周圍需要至少約 1.5 m 的淨空。
 3. **錄製 rosbag**：Isaac Sim 模式下，ROS 節點跑在 `ros` 容器內，以下 ROS 指令都透過 `docker compose exec` 在容器中執行。容器的工作目錄 `/workspace` 就是專案目錄，bag 會存到專案內。
    ```bash

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/docker/ros_compose.sh"
 map_file="$project_dir/maps/office/map_2d.yaml"
 headless=false
@@ -11,7 +11,7 @@ boxes=()
 
 usage() {
   cat <<'EOF'
-Usage: ./run_2d_localization.sh [OPTIONS]
+Usage: ./scripts/run_2d_localization.sh [OPTIONS]
 
 Launch Isaac Sim and the 2D AMCL localization stack.
 
@@ -27,9 +27,9 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ./run_2d_localization.sh
-  ./run_2d_localization.sh --map maps/warehouse/map.yaml
-  ./run_2d_localization.sh --headless --auto-jog --no-rviz
+  ./scripts/run_2d_localization.sh
+  ./scripts/run_2d_localization.sh --map maps/warehouse/map.yaml
+  ./scripts/run_2d_localization.sh --headless --auto-jog --no-rviz
 EOF
 }
 
@@ -123,4 +123,4 @@ if [[ "$auto_jog" == true ]]; then
 fi
 isaac_args+=("${boxes[@]}")
 
-"$project_dir/standalone.py" "${isaac_args[@]}"
+"$project_dir/scripts/standalone.py" "${isaac_args[@]}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 map_pgm="$project_dir/maps/office/map_2d.yaml"
 map_pcd="$project_dir/maps/office/map.pcd"
 headless=false
@@ -12,7 +12,7 @@ boxes=()
 
 usage() {
   cat <<'EOF'
-Usage: ./run_multi_nav.sh [OPTIONS]
+Usage: ./scripts/run_multi_nav.sh [OPTIONS]
 
 Launch Isaac Sim with several robots. Each robot runs its own 3D localization
 and Nav2 stack in its own container (Compose project isaacsim-fastlio2-NAME),
@@ -41,8 +41,8 @@ Or send a goal directly:
   ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose ...
 
 Examples:
-  ./run_multi_nav.sh
-  ./run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
+  ./scripts/run_multi_nav.sh
+  ./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 EOF
 }
 
@@ -126,4 +126,4 @@ isaac_args=(--ros-cmd-vel --lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 for robot in "${robots[@]}"; do isaac_args+=(--robot "$robot"); done
 isaac_args+=("${boxes[@]}")
-"$project_dir/standalone.py" "${isaac_args[@]}"
+"$project_dir/scripts/standalone.py" "${isaac_args[@]}"

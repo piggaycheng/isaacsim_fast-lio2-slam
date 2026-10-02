@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/docker/ros_compose.sh"
 output_dir="$project_dir/maps/office"
 save_patches="true"
@@ -88,11 +88,11 @@ container_output_dir="$(container_path "$output_dir")"
 mkdir -p "$output_dir"
 
 if [[ -z "$(ros_compose ps --status running --quiet ros 2>/dev/null)" ]]; then
-  echo "The ROS container is not running. Start ./run_slam.sh before saving." >&2
+  echo "The ROS container is not running. Start ./scripts/run_slam.sh before saving." >&2
   exit 1
 fi
 if [[ "$(ros_exec ros2 service type /pgo/save_maps 2>/dev/null || true)" != "interface/srv/SaveMaps" ]]; then
-  echo "/pgo/save_maps is unavailable. Start ./run_slam.sh before saving." >&2
+  echo "/pgo/save_maps is unavailable. Start ./scripts/run_slam.sh before saving." >&2
   exit 1
 fi
 

@@ -54,7 +54,7 @@ trap 'exit 143' TERM
 
 isaac_args=(--headless --ros-cmd-vel --lidar-motion-compensation noncompensated)
 for robot in "${robots[@]}"; do isaac_args+=(--robot "$robot"); done
-"$isaac_python" "$project_dir/standalone.py" "${isaac_args[@]}" > "$directory/isaac.log" 2>&1 &
+"$isaac_python" "$project_dir/scripts/standalone.py" "${isaac_args[@]}" > "$directory/isaac.log" 2>&1 &
 sim_pid=$!
 
 relative="${directory#"$project_dir"/}"

@@ -1,8 +1,8 @@
 # Nav2 導航架構
 
-本文件說明 `./run_nav.sh --mode 3d --navigate` 的導航流程：costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈。定位如何產生 `map -> odom` 和 `odom -> base_link` 見 [`3d_localization.md`](3d_localization.md)。
+本文件說明 `./scripts/run_nav.sh --mode 3d --navigate` 的導航流程：costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈。定位如何產生 `map -> odom` 和 `odom -> base_link` 見 [`3d_localization.md`](3d_localization.md)。
 
-- 只有 3D 模式有導航；`run_nav.sh --mode 2d` 只做 AMCL 定位，不啟動 Nav2。
+- 只有 3D 模式有導航；`scripts/run_nav.sh --mode 2d` 只做 AMCL 定位，不啟動 Nav2。
 - 不加 `--navigate` 時，只以 `costmap_observer` 啟動兩張 costmap 供 RViz 觀察，不啟動 planner、controller，也不發布行駛命令。
 - Nav2 設定檔在 `ros2_ws/src/isaac_localization_3d/config/`，感測前處理設定在 `ros2_ws/src/isaac_nav/config/`；啟動檔是 `isaac_localization_3d/launch/global_fusion.launch.py`。
 
@@ -169,7 +169,7 @@ flowchart LR
 不需預先製作遮罩圖片，editor 會以 `/map` 的尺寸、解析度與原點建立兩張空白遮罩：
 
 ```bash
-./run_nav.sh --mode 3d --navigate --filter-editor
+./scripts/run_nav.sh --mode 3d --navigate --filter-editor
 ```
 
 1. 保持 RViz **Fixed Frame = map**，選工具列的 **Publish Point**，依序點出多邊形頂點。不要再次點第一個點，套用時會自動閉合；黃色輪廓是尚未套用的草稿。
@@ -214,7 +214,7 @@ Binary filter 尚未實作；它用於區域開關事件，不是 Keepout 或 Sp
 測試時可用 `--box` 在 Isaac 場景放一個靜態箱子。箱子不在 PGM/PCD 地圖裡，只靠 LiDAR 進入 costmap：
 
 ```bash
-./run_nav.sh --mode 3d --navigate --box 2.0,0.0
+./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0
 ```
 
 從 RViz 送 (3.5, 0) 的目標，路徑會繞過箱子。
@@ -350,7 +350,7 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 固定停車區需在車體輪廓外預留感測與控制延遲、物理煞停行程及安全裕度；發布零速不代表車體瞬間停止。`FootprintApproach` 使用 local costmap 發布的 footprint，但固定停車／減速區不會隨 footprint 自動更新。換車或提高速度時需重新調整並驗證，不能只修改 footprint。
 
-預設仍是上述固定區域。可用 `./run_nav.sh --mode 3d --navigate --adaptive-surround` 選用實驗性的兩段式速度自適應 Surround（`adaptive_surround.yaml`）；Humble 沒有原生 `VelocityPolygon`，因此不是不停更新 `points`，而是透過原生 `.enabled` 的原子參數服務切換兩個預先設定的區域：
+預設仍是上述固定區域。可用 `./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround` 選用實驗性的兩段式速度自適應 Surround（`adaptive_surround.yaml`）；Humble 沒有原生 `VelocityPolygon`，因此不是不停更新 `points`，而是透過原生 `.enabled` 的原子參數服務切換兩個預先設定的區域：
 
 | 模式 | Surround（`base_link`） | 速度上限 |
 | :-- | :-- | :-- |

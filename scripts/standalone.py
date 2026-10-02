@@ -1,4 +1,4 @@
-#!/home/user/isaacsim-6.1.0/python.sh
+#!/home/yu/isaacsim-6.1.0/python.sh
 
 import argparse
 import math
@@ -9,7 +9,7 @@ from cmd_vel_control import receiver_for
 from isaacsim import SimulationApp
 
 sys.path.insert(
-    0, str(Path(__file__).resolve().parent / "ros2_ws/src/isaac_localization_3d/launch"),
+    0, str(Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/launch"),
 )
 from robot_fleet import (  # noqa: E402
     DEFAULT_ROBOT_TYPE, RobotSpec, load_robot_profile, namespaced_topic, parse_robot_specs,

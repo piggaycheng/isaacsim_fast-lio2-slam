@@ -9,11 +9,11 @@ local extent.
 Examples:
   # Nova Carter footprint in ROS base_link (chassis_link turned 180 deg, since
   # Carter drives toward USD -x), padded by 6 cm:
-  ./usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd \
+  ./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd \
       --frame chassis_link --yaw-deg 180 --padding 0.06
 
   # Any local file, whole default prim in its own frame:
-  ./usd_bbox.py path/to/asset.usd
+  ./scripts/usd_bbox.py path/to/asset.usd
 """
 
 import argparse

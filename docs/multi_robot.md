@@ -3,10 +3,10 @@
 一個腳本啟動 Isaac Sim、依參數生成 N 台車，每台車一個獨立的導航 container（與部署到真車時一車一台電腦相同），再加上一個顯示全部車輛的 RViz。
 
 ```bash
-./run_multi_nav.sh                                   # 預設 carter1@0,0 與 carter2@3.5,0
-./run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
-./run_multi_nav.sh --headless --no-rviz              # 無 GUI
-./run_multi_nav.sh --help
+./scripts/run_multi_nav.sh                                   # 預設 carter1@0,0 與 carter2@3.5,0
+./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
+./scripts/run_multi_nav.sh --headless --no-rviz              # 無 GUI
+./scripts/run_multi_nav.sh --help
 ```
 
 車輛規格：`NAME[:TYPE]@X,Y[,YAW]`
@@ -23,7 +23,7 @@
 
 ```mermaid
 flowchart LR
-  subgraph Isaac[Isaac Sim standalone.py]
+  subgraph Isaac[Isaac Sim scripts/standalone.py]
     R1[carter1] & R2[carter2]
   end
   subgraph C1[container isaacsim-fastlio2-carter1]
@@ -47,7 +47,7 @@ flowchart LR
   - 機體座標系的 topic（`scan`、`perception/obstacles`、collision monitor polygon）轉發到 `/fleet/NAME/...` 並改寫 `frame_id`。
   - 位於 `map` 座標系的 topic（路徑、global footprint、`odometry/global`、global costmap、地圖）RViz 直接訂閱 `/NAME/...`，不需轉發。
   - RViz 設定由 `robot_fleet.fleet_rviz()` 產生：每車一個顏色的 display group，加上 **Fleet Control** 選車面板及一組共用的「2D Pose Estimate／2D Goal Pose」工具。
-- Isaac 端：`standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic。`/clock` 只由第一台車發佈；`/diagnostics` 為全域共用。
+- Isaac 端：`scripts/standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic。`/clock` 只由第一台車發佈；`/diagnostics` 為全域共用。
 
 ## 送導航目標
 
@@ -118,7 +118,7 @@ ros2 launch isaac_localization_3d global_fusion.launch.py \
 ## 目前限制
 
 - 車輛之間沒有協調：彼此只當作 LiDAR 看到的障礙物，沒有路權、預約或交通管理；RPP 不會主動繞開移動中的障礙（含其他車），兩車對向時可能互相卡住（Surround 區域）。
-- 鍵盤操控只控制第一台車（多車時 `run_multi_nav.sh` 使用 ROS `cmd_vel`，鍵盤已停用）。
+- 鍵盤操控只控制第一台車（多車時 `scripts/run_multi_nav.sh` 使用 ROS `cmd_vel`，鍵盤已停用）。
 - `filter_editor`（Keepout／Speed 標註）與單車的 validation 場景仍只支援單車。
 - Fleet RViz 不顯示 local costmap（位於 `odom` 且 Nav2 只送增量更新）。
 - 兩台以上車輛時模擬速度約為即時的 0.8 倍，車數增加後的效能未驗證。

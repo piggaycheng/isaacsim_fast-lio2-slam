@@ -62,7 +62,7 @@ export ROS_LAUNCH_ARGS="$(printf '%s\n' \
   rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true \
   adaptive_surround:="$adaptive_surround")"
 compose up -d ros
-"$isaac_python" "$project_dir/standalone.py" --headless --ros-cmd-vel \
+"$isaac_python" "$project_dir/scripts/standalone.py" --headless --ros-cmd-vel \
   --lidar-motion-compensation noncompensated --validation-control-dir "$directory" \
   > "$directory/isaac.log" 2>&1 &
 sim_pid=$!

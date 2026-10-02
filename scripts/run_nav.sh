@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode=""
 map_file="$project_dir/maps/office/map_2d.yaml"
 map_pcd=""
@@ -17,7 +17,7 @@ boxes=()
 
 usage() {
   cat <<'EOF'
-Usage: ./run_nav.sh --mode {2d|3d} [OPTIONS]
+Usage: ./scripts/run_nav.sh --mode {2d|3d} [OPTIONS]
 
 Launch Isaac Sim with exactly one localization mode.
 
@@ -43,9 +43,9 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ./run_nav.sh --mode 2d
-  ./run_nav.sh --mode 3d --headless --no-rviz
-  ./run_nav.sh --mode 3d --navigate --box 2.0,0.0
+  ./scripts/run_nav.sh --mode 2d
+  ./scripts/run_nav.sh --mode 3d --headless --no-rviz
+  ./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0
 EOF
 }
 
@@ -124,7 +124,7 @@ if [[ "$mode" == 2d ]]; then
     echo "--pcd, --manual-initial-pose, --navigate and costmap filters require --mode 3d" >&2
     exit 2
   fi
-  exec "$project_dir/run_2d_localization.sh" --map "$map_file" "${args[@]}"
+  exec "$project_dir/scripts/run_2d_localization.sh" --map "$map_file" "${args[@]}"
 fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
@@ -132,5 +132,5 @@ if [[ "$navigate" == true ]]; then args+=(--navigate); fi
 if [[ "$adaptive_surround" == true ]]; then args+=(--adaptive-surround); fi
 if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
 if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
-exec "$project_dir/run_3d_localization.sh" --global-fusion --costmaps \
+exec "$project_dir/scripts/run_3d_localization.sh" --global-fusion --costmaps \
   --pgm "$map_file" "${args[@]}"
