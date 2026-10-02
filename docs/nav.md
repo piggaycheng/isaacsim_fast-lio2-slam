@@ -385,7 +385,7 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
 | 0.5 秒未收到新的速度命令 | 發布零速；下一個命令從零起步 |
 | 選用 adaptive 模式，但缺少有效限速心跳或正等待切換確認 | 發布零速；否則套用目前區域的線／角速度上限 |
-| 其他 | 限速 0.75 m/s、0.7 rad/s，再限制加速；減速與停車立即轉發 |
+| 其他 | 限速 `max_linear_speed` 0.75 m/s、`max_angular_speed` 0.7 rad/s（`collision_monitor.yaml`／車種 profile），再限制加速；減速與停車立即轉發 |
 
 最後一道關卡只限制速度大小增加：`max_linear_accel: 0.8` m/s²、`max_angular_accel: 1.5` rad/s²（`collision_monitor.yaml`，與 smoother 的 `max_accel` 一致）。collision monitor 發布零速、感測或定位校正過期、無效命令與 emergency stop 都立即歸零並重設起步狀態；安全停車不受減速度限制。恢復後必須收到新命令，從最後發布的零速逐步增加；倒退與原地旋轉也適用。方向反轉先輸出零速，再向相反方向加速。
 

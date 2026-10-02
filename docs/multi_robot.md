@@ -83,15 +83,19 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 
 ## 新增車種
 
-新增 `ros2_ws/src/slam_localization_3d/config/robots/<type>.yaml`，鍵值與 `nova_carter.yaml` 相同：
+複製 `ros2_ws/src/slam_localization_3d/config/robots/nova_carter.yaml` 成 `<type>.yaml` 並修改：
 
 | 鍵 | 用途 |
 | :-- | :-- |
 | `simulation.*` | Isaac 資產、articulation／LiDAR／IMU prim、輪子關節、輪徑、輪距、前進方向、生成高度 |
 | `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF |
-| `parameter_overrides` | 深度合併到含有該節點鍵的所有參數檔，例如 footprint、collision monitor 區域、self filter、輪速里程計參數 |
+| `parameter_overrides` | 深度合併到含有該節點鍵的所有參數檔（list 整個取代）。Carter profile 列出全部車種相關值：輪速里程計與 covariance、IMU covariance、PCD covariance floor、costmap footprint／inflation、self filter、collision monitor 與 adaptive surround 區域、速度與加速度上限 |
 
-接著以 `--robot NAME:<type>@X,Y` 使用。目前導航參數是為 Nova Carter 調校的，其他車種需透過 `parameter_overrides` 調整並自行驗證。
+接著以 `--robot NAME:<type>@X,Y` 使用。共用的 base 設定檔是 Nova Carter 的預設值，`nova_carter.yaml` 的 overrides 必須與其相同（`test_robot_namespace.py` 會檢查）；其他車種在自己的 profile 逐項替換並自行驗證。
+
+`sensor_frames.imu_link` 是 FAST-LIO body 的安裝位置：launch 把它以 `imu_mount` 參數傳給 `localization_3d_pose`、`global_pose_adapter`，反推 body → `base_link`；`covariance_calibration.py` 也由此推得 `--lio-body-to-base` 預設值。速度上限是 `cmd_vel_safety` 與 `adaptive_surround` 的 `max_linear_speed`／`max_angular_speed`。
+
+2D 定位模式（`localization_2d.launch.py`）仍不使用 profile，直接讀共用 YAML 與自己的靜態 TF，換車時需另外調整。
 
 ## 驗證
 

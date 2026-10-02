@@ -59,7 +59,20 @@ class RobotProfileTest(unittest.TestCase):
         self.assertEqual(profile["simulation"]["wheel_joints"],
                          ["joint_wheel_left", "joint_wheel_right"])
         self.assertAlmostEqual(profile["sensor_frames"]["lidar_link"]["yaw"], math.pi, places=6)
-        self.assertEqual(profile["parameter_overrides"], {})
+
+    def test_nova_carter_overrides_match_base_configs(self):
+        # The base configs are Carter's defaults; the profile documents them as a template.
+        overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
+        for node in ("wheel_encoder_odometry", "nav_imu_adapter", "global_pose_adapter",
+                     "local_costmap", "collision_monitor", "ground_obstacle_filter"):
+            self.assertIn(node, overrides)
+        used = set()
+        for path in (*CONFIG.glob("*.yaml"), *(PACKAGE.parent / "slam_nav/config").glob("*.yaml")):
+            config = yaml.safe_load(path.read_text())
+            used |= set(overrides) & set(config)
+            with self.subTest(path=path.name):
+                self.assertEqual(robot_fleet.merge_overrides(config, overrides), config)
+        self.assertEqual(used, set(overrides))
 
     def test_unknown_and_incomplete_profiles_fail_early(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -211,6 +224,12 @@ class LaunchNamespaceTest(unittest.TestCase):
         lidar = arguments["lidar_link"]
         self.assertEqual(lidar[lidar.index("--z") + 1], "0.526")
         self.assertEqual(lidar[lidar.index("--frame-id") + 1], "base_link")
+
+    def test_imu_mount_parameter_follows_profile(self):
+        profile = robot_fleet.load_robot_profile("nova_carter")
+        mount = profile["sensor_frames"]["imu_link"]
+        self.assertEqual(robot_fleet.imu_mount(profile),
+                         [mount[key] for key in robot_fleet.FRAME_KEYS])
 
     def test_event_started_nodes_get_explicit_namespace(self):
         actions = FUSION.readiness_actions("carter1", True, '[""]')

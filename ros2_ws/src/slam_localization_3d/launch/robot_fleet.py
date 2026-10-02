@@ -141,6 +141,12 @@ def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):
     return profile
 
 
+def imu_mount(profile):
+    """base_link -> imu_link (FAST-LIO body) as the imu_mount node parameter."""
+    mount = profile["sensor_frames"]["imu_link"]
+    return [float(mount[key]) for key in FRAME_KEYS]
+
+
 def body_pose(spec, profile):
     """World (x, y, z, yaw) of the FAST-LIO body (imu_link) when spawned at spec.
 

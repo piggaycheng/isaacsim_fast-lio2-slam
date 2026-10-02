@@ -18,7 +18,7 @@ from launch_ros.actions import Node, PushRosNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
-    DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, load_robot_profile, namespaced_topic,
+    DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, namespaced_topic,
     normalize_namespace,
 )
 from robot_namespace import (  # noqa: E402
@@ -308,6 +308,7 @@ def robot_nodes(context, package, nav):
             name="global_pose_adapter", output="screen",
             parameters=[fusion_config, {
                 "use_sim_time": True, "auto_initial_pose": enabled("auto_initial_pose"),
+                "imu_mount": imu_mount(load_robot_profile(kind)),
                 **{f"initial_{axis}": float(value(f"initial_{axis}"))
                    for axis in ("x", "y", "z", "yaw")},
             }],

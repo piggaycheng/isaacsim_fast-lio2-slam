@@ -478,7 +478,8 @@ can appear rotated in RViz's `map` fixed frame by the current `map -> odom`
 correction. This is not a footprint rotation; inspect that TF and compare
 wheel and Local EKF heading before changing the costmap frame.
 The safety node rejects non-finite or nonplanar commands and limits speed to
-0.75 m/s and 0.7 rad/s. Isaac Sim also checks command bounds and stops on a
+`max_linear_speed` 0.75 m/s and `max_angular_speed` 0.7 rad/s
+(`cmd_vel_safety` in `config/collision_monitor.yaml`, overridable per robot profile). Isaac Sim also checks command bounds and stops on a
 0.5 s command timeout if ROS messages stop; stale PCD corrections suppress
 movement. Nav2's regulated pure pursuit controller targets 0.5 m/s
 (`desired_linear_vel` in `config/navigation.yaml`), subject to its approach,

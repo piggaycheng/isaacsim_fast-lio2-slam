@@ -54,7 +54,7 @@ velocity_smoother:
     # CLOSED_LOOP stalls Carter: one accel step above measured zero cannot
     # overcome wheel friction during in-place rotation.
     feedback: "OPEN_LOOP"
-    # Keep within cmd_vel_safety's Carter limits (0.75 m/s, 0.7 rad/s).
+    # Keep within cmd_vel_safety's max_linear/angular_speed (collision_monitor.yaml).
     max_velocity: [0.75, 0.0, 0.7]
     min_velocity: [-0.75, 0.0, -0.7]
     max_accel: [0.8, 0.0, 1.5]

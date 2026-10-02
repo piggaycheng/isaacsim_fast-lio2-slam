@@ -1,11 +1,28 @@
 import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from robot_fleet import DEFAULT_ROBOT_TYPE, imu_mount, load_robot_profile  # noqa: E402
+
+
+def pose_node(context, auto_initial_pose):
+    profile = load_robot_profile(LaunchConfiguration("robot_type").perform(context))
+    return [Node(
+        package="slam_localization_3d",
+        executable="localization_3d_pose.py",
+        output="screen",
+        parameters=[{
+            "use_sim_time": True, "auto_initial_pose": auto_initial_pose,
+            "imu_mount": imu_mount(profile),
+        }],
+    )]
 
 
 def generate_launch_description():
@@ -20,6 +37,10 @@ def generate_launch_description():
             DeclareLaunchArgument("map_pgm", description="Absolute path to a Nav2 map YAML"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
+            DeclareLaunchArgument(
+                "robot_type", default_value=DEFAULT_ROBOT_TYPE,
+                description="Profile in config/robots/<robot_type>.yaml",
+            ),
             Node(
                 package="isaac_fastlio_adapter",
                 executable="pointcloud2_to_livox",
@@ -54,14 +75,7 @@ def generate_launch_description():
                     }
                 ],
             ),
-            Node(
-                package="slam_localization_3d",
-                executable="localization_3d_pose.py",
-                output="screen",
-                parameters=[
-                    {"use_sim_time": True, "auto_initial_pose": auto_initial_pose}
-                ],
-            ),
+            OpaqueFunction(function=pose_node, args=[auto_initial_pose]),
             Node(
                 package="nav2_map_server",
                 executable="map_server",

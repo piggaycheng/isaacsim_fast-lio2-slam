@@ -22,7 +22,11 @@ class CmdVelSafety(Node):
         self.max_linear_accel = self.declare_parameter("max_linear_accel", 0.8).value
         self.max_angular_accel = self.declare_parameter("max_angular_accel", 1.5).value
         self.command_timeout = self.declare_parameter("command_timeout", 0.5).value
-        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout"):
+        # Robot speed limits (profile parameter_overrides); adaptive limits may not exceed them.
+        self.max_linear_speed = self.declare_parameter("max_linear_speed", 0.75).value
+        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.7).value
+        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout",
+                     "max_linear_speed", "max_angular_speed"):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 self.destroy_node()
@@ -110,7 +114,8 @@ class CmdVelSafety(Node):
                 or any(values[index] != 0 for index in (1, 2, 3, 4))
                 or (values[0] == 0) != (values[5] == 0)
                 or self.last_adaptive_stamp is not None and stamp < self.last_adaptive_stamp
-                or not 0 <= values[0] <= 0.75 or not 0 <= values[5] <= 0.7):
+                or not 0 <= values[0] <= self.max_linear_speed
+                or not 0 <= values[5] <= self.max_angular_speed):
             self.adaptive_limits = None
             self.pending_adaptive_limits = None
             self.get_logger().error("Invalid or stale adaptive limits; stopping Carter")
@@ -221,7 +226,7 @@ class CmdVelSafety(Node):
                 self.get_logger().warning("3D localization correction stale; stopping Carter")
                 self.last_safety_warning = now
         elif sensors_fresh and self.adaptive_ready(now):
-            linear_limit, angular_limit = (self.adaptive_limits[1:] if self.require_adaptive_limits else (0.75, 0.7))
+            linear_limit, angular_limit = (self.adaptive_limits[1:] if self.require_adaptive_limits else (self.max_linear_speed, self.max_angular_speed))
             output.linear.x = max(-linear_limit, min(linear_limit, command.linear.x))
             output.angular.z = max(-angular_limit, min(angular_limit, command.angular.z))
             if (output.linear.x != command.linear.x or output.angular.z != command.angular.z) and (

@@ -11,12 +11,11 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 | 同上 → `nav_imu_adapter` | `angular_velocity_variance` | IMU 陀螺儀 z 軸角速度雜訊 |
 | `ros2_ws/src/slam_localization_3d/config/global_fusion.yaml` → `global_pose_adapter` | `min_covariance_xy`、`min_covariance_yaw`、`registration_covariance_scale` | PCD（先驗地圖 ICP）定位的 x/y/yaw 誤差 |
 
+多車種時，這些值實際寫在各車種 profile（`config/robots/<type>.yaml`）的 `parameter_overrides`；Nova Carter 的值同時存在 profile 與上述共用預設 YAML。
+
 以下項目不會被自動寫入，工具只負責回報，需要手動修正：
 
-- **LiDAR 外參（body→base）**：工具以輪子的旋轉中心推算 LiDAR 實際位置。若與設定相差超過約 1 cm，需同步修改以下三處：
-  - `localization_3d_pose.py` 的 `BODY_TO_BASE`；
-  - `covariance_calibration.py` 的 `BODY_TO_BASE_XYZ`；
-  - `global_fusion.launch.py` 中 `base_to_imu_tf`、`base_to_lidar_tf` 的 `--x/--y`。
+- **LiDAR 外參（body→base）**：工具以輪子的旋轉中心推算 LiDAR 實際位置。若與設定相差超過約 1 cm，修改車種 profile 的 `sensor_frames`（`imu_link` 與 `lidar_link` 的 `x/y`）。靜態 TF、`localization_3d_pose`／`global_pose_adapter` 的 body→base 轉換與本工具的 `--lio-body-to-base` 預設值都由它推得。
 - **輪子幾何**：工具會回報 `wheel systematic yaw drift` 與 `distance scale vs LIO`。若明顯偏離 0 與 1，代表輪徑或輪距設定錯誤，應先修正幾何，再校正 covariance。
 
 輪速 covariance 是**動態**的：節點依照每一步實際移動的距離與轉角累積誤差，靜止時不再增加。PCD covariance 則是 ICP 本身的 covariance 加上下限（floor）。ICP 值通常只有毫米等級，所以實際上是 floor 在決定大小。
@@ -55,12 +54,13 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
      --local-config ros2_ws/src/slam_nav/config/local_odometry.yaml \
      --fusion-config ros2_ws/src/slam_localization_3d/config/global_fusion.yaml
    ```
-   - `--fusion-config` 必須是**錄製當下**使用的設定：工具需要從發布的 covariance 中扣除當時的 floor。
+   - 非 Carter 車種加上 `--robot-type <type>`（預設 `nova_carter`）。
+   - 工具需要從發布的 covariance 中扣除**錄製當下**的 floor：先讀該車種 profile 的 `global_pose_adapter`，沒有才讀 `--fusion-config`。
    - 在 Isaac Sim 中加上 `--ground-truth`，逐項比對真值。
 6. **檢查輸出**：
    - `LIO body->base xy fitted` 與設定值相差約 1 cm 以上時，先修正外參，再回到步驟 2 重錄。
    - `PCD vs LIO ... by pair lag` 的數值應隨時間間隔增加而趨於平穩。若仍持續上升，代表 LIO 漂移明顯，可縮小 `--pcd-max-lag`。
-7. **寫入設定**：確認沒有問題後，在同一個指令加上 `--apply`，工具會把建議值寫回上述兩個 YAML。若使用 `--ground-truth` 且有任何項目 FAIL，工具會拒絕寫入。
+7. **寫入設定**：確認沒有問題後，在同一個指令加上 `--apply`，工具會把建議值寫入 `--robot-type` 對應 profile 的 `parameter_overrides`；`nova_carter` 另同步寫回上述兩個共用 YAML。若使用 `--ground-truth` 且有任何項目 FAIL，工具會拒絕寫入。
 8. **重新建置並重啟**：執行 `docker compose run --rm ros build --packages-select slam_nav slam_localization_3d` 重新建置，再重新啟動定位與導航。
 
 ## 輸出判讀

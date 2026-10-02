@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import yaml
 
 SCRIPTS = (
     Path(__file__).resolve().parents[1]
@@ -153,6 +154,78 @@ class TestCovarianceCalibration(unittest.TestCase):
             self.assertEqual(calibration.read_parameter(path, "first", "added"), 3e-5)
             self.assertEqual(calibration.read_parameter(path, "second", "value"), 2.0)
             self.assertIn("# keep", path.read_text())
+
+    def test_profile_override_write_creates_and_updates_nested_sections(self):
+        prefix = calibration.PROFILE_PREFIX
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "robot.yaml"
+            path.write_text(
+                "simulation:\n  wheel_radius: 0.1\n"
+                "# Overrides.\nparameter_overrides: {}\n"
+            )
+            calibration.write_parameters(path, "global_pose_adapter", {"min_covariance_xy": 2e-4},
+                                         prefix)
+            calibration.write_parameters(path, "nav_imu_adapter",
+                                         {"angular_velocity_variance": 1e-3}, prefix)
+            calibration.write_parameters(path, "global_pose_adapter", {"min_covariance_xy": 3e-4},
+                                         prefix)
+            self.assertEqual(calibration.read_parameter(
+                path, "global_pose_adapter", "min_covariance_xy", prefix), 3e-4)
+            self.assertEqual(calibration.read_parameter(
+                path, "nav_imu_adapter", "angular_velocity_variance", prefix), 1e-3)
+            self.assertIsNone(calibration.read_parameter(path, "global_pose_adapter",
+                                                         "min_covariance_xy"))
+            profile = yaml.safe_load(path.read_text())
+            self.assertEqual(profile["simulation"], {"wheel_radius": 0.1})
+            self.assertEqual(profile["parameter_overrides"], {
+                "global_pose_adapter": {"ros__parameters": {"min_covariance_xy": 3e-4}},
+                "nav_imu_adapter": {"ros__parameters": {"angular_velocity_variance": 1e-3}},
+            })
+
+    def test_top_level_section_ignores_nested_keys_with_the_same_name(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                "other:\n  first:\n    ros__parameters:\n      value: 9.0\n"
+                "first:\n  ros__parameters:\n    value: 1.0\n"
+            )
+            self.assertEqual(calibration.read_parameter(path, "first", "value"), 1.0)
+            calibration.write_parameters(path, "first", {"value": 2.0})
+            self.assertEqual(yaml.safe_load(path.read_text())["other"]["first"],
+                             {"ros__parameters": {"value": 9.0}})
+            with self.assertRaises(SystemExit):
+                calibration.write_parameters(path, "missing", {"value": 1.0})
+
+    def test_robot_profile_supplies_active_values(self):
+        root = Path(__file__).resolve().parents[1] / "ros2_ws/src"
+        profile = calibration.robot_profile_path(calibration.parse_args(["bag"]))
+        self.assertEqual(profile, root / "slam_localization_3d/config/robots/nova_carter.yaml")
+        fusion = root / "slam_localization_3d/config/global_fusion.yaml"
+        for key in ("registration_covariance_scale", "min_covariance_xy", "min_covariance_yaw"):
+            self.assertEqual(
+                calibration.read_parameter(profile, "global_pose_adapter", key,
+                                           calibration.PROFILE_PREFIX),
+                calibration.read_parameter(fusion, "global_pose_adapter", key),
+            )
+        for robot_type in ("missing_robot", "../nova_carter"):
+            with self.subTest(robot_type=robot_type), self.assertRaises(SystemExit):
+                calibration.robot_profile_path(
+                    calibration.parse_args(["bag", "--robot-type", robot_type]))
+
+    def test_lio_body_to_base_defaults_to_profile_mount(self):
+        from localization_3d_pose import BODY_TO_BASE
+        args = calibration.parse_args(["bag"])
+        for actual, expected in zip(args.lio_body_to_base, (*BODY_TO_BASE[0], math.pi)):
+            self.assertAlmostEqual(actual, expected, places=8)
+        with TemporaryDirectory() as directory:
+            Path(directory, "other.yaml").write_text(yaml.safe_dump({"sensor_frames": {"imu_link": {
+                "x": 0.1, "y": 0.0, "z": 0.3, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}}}))
+            args = calibration.parse_args(
+                ["bag", "--robot-type", "other", "--profile-dir", directory])
+            self.assertEqual(args.lio_body_to_base, [-0.1, 0.0, -0.3, 0.0])
+            args = calibration.parse_args(["bag", "--robot-type", "other", "--profile-dir",
+                                           directory, "--lio-body-to-base", "1", "2", "3", "0"])
+            self.assertEqual(args.lio_body_to_base, [1.0, 2.0, 3.0, 0.0])
 
     def test_yaml_float_is_always_a_double(self):
         self.assertEqual(calibration.yaml_float(1), "1.0")

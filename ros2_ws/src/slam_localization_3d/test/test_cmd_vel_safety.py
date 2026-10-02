@@ -191,8 +191,18 @@ class SafetyTest(unittest.TestCase):
             executor.shutdown()
             feeder.destroy_node()
 
+    def test_speed_caps_come_from_parameters(self):
+        self.node.max_linear_speed = 0.4
+        self.node.max_angular_speed = 0.3
+        self.sensor("scan", 10)
+        self.command.linear.x = -2.0
+        self.command.angular.z = 2.0
+        self.node.on_command(self.command)
+        self.assert_output(-0.4, 0.3)
+
     def test_invalid_safety_parameters_are_rejected(self):
-        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout"):
+        for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout",
+                     "max_linear_speed", "max_angular_speed"):
             for value in (0.0, -1.0, float("nan"), float("inf")):
                 with self.subTest(name=name, value=value):
                     with self.assertRaises(ValueError):

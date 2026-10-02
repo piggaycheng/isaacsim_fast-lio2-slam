@@ -10,9 +10,30 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from visualization_msgs.msg import Marker
 
 
-# FAST-LIO body (LiDAR/IMU) -> base_link. xy comes from covariance_calibration.py's lever-arm
-# fit (USD mount is 0.2317, 0); keep in sync with global_fusion.launch.py's static TFs.
-BODY_TO_BASE = ((0.213, -0.009, -0.526), (0.0, 0.0, 1.0, 0.0))
+# base_link -> FAST-LIO body (imu_link) as x, y, z, roll, pitch, yaw: the robot profile's
+# sensor_frames.imu_link, passed by the launch files as the imu_mount parameter. This default
+# is Nova Carter's; xy comes from covariance_calibration.py's lever-arm fit (USD mount 0.2317, 0).
+DEFAULT_IMU_MOUNT = (0.213, -0.009, 0.526, 0.0, 0.0, 3.141592654)
+
+
+def body_to_base(mount):
+    """Invert a base_link -> body mount (x, y, z, roll, pitch, yaw) into a body -> base pose."""
+    if len(mount) != 6 or not all(math.isfinite(value) for value in mount):
+        raise ValueError("imu_mount needs six finite values: x, y, z, roll, pitch, yaw")
+    x, y, z, roll, pitch, yaw = (float(value) for value in mount)
+    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+    inverse = (
+        -(sr * cp * cy - cr * sp * sy),
+        -(cr * sp * cy + sr * cp * sy),
+        -(cr * cp * sy - sr * sp * cy),
+        cr * cp * cy + sr * sp * sy,
+    )
+    if inverse[3] < 0:
+        inverse = tuple(-value for value in inverse)
+    translation = rotate_vector(inverse, (-x, -y, -z))
+    return tuple(value + 0.0 for value in translation), tuple(value + 0.0 for value in inverse)
 
 
 def rotate_vector(quaternion, vector):
@@ -43,6 +64,13 @@ def compose_pose(first, second):
     )
 
 
+BODY_TO_BASE = body_to_base(DEFAULT_IMU_MOUNT)
+
+
+def imu_mount_parameter(node):
+    return body_to_base(node.declare_parameter("imu_mount", list(DEFAULT_IMU_MOUNT)).value)
+
+
 def pose_values(pose):
     position, orientation = pose.position, pose.orientation
     return (
@@ -64,8 +92,8 @@ def seconds(stamp):
 
 
 class LocalizationVisualization(Node):
-    def __init__(self):
-        super().__init__("localization_3d_pose")
+    def __init__(self, **kwargs):
+        super().__init__("localization_3d_pose", **kwargs)
         self.correction = None
         self.correction_time = None
         self.last_odom_time = None
@@ -73,6 +101,7 @@ class LocalizationVisualization(Node):
         self.path.header.frame_id = "map"
         self.warned_stale = False
         self.auto_initial_pose = self.declare_parameter("auto_initial_pose", False).value
+        self.body_to_base = imu_mount_parameter(self)
         self.initial_pose_received = False
         self.tf_broadcaster = TransformBroadcaster(self)
         self.static_tf_broadcaster = StaticTransformBroadcaster(self)
@@ -83,13 +112,13 @@ class LocalizationVisualization(Node):
             body_base_tf.transform.translation.x,
             body_base_tf.transform.translation.y,
             body_base_tf.transform.translation.z,
-        ) = BODY_TO_BASE[0]
+        ) = self.body_to_base[0]
         (
             body_base_tf.transform.rotation.x,
             body_base_tf.transform.rotation.y,
             body_base_tf.transform.rotation.z,
             body_base_tf.transform.rotation.w,
-        ) = BODY_TO_BASE[1]
+        ) = self.body_to_base[1]
         self.static_tf_broadcaster.sendTransform(body_base_tf)
         self.pose_publisher = self.create_publisher(
             PoseStamped, "/localization_3d/base_pose_2d", 10
@@ -167,7 +196,7 @@ class LocalizationVisualization(Node):
         correction = pose_values(self.correction)
         lio_body = pose_values(message.pose.pose)
         base_position, base_quaternion = compose_pose(
-            compose_pose(correction, lio_body), BODY_TO_BASE
+            compose_pose(correction, lio_body), self.body_to_base
         )
 
         transform = TransformStamped()

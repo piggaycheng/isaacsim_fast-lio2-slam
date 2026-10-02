@@ -16,6 +16,7 @@ SCRIPTS = (
 sys.path.insert(0, str(SCRIPTS))
 from global_pose_adapter import GlobalPoseAdapter
 from localization_3d_pose import BODY_TO_BASE
+from rclpy.parameter import Parameter
 
 
 def stamp(message, time):
@@ -50,7 +51,10 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         rclpy.shutdown()
 
     def setUp(self):
-        self.node = GlobalPoseAdapter()
+        self.make_node()
+
+    def make_node(self, **kwargs):
+        self.node = GlobalPoseAdapter(**kwargs)
         self.clock = Mock()
         self.node.get_clock = Mock(return_value=self.clock)
         self.node.pose_publisher.publish = Mock()
@@ -167,6 +171,23 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         self.assertEqual((pose.header.stamp.sec, pose.header.stamp.nanosec), (9, 900_000_000))
         marker = self.node.accepted_publisher.publish.call_args.args[0]
         self.assertEqual((marker.stamp.sec, marker.stamp.nanosec), (10, 0))
+
+    def test_imu_mount_parameter_sets_body_to_base(self):
+        self.node.destroy_node()
+        self.make_node(parameter_overrides=[
+            Parameter("imu_mount", value=[0.5, 0.0, 0.4, 0.0, 0.0, 0.0]),
+        ])
+        self.input()
+        self.correction(x=2)
+        pose = self.node.pose_publisher.publish.call_args.args[0]
+        self.assertAlmostEqual(pose.pose.pose.position.x, 1.5)
+        self.assertAlmostEqual(pose.pose.pose.position.y, 0.0)
+        self.assertAlmostEqual(pose.pose.pose.orientation.w, 1.0)
+
+    def test_invalid_imu_mount_is_rejected(self):
+        for value in ([0.0] * 5, [0.0, 0.0, 0.0, 0.0, 0.0, float("nan")]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                GlobalPoseAdapter(parameter_overrides=[Parameter("imu_mount", value=value)])
 
     def test_invalid_registration_covariance_is_rejected(self):
         self.input()

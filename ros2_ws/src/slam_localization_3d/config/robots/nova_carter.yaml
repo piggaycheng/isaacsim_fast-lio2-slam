@@ -1,9 +1,11 @@
 # Robot-type profile: Nova Carter.
 #
-# Shared by Isaac Sim (standalone.py) and the ROS launch files. The navigation
-# configs in this package were tuned for Nova Carter, so it needs no
-# parameter_overrides. Another robot type adds config/robots/<type>.yaml with
-# the same keys; see docs/multi_robot.md.
+# Shared by Isaac Sim (standalone.py) and the ROS launch files. The base
+# navigation configs are Nova Carter's defaults; parameter_overrides repeats
+# every vehicle-specific value so this file is the template for a new robot
+# type (copy to config/robots/<type>.yaml and replace them; see
+# docs/multi_robot.md). test_robot_namespace keeps these values equal to the
+# base configs.
 
 simulation:
   # Isaac asset path relative to the assets root.
@@ -20,13 +22,95 @@ simulation:
   spawn_height: 0.05
 
 # base_link -> sensor frames published by static_transform_publisher (m, rad).
+# imu_link is the FAST-LIO body: its inverse is the body -> base_link transform used by
+# localization_3d_pose / global_pose_adapter (imu_mount) and covariance_calibration.py.
 sensor_frames:
   lidar_link: {x: 0.213, y: -0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 3.141592654}
   imu_link: {x: 0.213, y: -0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 3.141592654}
 
-# Deep-merged into every parameter file that contains the node key, e.g.
-#   local_costmap: {local_costmap: {ros__parameters: {footprint: "[[...]]"}}}
-#   collision_monitor: {ros__parameters: {PolygonStop: {points: [...]}}}
-#   ground_obstacle_filter: {ros__parameters: {self_filter_bounds: [...]}}
-#   wheel_encoder_odometry: {ros__parameters: {wheel_radius: ..., wheel_base: ...}}
-parameter_overrides: {}
+# Deep-merged into every parameter file that contains the node key; lists are
+# replaced, not merged. Values not listed here come from the shared base configs.
+parameter_overrides:
+  # --- Drive train and covariance (slam_nav/config/local_odometry.yaml) ---
+  wheel_encoder_odometry:
+    ros__parameters:
+      left_joint: joint_wheel_right
+      right_joint: joint_wheel_left
+      wheel_radius: 0.14
+      wheel_base: 0.4132
+      encoder_ticks_per_revolution: 2048
+      # Simulated encoder calibration error and direction.
+      left_distance_scale: 1.002
+      right_distance_scale: 0.998
+      left_direction: -1.0
+      right_direction: -1.0
+      distance_noise_ratio: 0.005
+      # Written by covariance_calibration.py --apply.
+      distance_variance_per_meter: 7.47497e-05
+      position_variance_per_radian: 4.3215e-05
+      yaw_variance_per_meter: 0.00119611
+      yaw_variance_per_radian: 9.06684e-05
+  nav_imu_adapter:
+    ros__parameters:
+      orientation_variance: 0.01
+      angular_velocity_variance: 0.000826544
+      linear_acceleration_variance: 0.04
+  # --- PCD localization covariance (config/global_fusion.yaml) ---
+  global_pose_adapter:
+    ros__parameters:
+      registration_covariance_scale: 1.0
+      min_covariance_xy: 0.000147573
+      min_covariance_yaw: 1.4647e-06
+
+  # --- Footprint in base_link (measure with scripts/usd_bbox.py) ---
+  # config/observation_costmaps.yaml
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        footprint: '[[0.65, 0.32], [0.65, -0.32], [-0.20, -0.32], [-0.20, 0.32]]'
+        footprint_padding: 0.01
+        inflation_layer: {inflation_radius: 0.9}
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        footprint: '[[0.65, 0.32], [0.65, -0.32], [-0.20, -0.32], [-0.20, 0.32]]'
+        footprint_padding: 0.01
+        inflation_layer: {inflation_radius: 0.9}
+  # slam_nav/config/ground_obstacle_filter.yaml: [x_min, x_max, y_min, y_max]
+  ground_obstacle_filter:
+    ros__parameters:
+      self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]
+
+  # --- Safety zones, x/y pairs in base_link (config/collision_monitor.yaml) ---
+  collision_monitor:
+    ros__parameters:
+      PolygonStop: {points: [1.30, 0.36, 1.30, -0.36, 0.65, -0.36, 0.65, 0.36]}
+      # Includes sensing/control delay, braking distance and footprint padding.
+      PolygonSurround: {points: [1.10, 0.75, 1.10, -0.75, -0.80, -0.75, -0.80, 0.75]}
+      PolygonSlow: {points: [1.40, 0.50, 1.40, -0.50, 0.65, -0.50, 0.65, 0.50]}
+  # config/adaptive_surround.yaml
+  adaptive_surround:
+    ros__parameters:
+      crawl_points: [0.90, 0.55, 0.90, -0.55, -0.45, -0.55, -0.45, 0.55]
+      max_linear_speed: 0.75
+      max_angular_speed: 0.7
+
+  # --- Speed and acceleration (config/navigation.yaml, config/collision_monitor.yaml) ---
+  controller_server:
+    ros__parameters:
+      FollowPath:
+        desired_linear_vel: 0.5
+        rotate_to_heading_angular_vel: 0.35
+  # Keep velocity_smoother and adaptive_surround within cmd_vel_safety's speed caps.
+  velocity_smoother:
+    ros__parameters:
+      max_velocity: [0.75, 0.0, 0.7]
+      min_velocity: [-0.75, 0.0, -0.7]
+      max_accel: [0.8, 0.0, 1.5]
+      max_decel: [-1.5, 0.0, -2.0]
+  cmd_vel_safety:
+    ros__parameters:
+      max_linear_accel: 0.8
+      max_angular_accel: 1.5
+      max_linear_speed: 0.75
+      max_angular_speed: 0.7

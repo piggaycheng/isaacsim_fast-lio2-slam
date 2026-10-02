@@ -32,6 +32,9 @@ class AdaptiveSurround(Node):
             "physical_footprint", [0.65, 0.32, 0.65, -0.32, -0.20, -0.32, -0.20, 0.32],
         ).value
         self.footprint_padding = self.declare_parameter("footprint_padding", 0.01).value
+        # Full-profile limits; must match cmd_vel_safety's max_linear/angular_speed.
+        self.max_linear_speed = self.declare_parameter("max_linear_speed", 0.75).value
+        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.7).value
         try:
             self.validate_configuration()
         except ValueError:
@@ -66,7 +69,8 @@ class AdaptiveSurround(Node):
 
     def validate_configuration(self):
         for name in ("crawl_linear", "crawl_angular", "motion_margin", "shrink_hold",
-                     "odom_timeout", "command_timeout", "switch_timeout"):
+                     "odom_timeout", "command_timeout", "switch_timeout",
+                     "max_linear_speed", "max_angular_speed"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         if self.crawl_linear > 0.10 or self.crawl_angular > 0.20 or self.motion_margin > 0.02:
@@ -183,7 +187,8 @@ class AdaptiveSurround(Node):
         if ready:
             self.zero_barrier_stamp = None
             limits.twist.linear.x, limits.twist.angular.z = (
-                (self.crawl_linear, self.crawl_angular) if self.active == "crawl" else (0.75, 0.7)
+                (self.crawl_linear, self.crawl_angular) if self.active == "crawl"
+                else (self.max_linear_speed, self.max_angular_speed)
             )
             output.linear.x = max(-limits.twist.linear.x, min(limits.twist.linear.x, self.command.linear.x))
             output.angular.z = max(-limits.twist.angular.z, min(limits.twist.angular.z, self.command.angular.z))

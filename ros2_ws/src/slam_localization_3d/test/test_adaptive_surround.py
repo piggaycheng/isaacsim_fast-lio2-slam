@@ -111,6 +111,11 @@ class AdaptiveTest(unittest.TestCase):
         self.node.future.result.return_value = Mock(result=Mock(successful=True))
         self.node.tick()
 
+    def test_full_limits_come_from_parameters(self):
+        self.node.max_linear_speed, self.node.max_angular_speed = 0.4, 0.3
+        self.node.tick()
+        self.assertEqual((self.limits().twist.linear.x, self.limits().twist.angular.z), (0.4, 0.3))
+
     def test_shrink_requires_dwell_gate_ack_and_native_ack(self):
         self.node.tick()
         self.assertEqual(self.limits().twist.linear.x, 0.75)
@@ -262,7 +267,8 @@ class AdaptiveTest(unittest.TestCase):
 
     def test_geometry_and_speed_bounds_reject_unsafe_configuration(self):
         for name, value in (("crawl_linear", 0.11), ("crawl_angular", 0.21),
-                            ("motion_margin", 0.03),
+                            ("motion_margin", 0.03), ("max_linear_speed", 0.0),
+                            ("max_angular_speed", float("nan")),
                             ("crawl_points", [0.9, 0.5, 0.9, -0.5, -0.45, -0.5, -0.45, 0.5]),
                             ("crawl_points", [0.85, 0.35, 0.85, -0.35, -0.35, -0.35, -0.35, 0.35]),
                             ("crawl_points", [0.85, 0.45, -0.35, -0.45, 0.85, -0.45, -0.35, 0.45])):

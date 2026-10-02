@@ -20,9 +20,15 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
 
 if __package__:
-    from .localization_3d_pose import BODY_TO_BASE, compose_pose, pose_values, seconds, valid_pose
+    from .localization_3d_pose import (
+        BODY_TO_BASE, compose_pose, imu_mount_parameter, pose_values, seconds,
+        valid_pose,
+    )
 else:
-    from localization_3d_pose import BODY_TO_BASE, compose_pose, pose_values, seconds, valid_pose
+    from localization_3d_pose import (
+        BODY_TO_BASE, compose_pose, imu_mount_parameter, pose_values, seconds,
+        valid_pose,
+    )
 
 
 def valid_stamp(stamp):
@@ -40,13 +46,13 @@ def angle_difference(first, second):
     return math.atan2(math.sin(first - second), math.cos(first - second))
 
 
-def planar_base(correction, lio):
-    position, quaternion = base_pose(correction, lio)
+def planar_base(correction, lio, body_to_base=BODY_TO_BASE):
+    position, quaternion = base_pose(correction, lio, body_to_base)
     return position[0], position[1], yaw_of(quaternion)
 
 
-def base_pose(correction, lio):
-    return compose_pose(compose_pose(pose_values(correction), pose_values(lio)), BODY_TO_BASE)
+def base_pose(correction, lio, body_to_base=BODY_TO_BASE):
+    return compose_pose(compose_pose(pose_values(correction), pose_values(lio)), body_to_base)
 
 
 def planar_registration_covariance(covariance, position, scale, min_xy, min_yaw):
@@ -67,9 +73,10 @@ def planar_registration_covariance(covariance, position, scale, min_xy, min_yaw)
 
 
 class GlobalPoseAdapter(Node):
-    def __init__(self):
-        super().__init__("global_pose_adapter")
+    def __init__(self, **kwargs):
+        super().__init__("global_pose_adapter", **kwargs)
         self.auto_initial_pose = self.declare_parameter("auto_initial_pose", False).value
+        self.body_to_base = imu_mount_parameter(self)
         # map -> camera_init guess (x, y, z, yaw) sent as the automatic initial pose.
         self.initial_pose = tuple(
             float(self.declare_parameter(f"initial_{name}", 0.0).value)
@@ -286,9 +293,11 @@ class GlobalPoseAdapter(Node):
             return
         if self.last_accepted_lio is not None:
             old_lio = self.last_accepted_lio
-            old_pose = planar_base(self.last_accepted_correction, old_lio.pose.pose)
-            expected = planar_base(self.last_accepted_correction, self.lio.pose.pose)
-            proposed = planar_base(message.pose.pose, self.lio.pose.pose)
+            old_pose = planar_base(self.last_accepted_correction, old_lio.pose.pose,
+                                   self.body_to_base)
+            expected = planar_base(self.last_accepted_correction, self.lio.pose.pose,
+                                   self.body_to_base)
+            proposed = planar_base(message.pose.pose, self.lio.pose.pose, self.body_to_base)
             distance = math.hypot(expected[0] - old_pose[0], expected[1] - old_pose[1])
             turn = abs(angle_difference(expected[2], old_pose[2]))
             jump = math.hypot(proposed[0] - expected[0], proposed[1] - expected[1])
@@ -300,7 +309,7 @@ class GlobalPoseAdapter(Node):
                 self.reject("registration innovation jump")
                 return
 
-        position, quaternion = base_pose(message.pose.pose, self.lio.pose.pose)
+        position, quaternion = base_pose(message.pose.pose, self.lio.pose.pose, self.body_to_base)
         x, y, yaw = position[0], position[1], yaw_of(quaternion)
         observation = PoseWithCovarianceStamped()
         observation.header.frame_id = "map"

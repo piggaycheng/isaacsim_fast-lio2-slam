@@ -6,11 +6,46 @@ import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 
+from pathlib import Path
+
+import yaml
+
 from ros2_ws.src.slam_localization_3d.scripts.localization_3d_pose import (
     BODY_TO_BASE,
+    DEFAULT_IMU_MOUNT,
     LocalizationVisualization,
+    body_to_base,
     compose_pose,
 )
+
+PROFILE = (Path(__file__).resolve().parents[1]
+           / "ros2_ws/src/slam_localization_3d/config/robots/nova_carter.yaml")
+
+
+class TestBodyToBase(unittest.TestCase):
+    def test_default_matches_nova_carter_profile(self):
+        mount = yaml.safe_load(PROFILE.read_text())["sensor_frames"]["imu_link"]
+        self.assertEqual(
+            list(DEFAULT_IMU_MOUNT),
+            [mount[key] for key in ("x", "y", "z", "roll", "pitch", "yaw")],
+        )
+        for actual, expected in zip((*BODY_TO_BASE[0], *BODY_TO_BASE[1]),
+                                    (0.213, -0.009, -0.526, 0.0, 0.0, 1.0, 0.0)):
+            self.assertAlmostEqual(actual, expected, places=8)
+
+    def test_inverse_composes_to_identity(self):
+        mount = (0.3, -0.1, 0.5, 0.1, -0.2, 1.2)
+        half = [value / 2 for value in mount[3:]]
+        cr, sr = math.cos(half[0]), math.sin(half[0])
+        cp, sp = math.cos(half[1]), math.sin(half[1])
+        cy, sy = math.cos(half[2]), math.sin(half[2])
+        quaternion = (sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy,
+                      cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy)
+        translation, rotation = compose_pose((mount[:3], quaternion), body_to_base(mount))
+        for actual, expected in zip((*translation, *rotation), (0, 0, 0, 0, 0, 0, 1)):
+            self.assertAlmostEqual(actual, expected)
+        with self.assertRaises(ValueError):
+            body_to_base(mount[:5])
 
 
 def odometry(parent, child, timestamp):

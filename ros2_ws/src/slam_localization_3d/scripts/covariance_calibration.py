@@ -44,11 +44,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
+import yaml
 from scipy.optimize import least_squares, nnls
 from scipy.ndimage import median_filter
 
-BODY_TO_BASE_XYZ = (0.213, -0.009, -0.526)  # localization_3d_pose.BODY_TO_BASE
+# Fallback only; the default comes from the robot profile's sensor_frames.imu_link.
+BODY_TO_BASE_XYZ = (0.213, -0.009, -0.526)
 BODY_TO_BASE_YAW = math.pi
+# The shared base configs hold this robot type's defaults (see its profile header).
+BASE_ROBOT_TYPE = "nova_carter"
+PROFILE_PREFIX = ("parameter_overrides",)
 CONSISTENT_RATIO = (0.5, 2.0)
 # Overstated variance only slows the filter; understated variance makes it overconfident.
 CONSERVATIVE_RATIO = 1.0 / 3.0
@@ -607,16 +612,54 @@ def ground_truth_validation(data, windows, noise, imu_variance_per_second, pcd_p
     return report
 
 
-def read_parameter(path, section, key):
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def _find_block(lines, path, create=False):
+    """(header, end) of the nested YAML mapping block at path; header -1 is the document."""
+    header, end = -1, len(lines)
+    for name in path:
+        parent = _indent(lines[header]) if header >= 0 else -2
+        content = [i for i in range(header + 1, end)
+                   if lines[i].strip() and not lines[i].lstrip().startswith("#")]
+        child = _indent(lines[content[0]]) if content else parent + 2
+        found = next(
+            (i for i in content if _indent(lines[i]) == child and re.match(
+                rf"^\s*{re.escape(name)}:\s*(\{{\}})?\s*(#.*)?$", lines[i])),
+            None,
+        )
+        if found is None:
+            if not create:
+                return None
+            indent = " " * child
+            found = end
+            while found > header + 1 and (
+                    not lines[found - 1].strip() or lines[found - 1].lstrip().startswith("#")):
+                found -= 1
+            lines.insert(found, f"{indent}{name}:")
+            end += 1
+        else:
+            lines[found] = re.sub(r":\s*\{\}", ":", lines[found])
+        header, indent = found, _indent(lines[found])
+        end = next(
+            (i for i in range(found + 1, end)
+             if lines[i].strip() and not lines[i].lstrip().startswith("#")
+             and _indent(lines[i]) <= indent),
+            end,
+        )
+    return header, end
+
+
+def read_parameter(path, section, key, prefix=()):
     lines = Path(path).read_text().splitlines()
-    inside = False
-    for line in lines:
-        if re.match(r"^\S", line):
-            inside = line.rstrip() == f"{section}:"
-        elif inside:
-            match = re.match(rf"^\s+{re.escape(key)}:\s*([^#\s]+)", line)
-            if match:
-                return float(match.group(1))
+    block = _find_block(lines, (*prefix, section, "ros__parameters"))
+    if block is None:
+        return None
+    for line in lines[block[0] + 1:block[1]]:
+        match = re.match(rf"^\s+{re.escape(key)}:\s*([^#\s]+)", line)
+        if match:
+            return float(match.group(1))
     return None
 
 
@@ -628,27 +671,29 @@ def yaml_float(value):
     return f"{mantissa}e{exponent}" if exponent else mantissa
 
 
-def write_parameters(path, section, values):
-    """Replace or insert scalar parameters under section/ros__parameters."""
+def write_parameters(path, section, values, prefix=()):
+    """Replace or insert scalar parameters under [prefix/]section/ros__parameters.
+
+    The section must exist unless prefix is given (robot profile overrides).
+    """
     lines = Path(path).read_text().splitlines()
-    start = next((i for i, line in enumerate(lines) if line.rstrip() == f"{section}:"), None)
-    if start is None:
+    block = _find_block(lines, (*prefix, section), create=bool(prefix))
+    if block is None:
         raise SystemExit(f"{path} has no {section} section")
-    end = next(
-        (i for i in range(start + 1, len(lines)) if re.match(r"^\S", lines[i])), len(lines)
-    )
-    parameters = next(
-        i for i in range(start, end) if lines[i].strip() == "ros__parameters:"
-    )
+    block = _find_block(lines, (*prefix, section, "ros__parameters"), create=bool(prefix))
+    if block is None:
+        raise SystemExit(f"{path} has no {section}/ros__parameters")
+    header, end = block
+    child = " " * (_indent(lines[header]) + 2)
     for key, value in values.items():
         text = yaml_float(value)
-        for index in range(parameters + 1, end):
+        for index in range(header + 1, end):
             match = re.match(rf"^(\s+){re.escape(key)}:\s*[^#\s]+(.*)$", lines[index])
             if match:
                 lines[index] = f"{match.group(1)}{key}: {text}{match.group(2)}"
                 break
         else:
-            lines.insert(parameters + 1, f"    {key}: {text}")
+            lines.insert(header + 1, f"{child}{key}: {text}")
             end += 1
     Path(path).write_text("\n".join(lines) + "\n")
 
@@ -656,6 +701,36 @@ def write_parameters(path, section, values):
 def default_config(relative):
     path = Path(__file__).resolve().parents[2] / relative
     return path if path.exists() else None
+
+
+def robot_profile_path(args):
+    if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", args.robot_type):
+        raise SystemExit(f"Invalid robot type {args.robot_type!r}")
+    if args.profile_dir is None:
+        return None
+    path = Path(args.profile_dir) / f"{args.robot_type}.yaml"
+    if path.is_file():
+        return path
+    if args.robot_type != BASE_ROBOT_TYPE:
+        raise SystemExit(f"Robot profile {path} not found")
+    return None
+
+
+def profile_body_to_base(path):
+    """Invert the profile's base_link -> imu_link (FAST-LIO body) mount into x, y, z, yaw."""
+    mount = yaml.safe_load(Path(path).read_text())["sensor_frames"]["imu_link"]
+    cr, sr = math.cos(mount["roll"]), math.sin(mount["roll"])
+    cp, sp = math.cos(mount["pitch"]), math.sin(mount["pitch"])
+    cy, sy = math.cos(mount["yaw"]), math.sin(mount["yaw"])
+    rotation = np.array([
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp, cp * sr, cp * cr],
+    ])
+    inverse = rotation.T
+    xyz = -inverse @ np.array([mount["x"], mount["y"], mount["z"]], dtype=float)
+    yaw = math.atan2(inverse[1, 0], inverse[0, 0])
+    return [*(float(value) + 0.0 for value in xyz), yaw]
 
 
 def parse_args(argv):
@@ -678,8 +753,8 @@ def parse_args(argv):
                         help="-1 if the IMU z axis points down relative to base_link")
     parser.add_argument("--lio-topic", default="/Odometry")
     parser.add_argument("--lio-body-to-base", type=float, nargs=4,
-                        default=[*BODY_TO_BASE_XYZ, BODY_TO_BASE_YAW],
-                        metavar=("X", "Y", "Z", "YAW"))
+                        metavar=("X", "Y", "Z", "YAW"),
+                        help="Default: inverse of the --robot-type profile's sensor_frames.imu_link")
     parser.add_argument("--keep-lever", action="store_true",
                         help="Do not refit the LIO body->base offset from wheel motion")
     parser.add_argument("--pcd-topic", default="/localization_3d/global_pose")
@@ -692,10 +767,21 @@ def parse_args(argv):
                         default=default_config("slam_nav/config/local_odometry.yaml"))
     parser.add_argument("--fusion-config", type=Path,
                         default=default_config("slam_localization_3d/config/global_fusion.yaml"))
+    parser.add_argument("--robot-type", default=BASE_ROBOT_TYPE,
+                        help="Robot profile (config/robots/<type>.yaml) whose overrides were "
+                             "active while recording and that --apply updates")
+    parser.add_argument("--profile-dir", type=Path,
+                        default=default_config("slam_localization_3d/config/robots"))
     parser.add_argument("--apply", action="store_true",
-                        help="Write the recommended values into the config files")
+                        help="Write the recommended values into the robot profile; for "
+                             f"{BASE_ROBOT_TYPE} also into the base config files")
     parser.add_argument("--min-imu-variance", type=float, default=1e-6)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.lio_body_to_base is None:
+        profile = robot_profile_path(args)
+        args.lio_body_to_base = (profile_body_to_base(profile) if profile is not None
+                                 else [*BODY_TO_BASE_XYZ, BODY_TO_BASE_YAW])
+    return args
 
 
 def main(argv=None):
@@ -724,9 +810,14 @@ def main(argv=None):
         imu_static_variance, noise["imu_yaw_variance_per_second"] / imu_dt, args.min_imu_variance
     )
     systematic_yaw, distance_scale = wheel_systematic(windows)
+    profile = robot_profile_path(args)
+
     def fusion_parameter(key, default):
-        value = (read_parameter(args.fusion_config, "global_pose_adapter", key)
-                 if args.fusion_config else None)
+        value = None
+        if profile is not None:
+            value = read_parameter(profile, "global_pose_adapter", key, PROFILE_PREFIX)
+        if value is None and args.fusion_config:
+            value = read_parameter(args.fusion_config, "global_pose_adapter", key)
         return default if value is None else value
 
     # Values active while the bag was recorded; they are removed from the published covariance.
@@ -834,15 +925,24 @@ def main(argv=None):
     if args.apply:
         if not passed:
             raise SystemExit("Ground-truth validation failed; not applying")
-        if args.local_config is None or args.fusion_config is None:
-            raise SystemExit("--apply requires --local-config and --fusion-config")
-        write_parameters(args.local_config, "wheel_encoder_odometry", wheel)
-        write_parameters(
-            args.local_config, "nav_imu_adapter", {"angular_velocity_variance": imu_variance}
-        )
+        if profile is None:
+            raise SystemExit(f"--apply requires the {args.robot_type} profile in --profile-dir")
+        updates = [
+            ("wheel_encoder_odometry", wheel, args.local_config),
+            ("nav_imu_adapter", {"angular_velocity_variance": imu_variance}, args.local_config),
+        ]
         if pcd_parameters is not None:
-            write_parameters(args.fusion_config, "global_pose_adapter", pcd_parameters)
-        print(f"Applied to {args.local_config} and {args.fusion_config}")
+            updates.append(("global_pose_adapter", pcd_parameters, args.fusion_config))
+        targets = [profile]
+        if args.robot_type == BASE_ROBOT_TYPE:
+            if args.local_config is None or args.fusion_config is None:
+                raise SystemExit("--apply requires --local-config and --fusion-config")
+            targets += [args.local_config, args.fusion_config]
+        for section, values, base in updates:
+            write_parameters(profile, section, values, PROFILE_PREFIX)
+            if args.robot_type == BASE_ROBOT_TYPE:
+                write_parameters(base, section, values)
+        print("Applied to " + ", ".join(str(path) for path in dict.fromkeys(targets)))
     return 0 if passed else 1
 
 
