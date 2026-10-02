@@ -42,7 +42,7 @@ def walls(width):
 
 
 PLANNING_CONFIG = Path(__file__).resolve().parents[1] / (
-    "ros2_ws/src/isaac_localization_3d/config/observation_costmaps.yaml"
+    "ros2_ws/src/slam_localization_3d/config/observation_costmaps.yaml"
 )
 
 

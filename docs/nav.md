@@ -4,7 +4,7 @@
 
 - 只有 3D 模式有導航；`scripts/run_nav.sh --mode 2d` 只做 AMCL 定位，不啟動 Nav2。
 - 不加 `--navigate` 時，只以 `costmap_observer` 啟動兩張 costmap 供 RViz 觀察，不啟動 planner、controller，也不發布行駛命令。
-- Nav2 設定檔在 `ros2_ws/src/isaac_localization_3d/config/`，感測前處理設定在 `ros2_ws/src/isaac_nav/config/`；啟動檔是 `isaac_localization_3d/launch/global_fusion.launch.py`。
+- Nav2 設定檔在 `ros2_ws/src/slam_localization_3d/config/`，感測前處理設定在 `ros2_ws/src/slam_nav/config/`；啟動檔是 `slam_localization_3d/launch/global_fusion.launch.py`。
 
 ## 整體資料流
 
@@ -49,7 +49,7 @@ flowchart TD
 
 #### `/perception/obstacles`：留下障礙物的 3D 點雲
 
-`ground_obstacle_filter` 的設定在 `isaac_nav/config/ground_obstacle_filter.yaml`：
+`ground_obstacle_filter` 的設定在 `slam_nav/config/ground_obstacle_filter.yaml`：
 
 1. 按原始訊息時間戳，使用 TF 把點轉到 `base_link`，去除非有限座標。
 2. 去除車身矩形內的點（x −0.20–0.65 m、y ±0.32 m，不限高度），並保留水平距離 0–20 m 的點。這一步先發布 `/perception/self_filtered_points`，保留地面、尚未體素降採樣，不是把車身附近整個圓形範圍排除。
@@ -64,7 +64,7 @@ flowchart TD
 
 這個分支**不做 RANSAC 地面濾除，也不經過 8 cm 體素降採樣**；高度依 `base_link` 的 z 座標裁切，不是相對估計地面的高度。切片內若仍有地面點就可能投影進 scan，低於切片的障礙物則可能漏掉。
 
-高度與角度設定在 `isaac_nav/config/local_odometry.yaml`；3D 融合 launch 在啟用障礙點雲時覆寫 `range_min: 0.0`、`range_max: 20.0`。未啟用障礙點雲時，該 launch 改用 `/isaac/lidar_points` 直接產生 `/scan`，距離範圍為 0.5–30 m，不經上述自體濾除分支；2D AMCL 模式也保留原始點雲投影。
+高度與角度設定在 `slam_nav/config/local_odometry.yaml`；3D 融合 launch 在啟用障礙點雲時覆寫 `range_min: 0.0`、`range_max: 20.0`。未啟用障礙點雲時，該 launch 改用 `/isaac/lidar_points` 直接產生 `/scan`，距離範圍為 0.5–30 m，不經上述自體濾除分支；2D AMCL 模式也保留原始點雲投影。
 
 兩張 costmap 的 obstacle layer 使用 `/perception/obstacles` **標記障礙物**、使用 `/scan` **清除已觀測為空的區域**；collision monitor 則直接把兩者當作障礙來源，檢查停止／減速區及 footprint 碰撞預測。兩個 topic 來自同一顆 LiDAR，不是獨立感測器備援。
 
@@ -202,8 +202,8 @@ Binary filter 尚未實作；它用於區域開關事件，不是 Keepout 或 Sp
 | 元件 | 設定 | 說明 |
 | :-- | :-- | :-- |
 | Planner | `nav2_navfn_planner/NavfnPlanner`（Dijkstra），`allow_unknown: false` | 在 global costmap 找最低代價路徑 |
-| Controller | `isaac_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 0.5 m/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
-| Goal checker | `isaac_nav::LatchedGoalChecker` | 位置誤差 0.15 m、航向 0.25 rad；到位後鎖定，偏離超過 0.5 m 才解除 |
+| Controller | `slam_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 0.5 m/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
+| Goal checker | `slam_nav::LatchedGoalChecker` | 位置誤差 0.15 m、航向 0.25 rad；到位後鎖定，偏離超過 0.5 m 才解除 |
 | Progress checker | `SimpleProgressChecker` | 15 秒內移動不到 0.15 m 視為卡住 |
 | `failure_tolerance` | 1.0 秒 | controller 持續失敗超過 1 秒就回報失敗，交給 BT 處理 |
 

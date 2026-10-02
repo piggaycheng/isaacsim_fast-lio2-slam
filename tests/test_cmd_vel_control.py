@@ -12,7 +12,7 @@ from std_msgs.msg import Bool, Header
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "ros2_ws/src/isaac_localization_3d/scripts"))
+sys.path.insert(0, str(ROOT / "ros2_ws/src/slam_localization_3d/scripts"))
 from cmd_vel_control import CmdVelReceiver
 from cmd_vel_safety import CmdVelSafety
 

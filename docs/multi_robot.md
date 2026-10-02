@@ -73,7 +73,7 @@ ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose 
 每台車的電腦執行與模擬相同的 launch，只換 namespace、車種與初始位姿：
 
 ```bash
-ros2 launch isaac_localization_3d global_fusion.launch.py \
+ros2 launch slam_localization_3d global_fusion.launch.py \
   namespace:=carter1 robot_type:=nova_carter \
   initial_x:=0.0 initial_y:=0.0 initial_z:=0.0 initial_yaw:=0.0 \
   map_pcd:=... map_pgm:=...
@@ -83,7 +83,7 @@ ros2 launch isaac_localization_3d global_fusion.launch.py \
 
 ## 新增車種
 
-新增 `ros2_ws/src/isaac_localization_3d/config/robots/<type>.yaml`，鍵值與 `nova_carter.yaml` 相同：
+新增 `ros2_ws/src/slam_localization_3d/config/robots/<type>.yaml`，鍵值與 `nova_carter.yaml` 相同：
 
 | 鍵 | 用途 |
 | :-- | :-- |

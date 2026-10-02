@@ -32,8 +32,10 @@ docker compose run --rm ros build
 ```bash
 docker compose run --rm ros build
 # 只建置指定套件
-docker compose run --rm ros build --packages-select isaac_localization_3d
+docker compose run --rm ros build --packages-select slam_localization_3d
 ```
+
+導航與定位套件使用中性名稱：`slam_nav`、`slam_localization_2d`、`slam_localization_3d`。`isaac_fastlio_adapter` 仍是 Isaac Sim 專用的感測器轉接套件；目前 launch 與預設配置仍針對模擬，改名不代表可直接套用到實機。從舊名稱升級的工作區，需移除這三個舊套件對應的 `ros2_ws/build/` 與 `ros2_ws/install/` 子目錄後重新建置，避免舊套件仍被 ROS 找到。
 
 ## 2. 各個 sh 如何使用
 

@@ -8,7 +8,7 @@ import numpy as np
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
 sys.path.insert(0, str(
-    Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/scripts"
+    Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/scripts"
 ))
 from global_localization_xyz import XYZGlobalLocalization  # noqa: E402
 

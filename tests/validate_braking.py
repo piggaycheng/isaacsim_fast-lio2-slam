@@ -19,7 +19,7 @@ from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Header
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "ros2_ws/src/isaac_localization_3d/config"
+CONFIG = ROOT / "ros2_ws/src/slam_localization_3d/config"
 
 
 def rectangle(bounds, position, yaw):

@@ -61,7 +61,7 @@ def validate(stage):
         if visible:
             clouds["visible"].append(points)
 
-    config = ROOT / "ros2_ws/src/isaac_localization_3d/config"
+    config = ROOT / "ros2_ws/src/slam_localization_3d/config"
     costmaps = yaml.safe_load((config / "observation_costmaps.yaml").read_text())
     footprints = [
         ast.literal_eval(costmaps[name][name]["ros__parameters"]["footprint"])
@@ -72,7 +72,7 @@ def validate(stage):
     footprint = np.asarray(footprints[1])
     fmin, fmax = footprint.min(axis=0), footprint.max(axis=0)
     filtering = yaml.safe_load(
-        (ROOT / "ros2_ws/src/isaac_nav/config/ground_obstacle_filter.yaml").read_text()
+        (ROOT / "ros2_ws/src/slam_nav/config/ground_obstacle_filter.yaml").read_text()
     )["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"]
     np.testing.assert_allclose(filtering, [fmin[0], fmax[0], fmin[1], fmax[1]])
     monitor = yaml.safe_load((config / "collision_monitor.yaml").read_text())

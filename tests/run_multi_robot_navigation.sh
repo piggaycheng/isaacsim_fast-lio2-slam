@@ -41,12 +41,12 @@ echo "Validation evidence: $directory"
 for robot in "${robots[@]}"; do
   name="${robot%%@*}"
   name="${name%%:*}"
-  start_ros_container "$name" launch isaac_localization_3d robot.launch.py "robot:=$robot" \
+  start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
     map_pcd:=/workspace/maps/office/map.pcd map_pgm:=/workspace/maps/office/map_2d.yaml \
     rviz:=false > "$directory/ros_$name.log" 2>&1
 done
 names="$(IFS=';'; printf '%s' "${robots[*]%%@*}")"
-start_ros_container fleet-rviz launch isaac_localization_3d fleet_rviz.launch.py \
+start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
   "robots:=$names" rviz:=false > "$directory/fleet_relay.log" 2>&1
 trap cleanup EXIT
 trap 'exit 130' INT

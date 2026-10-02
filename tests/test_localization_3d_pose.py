@@ -6,7 +6,7 @@ import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 
-from ros2_ws.src.isaac_localization_3d.scripts.localization_3d_pose import (
+from ros2_ws.src.slam_localization_3d.scripts.localization_3d_pose import (
     BODY_TO_BASE,
     LocalizationVisualization,
     compose_pose,

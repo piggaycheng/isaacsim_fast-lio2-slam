@@ -56,7 +56,7 @@ echo "Validation evidence: $directory"
   --output "$directory/geometry.json" > "$directory/geometry.log" 2>&1
 export ROS_COMMAND=launch
 export ROS_LAUNCH_ARGS="$(printf '%s\n' \
-  isaac_localization_3d global_fusion.launch.py \
+  slam_localization_3d global_fusion.launch.py \
   map_pcd:=/workspace/maps/office/map.pcd \
   map_pgm:=/workspace/maps/office/map_2d.yaml \
   rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true \
@@ -70,7 +70,7 @@ relative="${directory#"$project_dir"/}"
 status=0
 probe_args=()
 if [[ "$probe" == validate_navigation_environment.py ]]; then
-  probe_args+=(--planning-config /workspace/ros2_ws/install/isaac_localization_3d/share/isaac_localization_3d/config/observation_costmaps.yaml)
+  probe_args+=(--planning-config /workspace/ros2_ws/install/slam_localization_3d/share/slam_localization_3d/config/observation_costmaps.yaml)
 fi
 compose exec -T ros /workspace/docker/entrypoint.sh \
   python3 "/workspace/tests/$probe" \

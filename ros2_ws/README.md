@@ -18,9 +18,9 @@ The upstream FASTLIO2 fork multiplies incoming standard IMU acceleration by
 publishes the corrected input on `/livox/imu`.
 
 `src/FAST_LIO_LOCALIZATION2` is a pinned upstream submodule;
-`src/isaac_localization_3d` contains the separate 3D localization launch,
+`src/slam_localization_3d` contains the separate 3D localization launch,
 ROS pose/TF publisher, and RViz configuration. `scripts/run_nav.sh --mode 3d` starts
-this package; `--mode 2d` uses `isaac_localization_2d` and shared `isaac_nav` inputs. The Docker
+this package; `--mode 2d` uses `slam_localization_2d` and shared `slam_nav` inputs. The Docker
 workspace build below also builds the 3D packages. Launch the Office
 simulator and RViz together with `./scripts/run_3d_localization.sh` (use `--help` for
 map, headless, and initialization options). The Office spawn near `(0, 0)` is
@@ -59,7 +59,7 @@ docker compose run --rm ros build
 
 Rerun `docker compose run --rm ros build` after changing `ros2_ws/src`; extra
 arguments are passed to `colcon build`, for example
-`docker compose run --rm ros build --packages-select isaac_nav`. The image
+`docker compose run --rm ros build --packages-select slam_nav`. The image
 user matches UID/GID 1000 by default; if your IDs differ, build with
 `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build`.
 
@@ -171,10 +171,10 @@ into FASTLIO's four accepted Livox line IDs, while preserving the original
 point order and timing.
 # 2D Localization
 
-`isaac_nav` provides wheel encoder odometry, the navigation IMU adapter,
+`slam_nav` provides wheel encoder odometry, the navigation IMU adapter,
 ground obstacle filtering, the Nav2 goal-heading controller and goal checker
 plugins, and the shared Local EKF/scan settings in
-`config/local_odometry.yaml`. `isaac_localization_2d` owns the AMCL settings,
+`config/local_odometry.yaml`. `slam_localization_2d` owns the AMCL settings,
 2D map/AMCL launch and RViz configuration. The 3D fusion launch reuses the
 shared inputs without starting AMCL. `isaac_fastlio_adapter` remains dedicated
 to FAST-LIO mapping inputs.
@@ -447,7 +447,7 @@ the monitor's `source_timeout`. Freshness uses ROS time, so pausing `/clock`
 also pauses expiry; clock resets clear sensor and correction freshness state.
 For obstacle-enabled 3D navigation, `ground_obstacle_filter` removes returns
 inside Carter's extruded footprint (`self_filter_bounds` in
-`isaac_nav/config/ground_obstacle_filter.yaml`), rather than discarding everything
+`slam_nav/config/ground_obstacle_filter.yaml`), rather than discarding everything
 within 0.5 m. Its `/perception/self_filtered_points` retains ground points and
 feeds `/scan` with `range_min: 0.0`; `/perception/obstacles` retains nearby external
 obstacles after ground removal. The surround stop zone spans x [-0.80, 1.10] m
@@ -464,8 +464,8 @@ The wider zones can block narrow passages; sensor loss still allowed about
 0.66 m travel in the 0.75 m/s fault-injection trial before the robot stopped.
 Physical LiDAR occlusion and minimum measurement range
 remain limitations; these settings are not certified safety clearances.
-The controller is `isaac_nav::GoalHeadingLatchedRPP`, a thin wrapper around
-Humble's Regulated Pure Pursuit, paired with `isaac_nav::LatchedGoalChecker`.
+The controller is `slam_nav::GoalHeadingLatchedRPP`, a thin wrapper around
+Humble's Regulated Pure Pursuit, paired with `slam_nav::LatchedGoalChecker`.
 Humble RPP re-checks `xy_goal_tolerance` every cycle and stops right at that
 boundary, and the controller server resets goal checkers on every 1 Hz replan.
 Small drift while rotating in place used to flip Carter between path tracking

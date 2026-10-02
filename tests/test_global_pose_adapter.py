@@ -11,7 +11,7 @@ from sensor_msgs.msg import PointCloud2
 
 SCRIPTS = (
     Path(__file__).resolve().parents[1]
-    / "ros2_ws/src/isaac_localization_3d/scripts"
+    / "ros2_ws/src/slam_localization_3d/scripts"
 )
 sys.path.insert(0, str(SCRIPTS))
 from global_pose_adapter import GlobalPoseAdapter

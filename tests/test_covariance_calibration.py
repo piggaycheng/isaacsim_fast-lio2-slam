@@ -8,7 +8,7 @@ import numpy as np
 
 SCRIPTS = (
     Path(__file__).resolve().parents[1]
-    / "ros2_ws/src/isaac_localization_3d/scripts"
+    / "ros2_ws/src/slam_localization_3d/scripts"
 )
 sys.path.insert(0, str(SCRIPTS))
 import covariance_calibration as calibration  # noqa: E402
@@ -162,8 +162,8 @@ class TestCovarianceCalibration(unittest.TestCase):
 
     def test_repository_configs_define_calibrated_parameters(self):
         root = Path(__file__).resolve().parents[1] / "ros2_ws/src"
-        local = root / "isaac_nav/config/local_odometry.yaml"
-        fusion = root / "isaac_localization_3d/config/global_fusion.yaml"
+        local = root / "slam_nav/config/local_odometry.yaml"
+        fusion = root / "slam_localization_3d/config/global_fusion.yaml"
         for key in (
             "distance_variance_per_meter", "yaw_variance_per_meter", "yaw_variance_per_radian"
         ):

@@ -14,7 +14,7 @@ from std_msgs.msg import Header
 from tf2_ros import Buffer, TransformException
 
 sys.path.insert(
-    0, str(Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/scripts")
+    0, str(Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/scripts")
 )
 from global_tf_gate import GlobalTfGate, map_to_odom
 

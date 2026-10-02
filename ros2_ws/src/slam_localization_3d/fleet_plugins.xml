@@ -1,0 +1,7 @@
+<library path="fleet_panel">
+  <class name="slam_localization_3d/FleetPanel"
+         type="slam_localization_3d::FleetPanel"
+         base_class_type="rviz_common::Panel">
+    <description>Select the robot operated by the shared goal and initial-pose tools.</description>
+  </class>
+</library>

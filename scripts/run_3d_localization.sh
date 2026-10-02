@@ -173,7 +173,7 @@ if [[ "$global_fusion" == true ]]; then
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
     navigate:="$navigate" adaptive_surround:="$adaptive_surround" "${filter_args[@]}")
 fi
-start_ros launch isaac_localization_3d "$launch_file" "${launch_args[@]}"
+start_ros launch slam_localization_3d "$launch_file" "${launch_args[@]}"
 
 isaac_args=(--lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi

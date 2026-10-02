@@ -110,7 +110,7 @@ container_path "$map_image" >/dev/null
 require_ros_workspace
 set -u
 
-start_ros launch isaac_localization_2d localization_2d.launch.py \
+start_ros launch slam_localization_2d localization_2d.launch.py \
   map:="$container_map" \
   rviz:="$rviz"
 

@@ -25,7 +25,7 @@ from std_srvs.srv import Trigger
 from tf2_msgs.msg import TFMessage
 
 sys.path.insert(0, str(
-    Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/launch"
+    Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/launch"
 ))
 from robot_fleet import (  # noqa: E402
     MAP_REFERENCE, body_pose, load_robot_profile, parse_robot_spec,

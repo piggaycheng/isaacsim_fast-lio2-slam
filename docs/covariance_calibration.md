@@ -6,10 +6,10 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 
 | 設定檔 | 參數 | 用途 |
 | --- | --- | --- |
-| `ros2_ws/src/isaac_nav/config/local_odometry.yaml` → `wheel_encoder_odometry` | `distance_variance_per_meter`、`position_variance_per_radian` | 輪速位置誤差：每走 1 m、每轉 1 rad 增加多少變異數 |
+| `ros2_ws/src/slam_nav/config/local_odometry.yaml` → `wheel_encoder_odometry` | `distance_variance_per_meter`、`position_variance_per_radian` | 輪速位置誤差：每走 1 m、每轉 1 rad 增加多少變異數 |
 | 同上 | `yaw_variance_per_meter`、`yaw_variance_per_radian` | 輪速航向誤差：直行與原地旋轉造成的 yaw 漂移 |
 | 同上 → `nav_imu_adapter` | `angular_velocity_variance` | IMU 陀螺儀 z 軸角速度雜訊 |
-| `ros2_ws/src/isaac_localization_3d/config/global_fusion.yaml` → `global_pose_adapter` | `min_covariance_xy`、`min_covariance_yaw`、`registration_covariance_scale` | PCD（先驗地圖 ICP）定位的 x/y/yaw 誤差 |
+| `ros2_ws/src/slam_localization_3d/config/global_fusion.yaml` → `global_pose_adapter` | `min_covariance_xy`、`min_covariance_yaw`、`registration_covariance_scale` | PCD（先驗地圖 ICP）定位的 x/y/yaw 誤差 |
 
 以下項目不會被自動寫入，工具只負責回報，需要手動修正：
 
@@ -36,7 +36,7 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 4. **執行校正路線**：
    ```bash
    docker compose exec ros /workspace/docker/entrypoint.sh \
-     ros2 run isaac_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
+     ros2 run slam_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
    ```
    - 內容依序為：靜止 40 秒；前進後退、正反原地旋轉、左右弧線並原路退回，重複 4 輪；最後靜止 20 秒。全程約 6 分鐘，活動範圍約 1 m。
    - 路線的目的：讓車在靜止、直行、原地旋轉、弧線等不同運動下各累積足夠樣本。靜止段量 IMU 偏差與 PCD 抖動；直行量每公尺誤差；旋轉量每弧度誤差並推算 LiDAR 外參。每個動作都原路退回，所以只需要很小的空間。
@@ -51,9 +51,9 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
 5. **計算建議值**：
    ```bash
    docker compose run --rm ros \
-     python3 ros2_ws/src/isaac_localization_3d/scripts/covariance_calibration.py cov_bag \
-     --local-config ros2_ws/src/isaac_nav/config/local_odometry.yaml \
-     --fusion-config ros2_ws/src/isaac_localization_3d/config/global_fusion.yaml
+     python3 ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py cov_bag \
+     --local-config ros2_ws/src/slam_nav/config/local_odometry.yaml \
+     --fusion-config ros2_ws/src/slam_localization_3d/config/global_fusion.yaml
    ```
    - `--fusion-config` 必須是**錄製當下**使用的設定：工具需要從發布的 covariance 中扣除當時的 floor。
    - 在 Isaac Sim 中加上 `--ground-truth`，逐項比對真值。
@@ -61,7 +61,7 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
    - `LIO body->base xy fitted` 與設定值相差約 1 cm 以上時，先修正外參，再回到步驟 2 重錄。
    - `PCD vs LIO ... by pair lag` 的數值應隨時間間隔增加而趨於平穩。若仍持續上升，代表 LIO 漂移明顯，可縮小 `--pcd-max-lag`。
 7. **寫入設定**：確認沒有問題後，在同一個指令加上 `--apply`，工具會把建議值寫回上述兩個 YAML。若使用 `--ground-truth` 且有任何項目 FAIL，工具會拒絕寫入。
-8. **重新建置並重啟**：執行 `docker compose run --rm ros build --packages-select isaac_nav isaac_localization_3d` 重新建置，再重新啟動定位與導航。
+8. **重新建置並重啟**：執行 `docker compose run --rm ros build --packages-select slam_nav slam_localization_3d` 重新建置，再重新啟動定位與導航。
 
 ## 輸出判讀
 

@@ -17,10 +17,10 @@ import tempfile
 
 import yaml
 
-sys.path.insert(0, "ros2_ws/src/isaac_localization_3d/launch")
+sys.path.insert(0, "ros2_ws/src/slam_localization_3d/launch")
 from robot_fleet import fleet_rviz
 
-executable = pathlib.Path("ros2_ws/build/isaac_localization_3d/test_fleet_panel")
+executable = pathlib.Path("ros2_ws/build/slam_localization_3d/test_fleet_panel")
 if not executable.is_file():
     raise SystemExit("Build the workspace with BUILD_TESTING enabled before running this test.")
 with tempfile.TemporaryDirectory(prefix="fleet_panel_") as directory:

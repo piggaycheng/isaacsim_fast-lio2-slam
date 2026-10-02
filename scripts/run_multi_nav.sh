@@ -72,7 +72,7 @@ spec="$(IFS=';'; printf '%s' "${robots[*]}")"
 # Fail before starting anything; robot.launch.py and standalone.py check again.
 if ! python3 - "$project_dir" "$spec" <<'EOF'
 import sys
-sys.path.insert(0, sys.argv[1] + "/ros2_ws/src/isaac_localization_3d/launch")
+sys.path.insert(0, sys.argv[1] + "/ros2_ws/src/slam_localization_3d/launch")
 try:
     import robot_fleet
 except ImportError:  # host without PyYAML
@@ -113,12 +113,12 @@ for robot in "${robots[@]}"; do
   name="${robot%%@*}"
   name="${name%%:*}"
   names+=("$name")
-  start_ros_container "$name" launch isaac_localization_3d robot.launch.py "robot:=$robot" \
+  start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
     map_pcd:="$(container_path "$map_pcd")" map_pgm:="$(container_path "$map_pgm")" \
     rviz:=false auto_initial_pose:="$auto_initial_pose"
 done
 if [[ "$rviz" == true ]]; then
-  start_ros_container fleet-rviz launch isaac_localization_3d fleet_rviz.launch.py \
+  start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
     "robots:=$(IFS=';'; printf '%s' "${names[*]}")"
 fi
 

@@ -6,7 +6,7 @@ from geometry_msgs.msg import TransformStamped
 from tf2_msgs.msg import TFMessage
 
 sys.path.insert(0, str(
-    Path(__file__).resolve().parents[1] / "ros2_ws/src/isaac_localization_3d/scripts"
+    Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/scripts"
 ))
 from fleet_relay import prefix_frame, prefix_transforms  # noqa: E402
 
