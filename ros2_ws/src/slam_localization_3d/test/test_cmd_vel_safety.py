@@ -156,7 +156,7 @@ class SafetyTest(unittest.TestCase):
         self.command.linear.x = 2.0
         self.command.angular.z = 2.0
         self.node.on_command(self.command)
-        self.assert_output(0.75, 0.7)
+        self.assert_output(1.0, 0.75)
         self.command.linear.y = 0.1
         self.node.on_command(self.command)
         self.assert_output(0)

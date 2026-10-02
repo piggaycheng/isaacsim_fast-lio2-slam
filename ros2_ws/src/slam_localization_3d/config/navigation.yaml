@@ -33,12 +33,12 @@ controller_server:
       latch_release_distance: 0.5
     FollowPath:
       plugin: "slam_nav::GoalHeadingLatchedRPP"
-      desired_linear_vel: 0.5
+      desired_linear_vel: 1.0
       lookahead_dist: 0.8
       use_velocity_scaled_lookahead_dist: false
       min_approach_linear_velocity: 0.04
       approach_velocity_scaling_dist: 0.5
-      rotate_to_heading_angular_vel: 0.35
+      rotate_to_heading_angular_vel: 0.75
       use_rotate_to_heading: true
       # Keep rotating in place after reaching the goal unless Carter drifts this far away.
       latch_release_distance: 0.5
@@ -55,8 +55,8 @@ velocity_smoother:
     # overcome wheel friction during in-place rotation.
     feedback: "OPEN_LOOP"
     # Keep within cmd_vel_safety's max_linear/angular_speed (collision_monitor.yaml).
-    max_velocity: [0.75, 0.0, 0.7]
-    min_velocity: [-0.75, 0.0, -0.7]
+    max_velocity: [1.0, 0.0, 0.75]
+    min_velocity: [-1.0, 0.0, -0.75]
     max_accel: [0.8, 0.0, 1.5]
     max_decel: [-1.5, 0.0, -2.0]
     deadband_velocity: [0.0, 0.0, 0.0]

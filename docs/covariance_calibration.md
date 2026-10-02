@@ -45,7 +45,7 @@ EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪�
      - 輪子打滑或底盤跟不上指令時，請降低 `linear_speed`、`spin_speed`、`arc_angular_speed`，例如 `-p linear_speed:=0.2 -p spin_speed:=0.4`。
      - 需在 PCD 地圖涵蓋、定位正常的區域內執行。
    - 也可以用搖桿手動駕駛取代腳本，工具不依賴固定路線。只要 bag 包含開頭靜止 ≥40 秒、結尾靜止約 20 秒，以及多次直行、正反原地旋轉與左右轉彎即可。
-   - 速度上限：0.75 m/s、0.7 rad/s 是 Isaac Carter `CmdVelReceiver` 的限制（超過會被歸零），不是校正本身的需求。真車請用與實際導航相近的速度（例如 Nav2 controller 的最高速度），不要明顯更快，以免輪子打滑、LiDAR 運動畸變與 ICP 誤差讓 covariance 偏大；也不宜過慢，否則直行與旋轉的樣本量不足。
+   - 速度上限：1.0 m/s、0.75 rad/s 是 Isaac Carter `CmdVelReceiver` 的限制（超過會被歸零），不是校正本身的需求。校正路線預設速度不變。真車請用與實際導航相近的速度（例如 Nav2 controller 的最高速度），不要明顯更快，以免輪子打滑、LiDAR 運動畸變與 ICP 誤差讓 covariance 偏大；也不宜過慢，否則直行與旋轉的樣本量不足。
    - 路線結束後停止錄製。
 5. **計算建議值**：
    ```bash

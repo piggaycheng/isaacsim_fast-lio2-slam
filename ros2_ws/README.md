@@ -478,17 +478,22 @@ can appear rotated in RViz's `map` fixed frame by the current `map -> odom`
 correction. This is not a footprint rotation; inspect that TF and compare
 wheel and Local EKF heading before changing the costmap frame.
 The safety node rejects non-finite or nonplanar commands and limits speed to
-`max_linear_speed` 0.75 m/s and `max_angular_speed` 0.7 rad/s
+`max_linear_speed` 1.0 m/s and `max_angular_speed` 0.75 rad/s
 (`cmd_vel_safety` in `config/collision_monitor.yaml`, overridable per robot profile). Isaac Sim also checks command bounds and stops on a
 0.5 s command timeout if ROS messages stop; stale PCD corrections suppress
-movement. Nav2's regulated pure pursuit controller targets 0.5 m/s
+movement. Nav2's regulated pure pursuit controller targets 1.0 m/s
 (`desired_linear_vel` in `config/navigation.yaml`), subject to its approach,
 curvature, and collision speed reductions. It uses a fixed 0.8 m lookahead
 to reduce side-to-side corrections on straight paths; check corner tracking
 and clearance before using longer or tighter routes. Manual W/S keyboard
 jogging commands
-0.75 m/s in either direction; auto-jog remains at 0.2 m/s. Higher navigation
-speeds require controller, footprint, and stopping-distance validation.
+1.0 m/s in either direction; manual rotation is 0.75 rad/s and auto-jog remains
+at 0.2 m/s. With unchanged collision zones, one new-speed Isaac Sim run passed
+four physical-obstacle stopping cases and one sensor-watchdog case, plus a
+baseline Nav2 goal. Measured linear cruise was about 1.0 m/s; measured angular
+cruise was 0.65-0.69 rad/s for a 0.75 rad/s command. Sensor loss allowed about
+0.85 m travel before stopping. See `docs/nav.md` for results and reproduction
+commands; this single simulation run does not validate all scenarios or real hardware.
 `--navigate` cannot be combined with
 `--auto-jog`. Unlike observation-only costmaps, Nav2's planner and controller
 own both costmaps. This configuration replans periodically and recovers from

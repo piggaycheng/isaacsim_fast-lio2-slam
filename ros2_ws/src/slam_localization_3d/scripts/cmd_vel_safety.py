@@ -23,8 +23,8 @@ class CmdVelSafety(Node):
         self.max_angular_accel = self.declare_parameter("max_angular_accel", 1.5).value
         self.command_timeout = self.declare_parameter("command_timeout", 0.5).value
         # Robot speed limits (profile parameter_overrides); adaptive limits may not exceed them.
-        self.max_linear_speed = self.declare_parameter("max_linear_speed", 0.75).value
-        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.7).value
+        self.max_linear_speed = self.declare_parameter("max_linear_speed", 1.0).value
+        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.75).value
         for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout",
                      "max_linear_speed", "max_angular_speed"):
             value = getattr(self, name)

@@ -5,7 +5,7 @@ import time
 
 
 class CmdVelReceiver:
-    def __init__(self, timeout=0.5, max_linear=0.75, max_angular=0.7):
+    def __init__(self, timeout=0.5, max_linear=1.0, max_angular=0.75):
         self.timeout = timeout
         self.max_linear = max_linear
         self.max_angular = max_angular

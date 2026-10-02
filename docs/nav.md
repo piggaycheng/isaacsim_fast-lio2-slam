@@ -187,7 +187,7 @@ flowchart LR
 
 也可省略 `--navigate`，先在 costmap 觀察模式畫區域；直接 launch 時使用 `filter_editor:=true filter_state:=/workspace/.../zones.json costmaps:=true`。
 
-Editor 發布 mask 與 filter info，costmap 啟動前會等待兩張 mask、`/map` 與有效定位 TF。Keepout mask 的 100 表示禁止通行、0 表示未標註；Speed mask 的 **0 表示不限速，不是停車**，非零值表示 RPP 原始目標線速度的百分比。目前 50% 將 0.5 m/s 的目標速度降至 0.25 m/s，仍可能因曲率或障礙更慢。
+Editor 發布 mask 與 filter info，costmap 啟動前會等待兩張 mask、`/map` 與有效定位 TF。Keepout mask 的 100 表示禁止通行、0 表示未標註；Speed mask 的 **0 表示不限速，不是停車**，非零值表示 RPP 原始目標線速度的百分比。目前 50% 將 1.0 m/s 的目標速度降至 0.5 m/s，仍可能因曲率或障礙更慢。
 
 兩張 mask 涵蓋整張 `/map`；Humble 超出 speed mask 範圍時可能保留前一個限制，不應靠越界來解除限速。感測清除與 recovery 不會移除標註定義，後續 costmap 更新仍會重新套用。
 
@@ -202,7 +202,7 @@ Binary filter 尚未實作；它用於區域開關事件，不是 Keepout 或 Sp
 | 元件 | 設定 | 說明 |
 | :-- | :-- | :-- |
 | Planner | `nav2_navfn_planner/NavfnPlanner`（Dijkstra），`allow_unknown: false` | 在 global costmap 找最低代價路徑 |
-| Controller | `slam_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 0.5 m/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
+| Controller | `slam_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 1.0 m/s、原地轉向 0.75 rad/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
 | Goal checker | `slam_nav::LatchedGoalChecker` | 位置誤差 0.15 m、航向 0.25 rad；到位後鎖定，偏離超過 0.5 m 才解除 |
 | Progress checker | `SimpleProgressChecker` | 15 秒內移動不到 0.15 m 視為卡住 |
 | `failure_tolerance` | 1.0 秒 | controller 持續失敗超過 1 秒就回報失敗，交給 BT 處理 |
@@ -323,13 +323,13 @@ controller / behavior → /nav2/cmd_vel_nav → velocity_smoother → /nav2/cmd_
 
 ### velocity_smoother
 
-Nav2 Humble 內建的 `nav2_velocity_smoother`，設定在 `navigation.yaml`。RPP 與 BackUp 的命令可能一步從 0 跳到 0.5 m/s，smoother 以 20 Hz 把它變成斜坡。
+Nav2 Humble 內建的 `nav2_velocity_smoother`，設定在 `navigation.yaml`。RPP 與 BackUp 的命令可能一步從 0 跳到 1.0 m/s，smoother 以 20 Hz 把它變成斜坡。
 
 | 參數 | 值 | 說明 |
 | :-- | :-- | :-- |
-| `max_accel` | 線 0.8 m/s²、角 1.5 rad/s² | 0 → 0.5 m/s 約 0.6 秒 |
+| `max_accel` | 線 0.8 m/s²、角 1.5 rad/s² | 0 → 1.0 m/s 約 1.25 秒 |
 | `max_decel` | 線 −1.5 m/s²、角 −2.0 rad/s² | 正常減速；安全停車不受此限制 |
-| `max_velocity` / `min_velocity` | ±0.75 m/s、±0.7 rad/s | 與 `cmd_vel_safety` 的限速一致 |
+| `max_velocity` / `min_velocity` | ±1.0 m/s、±0.75 rad/s | 與 `cmd_vel_safety` 的限速一致 |
 | `velocity_timeout` | 0.5 s | Nav2 停止發布命令後，依減速度降到 0，然後停止發布 |
 | `feedback` | `OPEN_LOOP` | 以上一個輸出作為目前速度 |
 
@@ -354,7 +354,7 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 | 模式 | Surround（`base_link`） | 速度上限 |
 | :-- | :-- | :-- |
-| 一般 | x −0.80–1.10 m、y ±0.75 m；與預設相同 | 0.75 m/s、0.7 rad/s |
+| 一般 | x −0.80–1.10 m、y ±0.75 m；與預設相同 | 1.0 m/s、0.75 rad/s |
 | Crawl | x −0.45–0.90 m、y ±0.55 m；全寬 1.10 m | 0.10 m/s、0.20 rad/s |
 
 啟用時 RPP 的期望線速度改為 0.10 m/s、轉向速度改為 0.15 rad/s，smoother 的角速度上限改為 ±0.20 rad/s，避免追蹤曲線時的角速度讓低速車體反覆切回大區域。smoother 後新增 selector；只有命令在 Crawl 上限內，且 `/odometry/local` 的 twist 與相鄰位姿差分都在 0.12 m/s、0.22 rad/s 內持續 0.5 秒，才允許縮小。要求較快線速度或量測超過門檻時，先停車再擴大，原生 monitor 確認切換後才轉發命令。Crawl 仍不分行進方向，也會阻擋原地轉向；不是容許貼牆旋轉。
@@ -385,7 +385,28 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
 | 0.5 秒未收到新的速度命令 | 發布零速；下一個命令從零起步 |
 | 選用 adaptive 模式，但缺少有效限速心跳或正等待切換確認 | 發布零速；否則套用目前區域的線／角速度上限 |
-| 其他 | 限速 `max_linear_speed` 0.75 m/s、`max_angular_speed` 0.7 rad/s（`collision_monitor.yaml`／車種 profile），再限制加速；減速與停車立即轉發 |
+| 其他 | 限速 `max_linear_speed` 1.0 m/s、`max_angular_speed` 0.75 rad/s（`collision_monitor.yaml`／車種 profile），再限制加速；減速與停車立即轉發 |
+
+目前速度設定已提高至 1.0 m/s／0.75 rad/s，防撞區域不變；adaptive crawl 仍維持 0.1 m/s／0.2 rad/s。2026-10-02 在 Isaac Sim Office 場景重跑一輪新速度測試，四個方向的實體障礙煞停與感測 watchdog 停車均通過：
+
+| 測試 | 停車前實測速度 | 停車時間（模擬秒） | 停車前移動距離 | 最小 padded footprint 淨空 |
+| :-- | :-- | :-- | :-- | :-- |
+| 後退障礙 | 1.001 m/s | 0.400 s | 0.318 m | 0.276 m |
+| 前進障礙 | 0.999 m/s | 0.567 s | 0.395 m | 0.268 m |
+| 左旋障礙 | 0.692 rad/s | 0.467 s | 旋轉 0.273 rad | 0.250 m |
+| 右旋障礙 | 0.647 rad/s | 0.383 s | 旋轉 0.203 rad | 0.290 m |
+| 感測 watchdog | 1.001 m/s | 0.933 s | 0.852 m | 無障礙物，未量測 |
+
+旋轉指令為 ±0.75 rad/s，但停車前實測角速度未達指令值。Nav2 無障礙 baseline 也成功到達目標：最高輸出 1.0 m/s、行駛約 2.51 m、終點誤差 0.041 m。這是一輪模擬驗證，不代表動態障礙、所有場景或實機的安全保證，尤其感測失效時仍可能滑行約 0.85 m。
+
+重現指令（可用 `ISAAC_PYTHON` 指定 Isaac Sim launcher）：
+
+```bash
+bash tests/run_navigation_environment.sh --braking --repeats 1 --linear-speeds 1.0 --angular-speeds 0.75
+bash tests/run_navigation_environment.sh --repeats 1 --cases baseline
+```
+
+本次證據位於 `ros2_ws/log/navigation_environment/20261002_231551/`（煞停）與 `20261002_231722/`（導航），各包含 `results.json`、模擬器與 ROS logs。
 
 最後一道關卡只限制速度大小增加：`max_linear_accel: 0.8` m/s²、`max_angular_accel: 1.5` rad/s²（`collision_monitor.yaml`，與 smoother 的 `max_accel` 一致）。collision monitor 發布零速、感測或定位校正過期、無效命令與 emergency stop 都立即歸零並重設起步狀態；安全停車不受減速度限制。恢復後必須收到新命令，從最後發布的零速逐步增加；倒退與原地旋轉也適用。方向反轉先輸出零速，再向相反方向加速。
 

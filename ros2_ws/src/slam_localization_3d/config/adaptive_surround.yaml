@@ -6,8 +6,8 @@ adaptive_surround:
     crawl_linear: 0.10
     crawl_angular: 0.20
     # Full-profile limits; keep equal to cmd_vel_safety's max_linear/angular_speed.
-    max_linear_speed: 0.75
-    max_angular_speed: 0.7
+    max_linear_speed: 1.0
+    max_angular_speed: 0.75
     motion_margin: 0.02
     shrink_hold: 0.5
     odom_timeout: 0.3

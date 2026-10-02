@@ -126,7 +126,7 @@ def clearance_metrics(samples, obstacles, motion_started, bounds, footprint_boun
     radius = math.hypot(max(abs(bounds[0]), abs(bounds[1])),
                         max(abs(bounds[2]), abs(bounds[3])))
     obstacle_speed = max((math.hypot(*o["velocity"]) for o in obstacles), default=0.0)
-    allowance = float(max(gaps)) / 2 * (0.75 + 0.7 * radius + obstacle_speed)
+    allowance = float(max(gaps)) / 2 * (1.0 + 0.75 * radius + obstacle_speed)
     return {
         "truth_samples": len(samples), "max_truth_gap_s": float(max(gaps)),
         "min_body_separation_m": None if not obstacles else minimum,

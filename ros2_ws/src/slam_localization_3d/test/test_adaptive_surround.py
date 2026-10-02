@@ -118,7 +118,7 @@ class AdaptiveTest(unittest.TestCase):
 
     def test_shrink_requires_dwell_gate_ack_and_native_ack(self):
         self.node.tick()
-        self.assertEqual(self.limits().twist.linear.x, 0.75)
+        self.assertEqual(self.limits().twist.linear.x, 1.0)
         self.now += 0.49
         self.refresh()
         self.node.tick()
@@ -304,8 +304,8 @@ class AdaptiveGateTest(unittest.TestCase):
         self.node.last_command_time = self.now - 0.1
         self.node.last_output_time = self.now - 0.1
         self.command = Twist()
-        self.command.linear.x = 0.75
-        self.command.angular.z = 0.7
+        self.command.linear.x = 1.0
+        self.command.angular.z = 0.75
 
     def tearDown(self):
         self.clock_patch.stop()
@@ -330,9 +330,9 @@ class AdaptiveGateTest(unittest.TestCase):
         self.assertEqual(self.node.last_output, Twist())
 
     def test_zero_barrier_immediately_stops_and_acknowledges(self):
-        self.node.on_adaptive_limits(self.limits(0.75, 0.7))
+        self.node.on_adaptive_limits(self.limits(1.0, 0.75))
         self.node.on_command(self.command)
-        self.assertEqual(self.node.last_output.linear.x, 0.75)
+        self.assertEqual(self.node.last_output.linear.x, 1.0)
         message = self.limits(0, 0)
         self.node.on_adaptive_limits(message)
         self.assertEqual(self.node.last_output, Twist())
@@ -341,7 +341,7 @@ class AdaptiveGateTest(unittest.TestCase):
         self.assertEqual(self.node.last_output, Twist())
 
     def test_cap_reduction_stops_then_delayed_fast_commands_remain_capped(self):
-        self.node.on_adaptive_limits(self.limits(0.75, 0.7))
+        self.node.on_adaptive_limits(self.limits(1.0, 0.75))
         self.node.on_command(self.command)
         self.node.on_adaptive_limits(self.limits())
         self.assertEqual(self.node.last_output, Twist())
@@ -368,7 +368,7 @@ class AdaptiveGateTest(unittest.TestCase):
                 elif kind == "partial_zero":
                     message.twist.angular.z = 0.0
                 else:
-                    message.twist.linear.x = {"nan": math.nan, "negative": -0.1, "overspeed": 0.76}[kind]
+                    message.twist.linear.x = {"nan": math.nan, "negative": -0.1, "overspeed": 1.01}[kind]
                 self.node.last_output = self.command
                 self.node.adaptive_ack.reset_mock()
                 self.node.on_adaptive_limits(message)
@@ -377,7 +377,7 @@ class AdaptiveGateTest(unittest.TestCase):
 
     def test_old_full_limits_cannot_replace_a_newer_crawl_limit(self):
         self.node.on_adaptive_limits(self.limits())
-        old = self.limits(0.75, 0.7)
+        old = self.limits(1.0, 0.75)
         old.header.stamp = Time(seconds=self.now - 0.05).to_msg()
         self.node.adaptive_ack.reset_mock()
         self.node.on_adaptive_limits(old)
@@ -430,9 +430,9 @@ class RealHumbleSurroundTest(unittest.TestCase):
         controller = yaml.safe_load(Path(context.launch_configurations["navigation_config"]).read_text())
         self.assertEqual(controller["controller_server"]["ros__parameters"]["FollowPath"]["desired_linear_vel"], 0.1)
         self.assertEqual(controller["velocity_smoother"]["ros__parameters"]["max_velocity"],
-                         [0.75, 0.0, 0.2])
+                         [1.0, 0.0, 0.2])
         self.assertEqual(controller["velocity_smoother"]["ros__parameters"]["min_velocity"],
-                         [-0.75, 0.0, -0.2])
+                         [-1.0, 0.0, -0.2])
         prefix = get_package_prefix("nav2_collision_monitor")
         process = subprocess.Popen([
             str(Path(prefix) / "lib/nav2_collision_monitor/collision_monitor"),
