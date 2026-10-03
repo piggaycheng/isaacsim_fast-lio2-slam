@@ -38,15 +38,36 @@ SIMULATION_KEYS = (
 )
 FRAME_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
 SENSOR_FRAMES = ("lidar_link", "imu_link")
+# local_ekf (odom -> base_link) inputs a profile may select (slam_nav/config/local_ekf_inputs.yaml).
+LOCAL_ODOMETRY_INPUTS = ("wheel", "imu", "lio")
+DEFAULT_LOCAL_ODOMETRY_INPUTS = ("wheel", "imu")
+ROBOT_LOCALIZATION_INPUT_PATTERN = re.compile(r"^(odom|imu|pose|twist)\d+(_.*)?$")
+# Without wheel odometry (so LIO is a local input) the global EKF propagates
+# between PCD corrections with the LIO pose increments instead. The local EKF's
+# velocity would only be inferred from the same lagged poses.
+GLOBAL_EKF_LIO_ODOMETRY = {
+    "odom0": "/lio/odom",
+    "odom0_config": [True, True, False, False, False, True,
+                     False, False, False, False, False, False,
+                     False, False, False],
+    "odom0_differential": True,
+    "odom0_queue_size": 10,
+    "odom0_nodelay": True,
+}
+# Vehicle-specific parameters needed only when a local_ekf input is selected.
+INPUT_OVERRIDES = {
+    "wheel": {
+        "wheel_encoder_odometry": (
+            "left_joint", "right_joint", "wheel_radius", "wheel_base",
+            "encoder_ticks_per_revolution", "left_distance_scale", "right_distance_scale",
+            "left_direction", "right_direction", "distance_noise_ratio",
+            "distance_variance_per_meter", "position_variance_per_radian",
+            "yaw_variance_per_meter", "yaw_variance_per_radian",
+        ),
+    },
+}
 # Vehicle-specific parameters that the base configs omit: every profile must set them.
 REQUIRED_OVERRIDES = {
-    "wheel_encoder_odometry": (
-        "left_joint", "right_joint", "wheel_radius", "wheel_base",
-        "encoder_ticks_per_revolution", "left_distance_scale", "right_distance_scale",
-        "left_direction", "right_direction", "distance_noise_ratio",
-        "distance_variance_per_meter", "position_variance_per_radian",
-        "yaw_variance_per_meter", "yaw_variance_per_radian",
-    ),
     "nav_imu_adapter": (
         "orientation_variance", "angular_velocity_variance", "linear_acceleration_variance",
     ),
@@ -159,16 +180,116 @@ def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):
     overrides = profile.setdefault("parameter_overrides", {}) or {}
     if not isinstance(overrides, dict):
         raise ValueError(f"{path}: parameter_overrides must be a mapping")
-    for node, keys in REQUIRED_OVERRIDES.items():
+    local = profile.get("local_odometry") or {}
+    if not isinstance(local, dict):
+        raise ValueError(f"{path}: local_odometry must be a mapping")
+    try:
+        inputs = parse_local_odometry_inputs(local.get("inputs", DEFAULT_LOCAL_ODOMETRY_INPUTS))
+    except ValueError as error:
+        raise ValueError(f"{path}: local_odometry.inputs: {error}") from None
+    profile["local_odometry"] = dict(local, inputs=inputs)
+    profile["parameter_overrides"] = overrides
+    profile["robot_type"] = robot_type
+    try:
+        require_overrides(profile, REQUIRED_OVERRIDES)
+        require_input_overrides(profile, inputs)
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from None
+    return profile
+
+
+def require_overrides(profile, required):
+    overrides = profile["parameter_overrides"]
+    for node, keys in required.items():
         parameters = ((overrides.get(node) or {}).get("ros__parameters") or {})
         missing = [key for key in keys if key not in parameters]
         if missing:
             raise ValueError(
-                f"{path}: parameter_overrides.{node}.ros__parameters needs {', '.join(missing)}"
+                f"parameter_overrides.{node}.ros__parameters needs {', '.join(missing)}"
             )
-    profile["parameter_overrides"] = overrides
-    profile["robot_type"] = robot_type
-    return profile
+
+
+def require_input_overrides(profile, inputs):
+    """Fail if the profile lacks the vehicle parameters of a selected local_ekf input."""
+    for name in inputs:
+        try:
+            require_overrides(profile, INPUT_OVERRIDES.get(name, {}))
+        except ValueError as error:
+            raise ValueError(f"local_odometry input {name!r}: {error}") from None
+
+
+def parse_local_odometry_inputs(value):
+    """Validate local_ekf inputs from a list or a comma-separated string, in canonical order."""
+    items = value.split(",") if isinstance(value, str) else value
+    if not isinstance(items, (list, tuple)):
+        raise ValueError(f"expected a list of {', '.join(LOCAL_ODOMETRY_INPUTS)}")
+    names = [str(item).strip().lower() for item in items if str(item).strip()]
+    unknown = sorted(set(names) - set(LOCAL_ODOMETRY_INPUTS))
+    if unknown:
+        raise ValueError(f"unknown inputs {unknown}; choose from {', '.join(LOCAL_ODOMETRY_INPUTS)}")
+    if len(set(names)) != len(names):
+        raise ValueError(f"duplicate inputs in {names}")
+    if not names:
+        raise ValueError("select at least one input")
+    if names == ["imu"]:
+        raise ValueError("imu alone gives no translation; add wheel or lio")
+    return tuple(name for name in LOCAL_ODOMETRY_INPUTS if name in names)
+
+
+def local_odometry_inputs(profile, override=""):
+    """The launch override (comma-separated) if set, else the profile's inputs."""
+    if not (override or "").strip():
+        return profile["local_odometry"]["inputs"]
+    inputs = parse_local_odometry_inputs(override)
+    require_input_overrides(profile, inputs)
+    return inputs
+
+
+def strip_robot_localization_inputs(parameters):
+    return {key: value for key, value in parameters.items()
+            if not ROBOT_LOCALIZATION_INPUT_PATTERN.match(key)}
+
+
+def local_ekf_inputs(templates, inputs):
+    """robot_localization parameters for the selected input templates."""
+    parameters, counts, filter_parameters = {}, {}, {}
+    for name in inputs:
+        template = templates[name]
+        kind = template["kind"]
+        prefix = f"{kind}{counts.get(kind, 0)}"
+        counts[kind] = counts.get(kind, 0) + 1
+        parameters[prefix] = template["topic"]
+        template_parameters = dict(template.get("parameters") or {})
+        template_filter = dict(template.get("filter") or {})
+        for other, override in (template.get("when") or {}).items():
+            if other in inputs:
+                template_parameters.update(override.get("parameters") or {})
+                template_filter.update(override.get("filter") or {})
+        for key, value in template_parameters.items():
+            parameters[f"{prefix}_{key}"] = copy.deepcopy(value)
+        filter_parameters.update(copy.deepcopy(template_filter))
+    return {**filter_parameters, **parameters}
+
+
+def with_local_ekf_inputs(config, templates, inputs, node="local_ekf"):
+    """Replace the inputs of the local_ekf parameter block with the selected templates."""
+    result = copy.deepcopy(config)
+    parameters = strip_robot_localization_inputs(result[node]["ros__parameters"])
+    parameters.update(local_ekf_inputs(templates, inputs))
+    result[node]["ros__parameters"] = parameters
+    return result
+
+
+def with_global_ekf_inputs(config, inputs, node="global_ekf"):
+    """Without wheel odometry, propagate the global EKF with the LIO pose increments."""
+    if "wheel" in inputs:
+        return config
+    result = copy.deepcopy(config)
+    parameters = {key: value for key, value in result[node]["ros__parameters"].items()
+                  if not re.match(r"^odom\d+(_.*)?$", key)}
+    parameters.update(copy.deepcopy(GLOBAL_EKF_LIO_ODOMETRY))
+    result[node]["ros__parameters"] = parameters
+    return result
 
 
 def imu_mount(profile):

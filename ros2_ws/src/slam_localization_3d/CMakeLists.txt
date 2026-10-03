@@ -43,6 +43,7 @@ install(TARGETS costmap_observer DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS scripts/localization_3d_pose.py
   scripts/global_pose_adapter.py scripts/global_tf_gate.py
+  scripts/lio_odometry.py
   scripts/global_localization_xyz.py
   scripts/wait_for_costmap_tf.py
   scripts/cmd_vel_safety.py

@@ -18,11 +18,12 @@ from launch_ros.actions import Node, PushRosNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
-    DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, namespaced_topic,
-    normalize_namespace,
+    DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, local_odometry_inputs,
+    namespaced_topic, normalize_namespace, with_global_ekf_inputs,
 )
 from robot_namespace import (  # noqa: E402
-    RobotParameterFile, load_parameters, namespaced_rviz_file, robot_parameter_file,
+    RobotParameterFile, load_parameters, local_odometry_file, namespaced_rviz_file,
+    robot_parameter_file,
 )
 
 
@@ -297,22 +298,42 @@ def robot_nodes(context, package, nav):
     obstacle_cloud = enabled("obstacle_cloud")
     costmaps = enabled("costmaps")
     navigate = enabled("navigate")
-    nav_parameters = [config(os.path.join(nav, "config", "local_odometry.yaml")), sim]
+    profile = load_robot_profile(kind)
+    inputs = local_odometry_inputs(profile, value("local_odometry_inputs"))
+    nav_parameters = [local_odometry_file(
+        os.path.join(nav, "config", "local_odometry.yaml"),
+        os.path.join(nav, "config", "local_ekf_inputs.yaml"), namespace, kind, inputs,
+    ), sim]
     observation_config = config(value("costmap_config"))
     navigation_config = config(value("navigation_config"))
     collision_config = config(value("collision_config"))
-    fusion_config = config(os.path.join(package, "config", "global_fusion.yaml"))
+    fusion_config = robot_parameter_file(
+        os.path.join(package, "config", "global_fusion.yaml"), namespace, kind,
+        transform=lambda fusion: with_global_ekf_inputs(fusion, inputs),
+    )
     upstream = [(name, topic(name)) for name in UPSTREAM_TOPICS] if namespace else []
     actions = [
         *sensor_transforms(context),
-        Node(
-            package="slam_nav", executable="wheel_encoder_odometry",
-            name="wheel_encoder_odometry", output="screen", parameters=nav_parameters,
-        ),
+        LogInfo(msg=f"local_ekf inputs ({namespace or 'root'}): {', '.join(inputs)}"),
+        # The global EKF also fuses the IMU, so its adapter always runs.
         Node(
             package="slam_nav", executable="imu_covariance_adapter",
             name="nav_imu_adapter", output="screen", parameters=nav_parameters,
         ),
+    ]
+    if "wheel" in inputs:
+        actions.append(Node(
+            package="slam_nav", executable="wheel_encoder_odometry",
+            name="wheel_encoder_odometry", output="screen", parameters=nav_parameters,
+        ))
+    if "lio" in inputs:
+        actions.append(Node(
+            package="slam_localization_3d", executable="lio_odometry.py",
+            name="lio_odometry", output="screen",
+            parameters=[*nav_parameters, {"imu_mount": imu_mount(profile)}],
+            remappings=upstream,
+        ))
+    actions += [
         Node(
             package="robot_localization", executable="ekf_node",
             name="local_ekf", output="screen",
@@ -379,7 +400,7 @@ def robot_nodes(context, package, nav):
             name="global_pose_adapter", output="screen",
             parameters=[fusion_config, {
                 "use_sim_time": True, "auto_initial_pose": enabled("auto_initial_pose"),
-                "imu_mount": imu_mount(load_robot_profile(kind)),
+                "imu_mount": imu_mount(profile),
                 **{f"initial_{axis}": float(value(f"initial_{axis}"))
                    for axis in ("x", "y", "z", "yaw")},
             }],
@@ -569,6 +590,11 @@ def generate_launch_description():
                 description="auto_initial_pose map -> camera_init guess; "
                             "robot.launch.py derives it from the spawn",
             ) for axis in ("x", "y", "z", "yaw")),
+            DeclareLaunchArgument(
+                "local_odometry_inputs", default_value="",
+                description="Comma-separated local_ekf inputs (wheel, imu, lio) overriding "
+                            "the robot profile's local_odometry.inputs",
+            ),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),

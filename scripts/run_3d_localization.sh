@@ -19,6 +19,7 @@ filter_editor=false
 filter_state="$project_dir/maps/costmap_filters/editor.json"
 filter_state_set=false
 ros_cmd_vel=false
+local_inputs=""
 boxes=()
 
 usage() {
@@ -55,6 +56,11 @@ Options:
                       Experimental low-speed Surround; requires --global-fusion --navigate.
       --static-zones  Keep all collision zones active in every direction instead
                       of switching forward/reverse/rotate zone sets.
+      --local-inputs LIST
+                      With --global-fusion, comma-separated local_ekf
+                      (odom -> base_link) inputs from wheel, imu, lio,
+                      e.g. lio or lio,imu (default: the robot profile's
+                      local_odometry.inputs).
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
       --box X,Y[,SX,SY,SZ]
@@ -95,6 +101,14 @@ while (($# > 0)); do
     --adaptive-surround) adaptive_surround=true; shift ;;
     --static-zones) direction_zones=false; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
+    --local-inputs)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      local_inputs="$2"
+      shift 2
+      ;;
     --box)
       if (($# < 2)); then
         echo "Missing value for --box" >&2
@@ -119,6 +133,10 @@ if [[ "$filter_editor" == true &&
 fi
 if [[ "$filter_state_set" == true && "$filter_editor" != true ]]; then
   echo "--filter-state requires --filter-editor" >&2
+  exit 2
+fi
+if [[ -n "$local_inputs" && "$global_fusion" != true ]]; then
+  echo "--local-inputs requires --global-fusion" >&2
   exit 2
 fi
 if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
@@ -177,6 +195,9 @@ if [[ "$global_fusion" == true ]]; then
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
     navigate:="$navigate" adaptive_surround:="$adaptive_surround"
     direction_zones:="$direction_zones" "${filter_args[@]}")
+  if [[ -n "$local_inputs" ]]; then
+    launch_args+=(local_odometry_inputs:="$local_inputs")
+  fi
 fi
 start_ros launch slam_localization_3d "$launch_file" "${launch_args[@]}"
 

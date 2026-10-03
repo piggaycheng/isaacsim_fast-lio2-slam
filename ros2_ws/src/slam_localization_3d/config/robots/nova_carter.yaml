@@ -30,6 +30,13 @@ sensor_frames:
   lidar_link: {x: -0.213, y: 0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 0.0}
   imu_link: {x: -0.213, y: 0.009, z: 0.526, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
+# local_ekf (odom -> base_link) inputs, any of wheel, imu, lio
+# (slam_nav/config/local_ekf_inputs.yaml). Launch argument local_odometry_inputs
+# overrides it. Without wheel the wheel_encoder_odometry parameters are optional
+# and the global EKF propagates with the local EKF velocity instead.
+local_odometry:
+  inputs: [wheel, imu]
+
 # Deep-merged into every parameter file that contains the node key; lists are
 # replaced, not merged. Values not listed here come from the shared base configs.
 parameter_overrides:

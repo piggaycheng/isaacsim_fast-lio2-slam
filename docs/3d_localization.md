@@ -122,6 +122,33 @@ Nav2 controller 的路徑控制遇到短暫 TF／控制失敗時會發布零速�
 最多容忍 1 秒；持續失敗則中止目標。
 不要同時啟動 2D AMCL、3D 融合或獨立 3D 展示模式。
 
+## Local EKF 輸入選擇
+
+上圖是預設的輪式車設定。`local_ekf`（`odom -> base_link`）要融合哪些來源由 robot profile 的 `local_odometry.inputs` 決定，可選 `wheel`、`imu`、`lio`（至少要有 `wheel` 或 `lio` 提供平移）：
+
+```yaml
+# config/robots/<type>.yaml
+local_odometry:
+  inputs: [lio, imu]   # 無輪速計的機器人；輪式車預設 [wheel, imu]
+```
+
+也可用啟動參數暫時覆寫：`scripts/run_3d_localization.sh --global-fusion --local-inputs lio,imu`（等同 launch 參數 `local_odometry_inputs:=lio,imu`）。
+
+各輸入的 robot_localization 設定寫在 `slam_nav/config/local_ekf_inputs.yaml`，啟動時依選擇編號成 `odom0`、`imu0`… 寫入 `local_ekf`，並只啟動需要的節點：
+
+| 輸入 | 節點／topic | 融合內容 |
+| :--- | :--- | :--- |
+| `wheel` | `wheel_encoder_odometry` → `/wheel/odom` | yaw 與前進速度；同時選 `lio` 時只融合前進速度，避免與 LIO 姿態互相拉扯 |
+| `imu` | `nav_imu_adapter` → `/nav/imu` | yaw 角速度 |
+| `lio` | `lio_odometry.py` → `/lio/odom` | FAST-LIO `/Odometry` 轉成 `base_link`、以第一筆為 `odom` 原點的絕對 x、y、yaw |
+
+- LIO 位姿以絕對值融合：FAST-LIO 本身的里程計連續，PCD 重定位只改 `map -> odom`。若改成 differential（只取增量當速度），兩次掃描之間陀螺儀偏差與時間差會累積成 yaw 漂移且無法修正。
+- LIO 時間戳約落後 0.1 秒，選 `lio` 時 `local_ekf` 啟用 `smooth_lagged_data` 回溯重播，並以 `predict_to_current_time` 依 `frequency` 發布到目前時間的 TF。
+- FAST-LIO 不提供 covariance，`lio_odometry` 使用 `local_odometry.yaml` 的固定 `position_variance`／`yaw_variance`。
+- 沒有 `wheel` 時，`global_ekf` 改以 `/lio/odom` 的位姿增量（differential）預測，取代 `/wheel/odom`。
+- `nav_imu_adapter` 一律啟動（`global_ekf` 也融合 IMU）。2D 模式（AMCL）不支援 `lio`。
+- 只有 `wheel` 時才需要 profile 的輪速參數；covariance 校正工具（[`covariance_calibration.md`](covariance_calibration.md)）仍需輪速資料。
+
 ## 選擇啟動方式
 
 | 入口                                | 功能                                                                             |

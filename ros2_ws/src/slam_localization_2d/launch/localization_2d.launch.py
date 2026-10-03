@@ -11,7 +11,8 @@ import sys
 sys.path.insert(
     0, os.path.join(get_package_share_directory("slam_localization_3d"), "launch")
 )
-from robot_namespace import robot_parameter_file  # noqa: E402
+from robot_fleet import load_robot_profile  # noqa: E402
+from robot_namespace import local_odometry_file  # noqa: E402
 
 # 2D AMCL mode supports the Nova Carter only (see the static transforms below).
 ROBOT_TYPE = "nova_carter"
@@ -20,9 +21,14 @@ ROBOT_TYPE = "nova_carter"
 def generate_launch_description():
     package_share = get_package_share_directory("slam_localization_2d")
     nav_share = get_package_share_directory("slam_nav")
+    inputs = load_robot_profile(ROBOT_TYPE)["local_odometry"]["inputs"]
+    # 2D mode runs no FAST-LIO, so local_ekf can only use wheel and IMU.
+    if "lio" in inputs:
+        raise ValueError("2D localization does not support the lio local_odometry input")
     # The base file omits vehicle-specific parameters; merge the robot profile.
-    config_file = robot_parameter_file(
-        os.path.join(nav_share, "config", "local_odometry.yaml"), "", ROBOT_TYPE
+    config_file = local_odometry_file(
+        os.path.join(nav_share, "config", "local_odometry.yaml"),
+        os.path.join(nav_share, "config", "local_ekf_inputs.yaml"), "", ROBOT_TYPE, inputs,
     )
     amcl_config = os.path.join(package_share, "config", "amcl.yaml")
     rviz_config = os.path.join(package_share, "config", "localization_2d.rviz")
@@ -70,13 +76,13 @@ def generate_launch_description():
                 ],
                 parameters=[{"use_sim_time": use_sim_time}],
             ),
-            Node(
+            *([Node(
                 package="slam_nav",
                 executable="wheel_encoder_odometry",
                 name="wheel_encoder_odometry",
                 output="screen",
                 parameters=common_parameters,
-            ),
+            )] if "wheel" in inputs else []),
             Node(
                 package="slam_nav",
                 executable="imu_covariance_adapter",

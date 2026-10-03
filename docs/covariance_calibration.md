@@ -2,6 +2,8 @@
 
 EKF 依據各感測器的 covariance 決定要相信誰。換了一台車（輪徑、輪距、LiDAR 位置、IMU 不同）後，舊的數值不再代表新車的誤差，需要重新量測。本流程只使用真車也有的資料，不需要真值。
 
+本工具需要輪速資料（`/wheel/odom`）。`local_odometry.inputs` 不含 `wheel` 的機器人（見 [`3d_localization.md`](3d_localization.md#local-ekf-輸入選擇)）不適用；其 `lio_odometry` 的 `position_variance`／`yaw_variance` 目前為固定值，未由本工具校正。
+
 ## 會被校正的參數
 
 全部寫在各車種 profile `ros2_ws/src/slam_localization_3d/config/robots/<type>.yaml` 的 `parameter_overrides`：

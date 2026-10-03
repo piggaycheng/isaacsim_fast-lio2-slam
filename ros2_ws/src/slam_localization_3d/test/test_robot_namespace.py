@@ -20,6 +20,13 @@ SPEC = importlib.util.spec_from_file_location(
 FUSION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FUSION)
 CONFIG = PACKAGE / "config"
+NAV_CONFIG = PACKAGE.parent / "slam_nav/config"
+# Every vehicle-specific parameter: always required plus per local_ekf input.
+VEHICLE_OVERRIDES = {
+    **robot_fleet.REQUIRED_OVERRIDES,
+    **{node: keys for required in robot_fleet.INPUT_OVERRIDES.values()
+       for node, keys in required.items()},
+}
 
 
 def write_profile(directory, name, **changes):
@@ -75,7 +82,7 @@ class RobotProfileTest(unittest.TestCase):
                      "local_costmap", "collision_monitor", "ground_obstacle_filter"):
             self.assertIn(node, overrides)
         defaults = copy.deepcopy(overrides)
-        for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+        for node, keys in VEHICLE_OVERRIDES.items():
             for key in keys:
                 del defaults[node]["ros__parameters"][key]
         used = set()
@@ -84,7 +91,7 @@ class RobotProfileTest(unittest.TestCase):
             used |= set(overrides) & set(config)
             with self.subTest(path=path.name):
                 self.assertEqual(robot_fleet.merge_overrides(config, defaults), config)
-                for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+                for node, keys in VEHICLE_OVERRIDES.items():
                     parameters = config.get(node, {}).get("ros__parameters", {})
                     self.assertFalse(set(keys) & set(parameters), (node, path.name))
         self.assertEqual(used, set(overrides))
@@ -93,7 +100,7 @@ class RobotProfileTest(unittest.TestCase):
         for robot_type in ("nova_carter", "carter_v1"):
             robot_fleet.load_robot_profile(robot_type)
         overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
-        for node, keys in robot_fleet.REQUIRED_OVERRIDES.items():
+        for node, keys in VEHICLE_OVERRIDES.items():
             with self.subTest(node=node), tempfile.TemporaryDirectory() as directory:
                 incomplete = copy.deepcopy(overrides)
                 del incomplete[node]["ros__parameters"][keys[-1]]
@@ -381,6 +388,113 @@ class FleetRvizTest(unittest.TestCase):
         for text in ("", "a;A", "1x"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 launch.robot_names(text)
+
+
+class LocalOdometryInputsTest(unittest.TestCase):
+    def templates(self):
+        return yaml.safe_load((NAV_CONFIG / "local_ekf_inputs.yaml").read_text())
+
+    def local_ekf(self, inputs, namespace=""):
+        path = robot_namespace.local_odometry_file(
+            str(NAV_CONFIG / "local_odometry.yaml"), str(NAV_CONFIG / "local_ekf_inputs.yaml"),
+            namespace, "nova_carter", inputs,
+        )
+        config = yaml.safe_load(Path(path).read_text())
+        if namespace:
+            config = config[namespace]
+        return config["local_ekf"]["ros__parameters"]
+
+    def test_profiles_default_to_wheel_and_imu(self):
+        for robot_type in ("nova_carter", "carter_v1"):
+            profile = robot_fleet.load_robot_profile(robot_type)
+            self.assertEqual(profile["local_odometry"]["inputs"], ("wheel", "imu"))
+            self.assertEqual(robot_fleet.local_odometry_inputs(profile), ("wheel", "imu"))
+        with tempfile.TemporaryDirectory() as directory:
+            profile = yaml.safe_load((CONFIG / "robots/nova_carter.yaml").read_text())
+            del profile["local_odometry"]
+            (Path(directory) / "implicit.yaml").write_text(yaml.safe_dump(profile))
+            loaded = robot_fleet.load_robot_profile("implicit", directory)
+            self.assertEqual(loaded["local_odometry"]["inputs"], ("wheel", "imu"))
+
+    def test_wheel_and_imu_keep_the_original_local_ekf(self):
+        parameters = self.local_ekf(("wheel", "imu"))
+        inputs = {key: value for key, value in parameters.items()
+                  if robot_fleet.ROBOT_LOCALIZATION_INPUT_PATTERN.match(key)}
+        config = [False] * 15
+        wheel, imu = list(config), list(config)
+        wheel[5] = wheel[6] = True
+        imu[11] = True
+        self.assertEqual(inputs, {
+            "odom0": "/wheel/odom", "odom0_config": wheel, "odom0_differential": False,
+            "odom0_relative": False, "odom0_queue_size": 10, "odom0_nodelay": True,
+            "imu0": "/nav/imu", "imu0_config": imu, "imu0_differential": False,
+            "imu0_relative": False, "imu0_queue_size": 20, "imu0_nodelay": True,
+        })
+        self.assertNotIn("smooth_lagged_data", parameters)
+
+    def test_lio_only_and_combined_inputs(self):
+        lio = self.local_ekf(("lio",))
+        self.assertEqual(lio["odom0"], "/lio/odom")
+        self.assertFalse(lio["odom0_differential"])
+        self.assertEqual([index for index, value in enumerate(lio["odom0_config"]) if value],
+                         [0, 1, 5])
+        self.assertTrue(lio["smooth_lagged_data"])
+        self.assertNotIn("imu0", lio)
+        self.assertNotIn("odom1", lio)
+        combined = self.local_ekf(("wheel", "imu", "lio"), "carter2")
+        self.assertEqual((combined["odom0"], combined["odom1"], combined["imu0"]),
+                         ("/carter2/wheel/odom", "/carter2/lio/odom", "/carter2/nav/imu"))
+        self.assertFalse(combined["odom1_differential"])
+        # With LIO owning the pose, the wheel contributes forward speed only.
+        self.assertEqual([index for index, value in enumerate(combined["odom0_config"]) if value],
+                         [6])
+        wheel_only = self.local_ekf(("wheel", "imu"))
+        self.assertEqual([index for index, value in enumerate(wheel_only["odom0_config"]) if value],
+                         [5, 6])
+
+    def test_launch_override_and_validation(self):
+        profile = robot_fleet.load_robot_profile("nova_carter")
+        self.assertEqual(robot_fleet.local_odometry_inputs(profile, " LIO , imu "), ("imu", "lio"))
+        for text, message in (
+            ("gps", "unknown"), ("lio,lio", "duplicate"), (",", "at least one"),
+            ("imu", "imu alone"),
+        ):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
+                robot_fleet.local_odometry_inputs(profile, text)
+
+    def test_wheel_parameters_required_only_with_wheel_input(self):
+        profile = yaml.safe_load((CONFIG / "robots/nova_carter.yaml").read_text())
+        del profile["parameter_overrides"]["wheel_encoder_odometry"]
+        with tempfile.TemporaryDirectory() as directory:
+            write_profile(directory, "legged", local_odometry={"inputs": ["lio", "imu"]},
+                          parameter_overrides=profile["parameter_overrides"])
+            legged = robot_fleet.load_robot_profile("legged", directory)
+            self.assertEqual(legged["local_odometry"]["inputs"], ("imu", "lio"))
+            with self.assertRaisesRegex(ValueError, "input 'wheel'.*wheel_encoder_odometry"):
+                robot_fleet.local_odometry_inputs(legged, "wheel,lio")
+            write_profile(directory, "broken", local_odometry={"inputs": ["wheel"]},
+                          parameter_overrides=profile["parameter_overrides"])
+            with self.assertRaisesRegex(ValueError, "broken.yaml: local_odometry input 'wheel'"):
+                robot_fleet.load_robot_profile("broken", directory)
+            write_profile(directory, "typo", local_odometry={"inputs": ["lidar"]})
+            with self.assertRaisesRegex(ValueError, "typo.yaml: local_odometry.inputs: unknown"):
+                robot_fleet.load_robot_profile("typo", directory)
+
+    def test_global_ekf_uses_lio_increments_without_wheel(self):
+        fusion = yaml.safe_load((CONFIG / "global_fusion.yaml").read_text())
+        self.assertIs(robot_fleet.with_global_ekf_inputs(fusion, ("wheel", "imu")), fusion)
+        path = robot_namespace.robot_parameter_file(
+            str(CONFIG / "global_fusion.yaml"), "carter1", "nova_carter",
+            transform=lambda config: robot_fleet.with_global_ekf_inputs(config, ("lio", "imu")),
+        )
+        ekf = yaml.safe_load(Path(path).read_text())["carter1"]["global_ekf"]["ros__parameters"]
+        self.assertEqual(ekf["odom0"], "/carter1/lio/odom")
+        self.assertTrue(ekf["odom0_differential"])
+        self.assertEqual([index for index, value in enumerate(ekf["odom0_config"]) if value],
+                         [0, 1, 5])
+        self.assertNotIn("odom1", ekf)
+        self.assertEqual((ekf["imu0"], ekf["pose0"]),
+                         ("/carter1/nav/imu", "/carter1/localization_3d/global_pose"))
 
 
 if __name__ == "__main__":

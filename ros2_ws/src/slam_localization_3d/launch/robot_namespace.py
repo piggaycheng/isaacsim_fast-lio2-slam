@@ -11,7 +11,7 @@ from launch.utilities import normalize_to_list_of_substitutions, perform_substit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
     load_robot_profile, merge_overrides, namespace_config, namespace_rviz,
-    namespaced_topic, normalize_namespace,
+    namespaced_topic, normalize_namespace, with_local_ekf_inputs,
 )
 
 _directory = None
@@ -31,18 +31,33 @@ def robot_overrides(robot_type):
     return load_robot_profile(robot_type)["parameter_overrides"]
 
 
+def local_odometry_file(path, templates_path, namespace, robot_type, inputs):
+    """local_odometry.yaml for this robot with local_ekf fed by the selected inputs."""
+    with open(templates_path, encoding="utf-8") as stream:
+        templates = yaml.safe_load(stream)
+    return robot_parameter_file(
+        path, namespace, robot_type,
+        transform=lambda config: with_local_ekf_inputs(config, templates, inputs),
+    )
+
+
 def load_parameters(path, robot_type):
     """Read a parameter file with the robot type's overrides applied."""
     with open(path, encoding="utf-8") as stream:
         return merge_overrides(yaml.safe_load(stream), robot_overrides(robot_type))
 
 
-def robot_parameter_file(path, namespace, robot_type):
-    """Return a parameter file for this robot; the original path if nothing changes."""
+def robot_parameter_file(path, namespace, robot_type, transform=None):
+    """Return a parameter file for this robot; the original path if nothing changes.
+
+    transform(config) may rewrite the merged config before namespacing.
+    """
     namespace = normalize_namespace(namespace)
     with open(path, encoding="utf-8") as stream:
         original = yaml.safe_load(stream)
     config = merge_overrides(original, robot_overrides(robot_type))
+    if transform is not None:
+        config = transform(config)
     if not namespace and config == original:
         return path
     return _write(f"{namespace or 'root'}_", namespace_config(config, namespace))

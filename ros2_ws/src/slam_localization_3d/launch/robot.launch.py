@@ -22,7 +22,7 @@ from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec  # no
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
-    "adaptive_surround", "direction_zones",
+    "adaptive_surround", "direction_zones", "local_odometry_inputs",
 )
 
 
@@ -59,5 +59,9 @@ def generate_launch_description():
         DeclareLaunchArgument("navigate", default_value="true"),
         DeclareLaunchArgument("adaptive_surround", default_value="false"),
         DeclareLaunchArgument("direction_zones", default_value="true"),
+        DeclareLaunchArgument(
+            "local_odometry_inputs", default_value="",
+            description="Comma-separated local_ekf inputs (wheel, imu, lio); empty uses the profile",
+        ),
         OpaqueFunction(function=robot_stack, args=[package]),
     ])

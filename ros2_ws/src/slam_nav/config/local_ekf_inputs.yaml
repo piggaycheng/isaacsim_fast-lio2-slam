@@ -1,0 +1,81 @@
+# robot_localization input blocks for local_ekf (odom -> base_link).
+#
+# Not a ROS parameter file: the launch files pick the blocks listed in the robot
+# profile's local_odometry.inputs (or the local_odometry_inputs launch argument),
+# number them per kind (odom0, odom1, imu0, ...) and write them into local_ekf.
+# `parameters` become <kind><N>_<key>; `filter` is merged into local_ekf itself.
+# `when: {<other input>: {parameters: ...}}` overrides parameters of this block
+# when <other input> is selected too.
+#
+# config order: x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az
+
+# Wheel encoder odometry (slam_nav wheel_encoder_odometry): yaw pose and forward speed.
+wheel:
+  kind: odom
+  topic: /wheel/odom
+  parameters:
+    config:
+      [false, false, false,
+       false, false, true,
+       true,  false, false,
+       false, false, false,
+       false, false, false]
+    differential: false
+    relative: false
+    queue_size: 10
+    nodelay: true
+  when:
+    # LIO owns the pose: the wheel's integrated yaw would fight it, so only
+    # the forward speed is fused.
+    lio:
+      parameters:
+        config:
+          [false, false, false,
+           false, false, false,
+           true,  false, false,
+           false, false, false,
+           false, false, false]
+
+# Gyro yaw rate (slam_nav nav_imu_adapter).
+imu:
+  kind: imu
+  topic: /nav/imu
+  parameters:
+    config:
+      [false, false, false,
+       false, false, false,
+       false, false, false,
+       false, false, true,
+       false, false, false]
+    differential: false
+    relative: false
+    queue_size: 20
+    nodelay: true
+
+# FAST-LIO pose moved to base_link (slam_localization_3d lio_odometry.py),
+# anchored at the odom origin. Fused as an absolute pose: FAST-LIO's own
+# odometry is continuous (PCD relocalization only moves map -> odom), and a
+# differential (velocity) fusion would let gyro bias and timing errors
+# integrate into yaw between scans without ever being corrected.
+lio:
+  kind: odom
+  topic: /lio/odom
+  parameters:
+    config:
+      [true,  true,  false,
+       false, false, true,
+       false, false, false,
+       false, false, false,
+       false, false, false]
+    differential: false
+    relative: false
+    queue_size: 10
+    nodelay: true
+  filter:
+    # LIO poses are stamped at the scan end, ~0.1 s behind the IMU/wheel stream:
+    # rewind and replay instead of fusing them at the wrong time.
+    smooth_lagged_data: true
+    history_length: 1.0
+    # Without a high-rate input the filter would publish odom -> base_link only
+    # per LIO scan, stamped in the past; predict to now at the filter frequency.
+    predict_to_current_time: true

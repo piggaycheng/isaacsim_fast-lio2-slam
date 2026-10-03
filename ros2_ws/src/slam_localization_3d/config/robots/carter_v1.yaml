@@ -23,6 +23,10 @@ sensor_frames:
   lidar_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
   imu_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
+# local_ekf (odom -> base_link) inputs: see nova_carter.yaml.
+local_odometry:
+  inputs: [wheel, imu]
+
 parameter_overrides:
   wheel_encoder_odometry:
     ros__parameters:
