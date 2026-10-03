@@ -426,7 +426,7 @@ class RealHumbleSurroundTest(unittest.TestCase):
         filename = context.launch_configurations["collision_config"]
         config = yaml.safe_load(Path(filename).read_text())
         params = config["collision_monitor"]["ros__parameters"]
-        self.assertEqual(params["PolygonSurround"]["points"], [1.1, 0.75, 1.1, -0.75, -0.8, -0.75, -0.8, 0.75])
+        self.assertEqual(params["PolygonSurround"]["points"], [0.8, 0.75, 0.8, -0.75, -1.35, -0.75, -1.35, 0.75])
         self.assertFalse(params["PolygonSurround"]["visualize"])
         self.assertTrue(config["cmd_vel_safety"]["ros__parameters"]["require_adaptive_limits"])
         controller = yaml.safe_load(Path(context.launch_configurations["navigation_config"]).read_text())
@@ -476,7 +476,7 @@ class RealHumbleSurroundTest(unittest.TestCase):
             polygon = PolygonStamped()
             polygon.header = Header(frame_id="base_link", stamp=stamp)
             polygon.polygon.points = [Point32(x=x, y=y) for x, y in (
-                (0.66, 0.33), (0.66, -0.33), (-0.21, -0.33), (-0.21, 0.33),
+                (0.21, 0.33), (0.21, -0.33), (-0.66, -0.33), (-0.66, 0.33),
             )]
             footprints.publish(polygon)
             if publish_odom:

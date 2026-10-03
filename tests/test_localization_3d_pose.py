@@ -30,7 +30,7 @@ class TestBodyToBase(unittest.TestCase):
             [mount[key] for key in ("x", "y", "z", "roll", "pitch", "yaw")],
         )
         for actual, expected in zip((*BODY_TO_BASE[0], *BODY_TO_BASE[1]),
-                                    (0.213, -0.009, -0.526, 0.0, 0.0, 1.0, 0.0)):
+                                    (0.213, -0.009, -0.526, 0.0, 0.0, 0.0, 1.0)):
             self.assertAlmostEqual(actual, expected, places=8)
 
     def test_inverse_composes_to_identity(self):

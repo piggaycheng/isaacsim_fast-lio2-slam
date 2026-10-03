@@ -7,7 +7,7 @@ ground_obstacle_filter:
     base_frame: base_link
     min_range: 0.0
     # Extruded Carter footprint: remove body returns, not a circular near-field region.
-    self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]
+    self_filter_bounds: [-0.65, 0.20, -0.32, 0.32]
     max_range: 20.0
     # Expected ground z in base_link comes from the robot profile.
     # Search half-width and plane residual tolerance are relative to that height.

@@ -120,8 +120,8 @@ class BrakingProbe(Node):
     def pose(message):
         position, q = message.pose.pose.position, message.pose.pose.orientation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-        # Simulator truth uses chassis_link; ROS base_link faces chassis -x.
-        return np.array([position.x, position.y]), yaw + math.pi
+        # The default Nova Carter's base_link faces chassis +x, drive wheels first.
+        return np.array([position.x, position.y]), yaw
 
     def stop(self):
         self.command = Twist()
@@ -337,8 +337,12 @@ def main():
         ))
         probe.control("hide")
         # Move away from the Office wall so its approach zone cannot limit cruise speed.
-        probe.command.linear.x = -0.25
-        probe.hold(3.0)
+        start, heading = probe.pose(probe.latest["truth"])
+        forward = np.array([math.cos(heading), math.sin(heading)])
+        probe.command.linear.x = 0.25
+        probe.wait(lambda: float(
+            (probe.pose(probe.latest["truth"])[0] - start) @ forward
+        ) >= 1.5)
         probe.stop()
         for repeat in range(args.repeats):
             for speed in args.linear_speeds:

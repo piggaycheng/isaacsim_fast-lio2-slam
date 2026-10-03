@@ -16,10 +16,10 @@ class AdaptiveSurround(Node):
     def __init__(self, **kwargs):
         super().__init__("adaptive_surround", **kwargs)
         self.full_points = self.declare_parameter(
-            "full_points", [1.10, 0.75, 1.10, -0.75, -0.80, -0.75, -0.80, 0.75],
+            "full_points", [0.80, 0.75, 0.80, -0.75, -1.35, -0.75, -1.35, 0.75],
         ).value
         self.crawl_points = self.declare_parameter(
-            "crawl_points", [0.90, 0.55, 0.90, -0.55, -0.45, -0.55, -0.45, 0.55],
+            "crawl_points", [0.45, 0.55, 0.45, -0.55, -0.90, -0.55, -0.90, 0.55],
         ).value
         self.crawl_linear = self.declare_parameter("crawl_linear", 0.10).value
         self.crawl_angular = self.declare_parameter("crawl_angular", 0.20).value
@@ -29,7 +29,7 @@ class AdaptiveSurround(Node):
         self.command_timeout = self.declare_parameter("command_timeout", 0.3).value
         self.switch_timeout = self.declare_parameter("switch_timeout", 1.0).value
         self.physical_footprint = self.declare_parameter(
-            "physical_footprint", [0.65, 0.32, 0.65, -0.32, -0.20, -0.32, -0.20, 0.32],
+            "physical_footprint", [0.20, 0.32, 0.20, -0.32, -0.65, -0.32, -0.65, 0.32],
         ).value
         self.footprint_padding = self.declare_parameter("footprint_padding", 0.01).value
         # Full-profile limits; must match cmd_vel_safety's max_linear/angular_speed.

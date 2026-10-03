@@ -130,7 +130,7 @@ isaac_python=/path/to/isaacsim/python.sh
   --frame base_link --yaw-deg 0 --padding 0.06
 ```
 
-`--yaw-deg` 必須符合 USD frame 與 ROS `base_link` 的方向差，**不要直接套用 Carter 的 180 度**。`--padding 0.06` 只是示例，不是所有車種都適用的安全距離；`--shape hull` 可改為凸包，`--json` 可輸出完整量測結果。沒有 USD 模型的實機，需以實測尺寸或可信的車體模型建立 footprint。
+`--yaw-deg` 必須符合 USD frame 與 ROS `base_link` 的方向差；目前 Nova Carter 與 Carter v1 都以差速輪那端為車頭，朝 USD +x，使用 0 度。`--padding 0.06` 只是示例，不是所有車種都適用的安全距離；`--shape hull` 可改為凸包，`--json` 可輸出完整量測結果。沒有 USD 模型的實機，需以實測尺寸或可信的車體模型建立 footprint。
 
 將輸出的 footprint 同步填入 global／local costmap（`config/observation_costmaps.yaml`），並調整 `slam_nav/config/ground_obstacle_filter.yaml` 的 `self_filter_bounds`，以及 `config/collision_monitor.yaml` 的停止／減速區域。以上相對路徑的 `config/` 位於 `slam_localization_3d`；新車種應寫在自己 profile 的 `parameter_overrides`（對應鍵見 `nova_carter.yaml`），不要改動共用預設值。工具**不會自動寫入設定，也不會量測煞停距離**；修改後仍需驗證車體包絡與碰撞停止行為。
 

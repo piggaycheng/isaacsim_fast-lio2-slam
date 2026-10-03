@@ -39,10 +39,10 @@ class SafetyValidationSceneTest(unittest.TestCase):
         self.scene.update()
         return json.loads((self.scene.directory / "response.json").read_text())
 
-    def test_ros_front_and_left_are_negative_chassis_axes(self):
+    def test_ros_front_and_left_are_positive_chassis_axes(self):
         response = self.request("place", offset=[1.0, 0.5], sizes=[0.2, 0.6, 1.2])
-        np.testing.assert_allclose(response["center"], [1.0, 2.5, 0.6])
-        self.assertAlmostEqual(response["robot_yaw"], math.pi)
+        np.testing.assert_allclose(response["center"], [3.0, 3.5, 0.6])
+        self.assertAlmostEqual(response["robot_yaw"], 0.0)
         self.scene.box.set_local_scales.assert_called_once_with([[0.2, 0.6, 1.2]])
         self.scene.update()
         self.scene.box.set_local_scales.assert_called_once()
@@ -52,7 +52,7 @@ class SafetyValidationSceneTest(unittest.TestCase):
             [math.cos(math.pi / 4), 0, 0, math.sin(math.pi / 4)],
         ])
         response = self.request("place", offset=[1.0, 0.5], sizes=[0.2, 0.6, 1.2])
-        np.testing.assert_allclose(response["center"], [2.5, 2.0, 0.6])
+        np.testing.assert_allclose(response["center"], [1.5, 4.0, 0.6])
 
     def test_hide_and_invalid_requests(self):
         self.request("hide")
@@ -119,9 +119,9 @@ class SafetyValidationSceneTest(unittest.TestCase):
                 "velocity": [0.0, -0.5], "duration": 4.0,
             }])
         np.testing.assert_allclose(
-            response["obstacles"][0]["center"], [0.0, 2.0, 0.6], atol=1e-9,
+            response["obstacles"][0]["center"], [4.0, 4.0, 0.6], atol=1e-9,
         )
-        np.testing.assert_allclose(response["obstacles"][0]["velocity"], [0.0, 0.5], atol=1e-9)
+        np.testing.assert_allclose(response["obstacles"][0]["velocity"], [0.0, -0.5], atol=1e-9)
         self.assertIsNone(self.scene.motion_started)
         self.scene.sequence = None
         with patch.dict("sys.modules", {

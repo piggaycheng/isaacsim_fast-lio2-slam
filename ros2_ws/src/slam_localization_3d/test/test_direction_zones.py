@@ -80,10 +80,10 @@ class DirectionLaunchTest(unittest.TestCase):
         self.assertEqual(params["cmd_vel_in_topic"], "/nav2/cmd_vel_direction")
         self.assertEqual(set(POLYGONS) - {"FootprintApproach"}, set(params["polygons"]) - {"FootprintApproach"})
         self.assertEqual(params["PolygonSurroundForward"]["points"],
-                         [1.1, 0.75, 1.1, -0.75, -0.36, -0.75, -0.36, 0.75])
+                         [0.8, 0.75, 0.8, -0.75, -0.81, -0.75, -0.81, 0.75])
         self.assertEqual(params["PolygonSurroundReverse"]["points"],
-                         [0.81, 0.75, 0.81, -0.75, -0.8, -0.75, -0.8, 0.75])
-        self.assertEqual(params["PolygonSurround"]["points"], [1.1, 0.75, 1.1, -0.75, -0.8, -0.75, -0.8, 0.75])
+                         [0.36, 0.75, 0.36, -0.75, -1.35, -0.75, -1.35, 0.75])
+        self.assertEqual(params["PolygonSurround"]["points"], [0.8, 0.75, 0.8, -0.75, -1.35, -0.75, -1.35, 0.75])
         enabled = {name for name in POLYGONS if params[name]["enabled"]}
         self.assertEqual(enabled, set(ZONE_SETS["forward"]))
         self.assertTrue(params["FootprintApproach"]["enabled"])
@@ -342,8 +342,8 @@ class RealHumbleDirectionZonesTest(unittest.TestCase):
                 self.assertTrue(future.result().success)
             state["command"] = twist(0.3)
             wait(lambda: selector.active == "forward" and gate.last_output.linear.x > 0.1)
-            # Inside PolygonStop (front 1.30 m) but outside the 1.10 m rotation surround.
-            state["obstacle"] = (0.0, 1.2)
+            # Inside PolygonStop (front 0.85 m) but outside the 0.80 m rotation surround.
+            state["obstacle"] = (0.0, 0.825)
             wait(lambda: gate.last_output == Twist())
             hold_zero()
             state["command"] = twist(-0.2)
@@ -352,7 +352,7 @@ class RealHumbleDirectionZonesTest(unittest.TestCase):
             wait(lambda: selector.active == "rotate" and gate.last_output.angular.z > 0.2)
             self.assertEqual(gate.last_output.linear.x, 0.0)
             # Behind the trimmed forward surround but inside the reverse surround.
-            state["obstacle"] = (math.pi, 0.6)
+            state["obstacle"] = (math.pi, 1.0)
             state["command"] = twist(-0.2)
             wait(lambda: selector.active == "reverse")
             hold_zero()

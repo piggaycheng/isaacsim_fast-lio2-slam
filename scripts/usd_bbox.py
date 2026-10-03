@@ -7,10 +7,10 @@ inflated by the rotated local bounds of each part. Other boundable prims
 local extent.
 
 Examples:
-  # Nova Carter footprint in ROS base_link (chassis_link turned 180 deg, since
-  # Carter drives toward USD -x), padded by 6 cm:
+  # Nova Carter footprint in ROS base_link (USD +x, drive wheels lead),
+  # padded by 6 cm:
   ./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd \
-      --frame chassis_link --yaw-deg 180 --padding 0.06
+      --frame chassis_link --padding 0.06
 
   # Any local file, whole default prim in its own frame:
   ./scripts/usd_bbox.py path/to/asset.usd

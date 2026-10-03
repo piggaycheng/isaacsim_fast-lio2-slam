@@ -30,7 +30,7 @@ class SafetyValidationScene:
         positions, orientations = self.robot.get_world_poses()
         position = positions.numpy()[0]
         w, x, y, z = map(float, orientations.numpy()[0])
-        yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) + math.pi
+        yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
         return [float(position[0]), float(position[1]), yaw]
 
     def configure(self, request):
@@ -139,8 +139,8 @@ class SafetyValidationScene:
             if not all(math.isfinite(v) for v in (forward, left, *sizes)) or min(sizes) <= 0:
                 raise ValueError("Invalid braking validation obstacle geometry")
             center = [
-                float(position[0]) - c * forward + s * left,
-                float(position[1]) - s * forward - c * left,
+                float(position[0]) + c * forward - s * left,
+                float(position[1]) + s * forward + c * left,
                 sizes[2] / 2,
             ]
             self.box.set_local_scales([sizes])
@@ -148,8 +148,8 @@ class SafetyValidationScene:
                 positions=[center], orientations=[[math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]],
             )
             response = {"sequence": sequence, "action": "place", "center": center,
-                        "yaw": yaw + math.pi, "sizes": sizes,
-                        "robot_position": position.tolist(), "robot_yaw": yaw + math.pi}
+                        "yaw": yaw, "sizes": sizes,
+                        "robot_position": position.tolist(), "robot_yaw": yaw}
         else:
             raise ValueError(f"Unknown validation action: {request['action']}")
         temporary = self.directory / "response.tmp"

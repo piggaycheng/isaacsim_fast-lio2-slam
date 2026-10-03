@@ -59,7 +59,13 @@ class RobotProfileTest(unittest.TestCase):
         profile = robot_fleet.load_robot_profile("nova_carter")
         self.assertEqual(profile["simulation"]["wheel_joints"],
                          ["joint_wheel_left", "joint_wheel_right"])
-        self.assertAlmostEqual(profile["sensor_frames"]["lidar_link"]["yaw"], math.pi, places=6)
+        self.assertEqual(profile["simulation"]["forward_sign"], 1.0)
+        self.assertEqual(profile["sensor_frames"]["lidar_link"]["yaw"], 0.0)
+        self.assertLess(profile["sensor_frames"]["lidar_link"]["x"], 0.0)
+        wheel = profile["parameter_overrides"]["wheel_encoder_odometry"]["ros__parameters"]
+        self.assertEqual([wheel["left_joint"], wheel["right_joint"]],
+                         profile["simulation"]["wheel_joints"])
+        self.assertEqual((wheel["left_direction"], wheel["right_direction"]), (1.0, 1.0))
 
     def test_nova_carter_overrides_match_base_configs(self):
         # Required vehicle parameters exist only in profiles; the remaining overrides
@@ -161,11 +167,27 @@ class InitialPoseTest(unittest.TestCase):
     def test_map_reference_spawn_is_identity(self):
         self.assertEqual(self.pose(0, 0, 0), (0.0, 0.0, 0.0, 0.0))
 
+    def test_front_correction_preserves_saved_map_body_frame(self):
+        old_profile = copy.deepcopy(self.profile)
+        old_profile["simulation"]["forward_sign"] = -1.0
+        old_profile["sensor_frames"]["imu_link"].update(
+            x=0.213, y=-0.009, yaw=math.pi,
+        )
+        for yaw in (0.0, math.pi / 2, -math.pi / 3):
+            spec = robot_fleet.RobotSpec("r", "nova_carter", 2.0, -1.0, yaw)
+            old_pose = robot_fleet.body_pose(spec, old_profile)
+            new_pose = robot_fleet.body_pose(spec, self.profile)
+            for old, new in zip(old_pose[:3], new_pose[:3]):
+                self.assertAlmostEqual(old, new)
+            self.assertAlmostEqual(
+                math.atan2(math.sin(old_pose[3] - new_pose[3]),
+                           math.cos(old_pose[3] - new_pose[3])), 0.0)
+
     def test_translation_and_rotation_about_body_origin(self):
         self.assertEqual(self.pose(3.5, -1, 0), (3.5, -1.0, 0.0, 0.0))
         x, y, z, yaw = self.pose(3.5, 0, math.pi / 2)
-        # Map origin is the body at the reference spawn: base_link faces prim -x
-        # and imu_link sits 0.213 m ahead, 0.009 m right of base_link.
+        # The saved map's body origin is unchanged: imu_link is behind base_link,
+        # which now faces prim +x with the drive wheels leading.
         self.assertAlmostEqual(x, 3.5 + 0.213 - 0.009, places=6)
         self.assertAlmostEqual(y, -0.213 - 0.009, places=6)
         self.assertEqual(z, 0.0)

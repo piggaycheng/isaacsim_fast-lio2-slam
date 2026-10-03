@@ -94,6 +94,20 @@ def validate(stage, profile):
               "planning_footprint": footprints[0],
               "footprint_padding": padding,
               "self_filter": filtering, "surround": surround.tolist()}
+    if profile["robot_type"] == "nova_carter":
+        def base_x(name):
+            prim = stage.GetPrimAtPath(f"{robot.GetPath()}/{name}")
+            if not prim:
+                raise RuntimeError(f"Missing Nova Carter wheel: {name}")
+            position = (cache.GetLocalToWorldTransform(prim) * inverse).ExtractTranslation()
+            return float(position[0]) * simulation["forward_sign"]
+
+        drive_x = [base_x(name) for name in ("wheel_left", "wheel_right")]
+        caster_x = [base_x(name) for name in ("caster_wheel_left", "caster_wheel_right")]
+        if min(drive_x) <= max(caster_x):
+            raise AssertionError("Nova Carter's drive wheels must lead its caster wheels")
+        report["drive_wheel_x"] = drive_x
+        report["caster_wheel_x"] = caster_x
     for kind, chunks in clouds.items():
         if not chunks:
             raise RuntimeError(f"No {kind} geometry found")

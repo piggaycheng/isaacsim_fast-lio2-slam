@@ -20,6 +20,8 @@
 
 不指定任何 `--robot` 時，預設是 `carter1:nova_carter@0,0,0` 與 `carter2:carter_v1@3.5,0,0`。自行指定規格時省略 TYPE 仍為 Nova Carter；要恢復兩台 Nova Carter，可執行 `--robot carter1@0,0 --robot carter2@3.5,0`。
 
+兩種車都以差速驅動輪那端為車頭，正 `linear.x` 朝 USD +x 行駛，萬向輪在後方。Nova Carter 的舊設定曾把車頭定義成 USD −x；修正後同步調整 encoder 左右輪／符號、sensor TF、footprint、自體濾除及保護區。既有 Office 地圖的 LiDAR／IMU body 原點與方向沒有改變，不需重建 PCD／PGM 地圖；舊的 base_link 初始航向、路線及校正紀錄則不能直接套用，需重新驗證。
+
 多於一台車時，Isaac viewport 固定在所有生成點中心的正上方俯視（螢幕右方為 +X、上方為 +Y，與 RViz 一致），不跟隨任何車；高度依生成點範圍加 5 m 邊界自動計算，並裁切 2.6 m 以上的天花板。之後仍可用滑鼠自由移動視角（移動後會恢復預設裁切，拉近不會被裁掉）。單車時維持跟車視角。
 
 ## 架構

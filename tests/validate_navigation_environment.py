@@ -625,7 +625,7 @@ def main():
         probe.verify_costmap_geometry()
         probe.control("hide")
         probe.hold(2.0)
-        # Office spawn faces the rear wall. Align with the open +map-x aisle first.
+        # Align with the open +map-x aisle before placing robot-relative obstacles.
         home = [0.4, 0.0, 0.0]
         probe.navigate(home)
         probe.wait(probe.result.done, 180)

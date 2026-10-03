@@ -327,7 +327,7 @@ For experimental speed-adaptive Surround on Humble, run
 `scripts/run_3d_localization.sh --global-fusion --navigate --adaptive-surround`).
 It replaces the direction zones. The opt-in selector atomically
 switches native polygon enable flags, not unsupported runtime point updates:
-full x [-0.80, 1.10], y +/-0.75 m; crawl x [-0.45, 0.90], y +/-0.55 m.
+full x [-1.35, 0.80], y +/-0.75 m; crawl x [-0.90, 0.45], y +/-0.55 m.
 Crawl commands are capped at 0.10 m/s and 0.20 rad/s by both the selector and
 the final safety gate. RPP requests 0.10 m/s and 0.15 rad/s in this mode;
 the smoother also caps curved-path angular commands at +/-0.20 rad/s.
@@ -427,7 +427,7 @@ are not a navigation acceptance run of the restored physical footprint.
 
 Nav2 plans on the global costmap (PGM static layer plus 3D obstacle marking) and
 follows paths using the local obstacle costmap. Both footprints represent the
-physical robot: x [-0.20, 0.65], y +/-0.32 m, plus 1 cm padding (0.66 m total width).
+physical robot: x [-0.65, 0.20], y +/-0.32 m, plus 1 cm padding (0.66 m total width).
 Surround is not included in the global footprint. NavFn still uses a 2D inflated
 grid, not a heading-aware safety-polygon sweep. Both obstacle layers retain the
 default `footprint_clearing_enabled: true`: only the physical footprint is cleared,
@@ -465,12 +465,13 @@ inside Carter's extruded footprint (`self_filter_bounds` in
 `slam_nav/config/ground_obstacle_filter.yaml`), rather than discarding everything
 within 0.5 m. Its `/perception/self_filtered_points` retains ground points and
 feeds `/scan` with `range_min: 0.0`; `/perception/obstacles` retains nearby external
-obstacles after ground removal. The surround stop zone spans x [-0.80, 1.10] m
-and y ±0.75 m; the front stop zone extends to x 1.30 m. The earlier, smaller
+obstacles after ground removal. The surround stop zone spans x [-1.35, 0.80] m
+and y ±0.75 m; the front stop zone extends to x 0.85 m. The earlier, smaller
 zones failed conservative clearance checks at 0.75 m/s and were enlarged.
 USD geometry checks cover Carter's visible body and 10 enabled collision shapes;
 the footprint contains them with about 6 cm longitudinal and 7 cm lateral margin,
-plus an explicit 1 cm costmap padding. Thirty physical-box stopping trials passed
+plus an explicit 1 cm costmap padding. Before correcting the front convention
+to drive-wheels-first, thirty physical-box stopping trials passed
 at commanded ±0.25/0.50/0.75 m/s and ±0.35/0.70 rad/s, with at least 2 cm
 clearance for both the measured body envelope and padded footprint.
 See `docs/nav.md` for measured distances, exact test conditions and reproduction
@@ -527,7 +528,7 @@ simulation and inspect the costmaps and planned path before longer drives.
 To test obstacle avoidance, `--box X,Y[,SX,SY,SZ]` places a static collision
 box (default 0.6 x 0.6 x 1.0 m) in the Isaac Sim scene at Office map X,Y
 meters; repeat it for more boxes. It works in both modes. Carter spawns at
-(0, 0) facing -x, and x from -1 to 4.5 m is open floor, for example:
+(0, 0) facing +x (drive wheels leading), and x from -1 to 4.5 m is open floor, for example:
 
 ```bash
 ./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0
@@ -546,12 +547,12 @@ the map and a recent localization TF before activation. With the default
 Office map, the 3D pose adapter automatically sends an initial pose near
 Carter's spawn; no RViz click is needed. `--manual-initial-pose` is for
 other maps or a different starting location. Both costmaps use the same
-`base_link`-relative rectangular footprint (front 0.65 m, rear 0.20 m, left
+`base_link`-relative rectangular footprint (front 0.20 m, rear 0.65 m, left
 and right 0.32 m). It approximates the Nova Carter USD body and wheels with
 about 6 cm of clearance; replace it when changing robots. To measure another
 robot, run `scripts/usd_bbox.py` from the repository root with Isaac Sim's Python, for example
-`./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd --frame chassis_link --yaw-deg 180 --padding 0.06`
-(Carter's ROS `base_link` is USD `chassis_link` turned 180°). It prints the
+`./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd --frame chassis_link --padding 0.06`
+(Carter's ROS `base_link` faces USD `chassis_link` +x). It prints the
 bounding box and a Nav2 `footprint` string (`--shape hull` for a convex hull,
 `--json` for machine-readable output). The collision_monitor stop and slowdown
 polygons are separate hardcoded values and must be updated by hand to match.

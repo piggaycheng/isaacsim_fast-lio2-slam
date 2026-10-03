@@ -12,8 +12,8 @@ from visualization_msgs.msg import Marker
 
 # base_link -> FAST-LIO body (imu_link) as x, y, z, roll, pitch, yaw: the robot profile's
 # sensor_frames.imu_link, passed by the launch files as the imu_mount parameter. This default
-# is Nova Carter's; xy comes from covariance_calibration.py's lever-arm fit (USD mount 0.2317, 0).
-DEFAULT_IMU_MOUNT = (0.213, -0.009, 0.526, 0.0, 0.0, 3.141592654)
+# is Nova Carter's; xy comes from covariance_calibration.py's lever-arm fit (USD mount -0.2317, 0).
+DEFAULT_IMU_MOUNT = (-0.213, 0.009, 0.526, 0.0, 0.0, 0.0)
 
 
 def body_to_base(mount):
