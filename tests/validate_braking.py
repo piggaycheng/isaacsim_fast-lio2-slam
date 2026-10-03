@@ -302,14 +302,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--geometry", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=2)
-    parser.add_argument("--linear-speeds", type=float, nargs="+", default=[0.25, 0.5, 1.0])
-    parser.add_argument("--angular-speeds", type=float, nargs="+", default=[0.35, 0.75])
+    parser.add_argument("--linear-speeds", type=float, nargs="+", default=[0.25, 0.5, 0.75])
+    parser.add_argument("--angular-speeds", type=float, nargs="+", default=[0.35, 0.5])
     parser.add_argument("--adaptive-surround", action="store_true")
     args = parser.parse_args()
-    if args.repeats < 1 or any(not 0 < v <= 1.0 for v in args.linear_speeds):
-        parser.error("Use positive repeats and linear speeds in (0, 1.0]")
-    if any(not 0 < v <= 0.75 for v in args.angular_speeds):
-        parser.error("Use angular speeds in (0, 0.75]")
+    if args.repeats < 1 or any(not 0 < v <= 0.75 for v in args.linear_speeds):
+        parser.error("Use positive repeats and linear speeds in (0, 0.75]")
+    if any(not 0 < v <= 0.5 for v in args.angular_speeds):
+        parser.error("Use angular speeds in (0, 0.5]")
     if args.adaptive_surround and (
         max(args.linear_speeds) > 0.1 or max(args.angular_speeds) > 0.2
     ):

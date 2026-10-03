@@ -193,7 +193,7 @@ flowchart LR
 
 也可省略 `--navigate`，先在 costmap 觀察模式畫區域；直接 launch 時使用 `filter_editor:=true filter_state:=/workspace/.../zones.json costmaps:=true`。
 
-Editor 發布 mask 與 filter info，costmap 啟動前會等待兩張 mask、`/map` 與有效定位 TF。Keepout mask 的 100 表示禁止通行、0 表示未標註；Speed mask 的 **0 表示不限速，不是停車**，非零值表示 RPP 原始目標線速度的百分比。目前 50% 將 1.0 m/s 的目標速度降至 0.5 m/s，仍可能因曲率或障礙更慢。
+Editor 發布 mask 與 filter info，costmap 啟動前會等待兩張 mask、`/map` 與有效定位 TF。Keepout mask 的 100 表示禁止通行、0 表示未標註；Speed mask 的 **0 表示不限速，不是停車**，非零值表示 RPP 原始目標線速度的百分比。目前 50% 將 0.75 m/s 的目標速度降至 0.375 m/s，仍可能因曲率或障礙更慢。
 
 兩張 mask 涵蓋整張 `/map`；Humble 超出 speed mask 範圍時可能保留前一個限制，不應靠越界來解除限速。感測清除與 recovery 不會移除標註定義，後續 costmap 更新仍會重新套用。
 
@@ -208,7 +208,7 @@ Binary filter 尚未實作；它用於區域開關事件，不是 Keepout 或 Sp
 | 元件 | 設定 | 說明 |
 | :-- | :-- | :-- |
 | Planner | `nav2_navfn_planner/NavfnPlanner`（Dijkstra），`allow_unknown: false` | 在 global costmap 找最低代價路徑 |
-| Controller | `slam_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 1.0 m/s、原地轉向 0.75 rad/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
+| Controller | `slam_nav::GoalHeadingLatchedRPP`，10 Hz | Regulated Pure Pursuit：目標速度 0.75 m/s、原地轉向 0.5 rad/s、前視距離 0.8 m；依曲率、接近目標與碰撞預測降速；到達位置後鎖定原地轉向，不會因 1 Hz 重新規劃而中斷 |
 | Goal checker | `slam_nav::LatchedGoalChecker` | 位置誤差 0.15 m、航向 0.25 rad；到位後鎖定，偏離超過 0.5 m 才解除 |
 | Progress checker | `SimpleProgressChecker` | 15 秒內移動不到 0.15 m 視為卡住 |
 | `failure_tolerance` | 1.0 秒 | controller 持續失敗超過 1 秒就回報失敗，交給 BT 處理 |
@@ -331,13 +331,13 @@ controller / behavior → /nav2/cmd_vel_nav → velocity_smoother → /nav2/cmd_
 
 ### velocity_smoother
 
-Nav2 Humble 內建的 `nav2_velocity_smoother`，設定在 `navigation.yaml`。RPP 與 BackUp 的命令可能一步從 0 跳到 1.0 m/s，smoother 以 20 Hz 把它變成斜坡。
+Nav2 Humble 內建的 `nav2_velocity_smoother`，設定在 `navigation.yaml`。RPP 的命令可能一步從 0 跳到 0.75 m/s，smoother 以 20 Hz 把它變成斜坡。
 
 | 參數 | 值 | 說明 |
 | :-- | :-- | :-- |
-| `max_accel` | 線 0.8 m/s²、角 1.5 rad/s² | 0 → 1.0 m/s 約 1.25 秒 |
+| `max_accel` | 線 0.8 m/s²、角 1.5 rad/s² | 0 → 0.75 m/s 約 0.94 秒 |
 | `max_decel` | 線 −1.5 m/s²、角 −2.0 rad/s² | 正常減速；安全停車不受此限制 |
-| `max_velocity` / `min_velocity` | ±1.0 m/s、±0.75 rad/s | 與 `cmd_vel_safety` 的限速一致 |
+| `max_velocity` / `min_velocity` | ±0.75 m/s、±0.5 rad/s | 與 `cmd_vel_safety` 的限速一致 |
 | `velocity_timeout` | 0.5 s | Nav2 停止發布命令後，依減速度降到 0，然後停止發布 |
 | `feedback` | `OPEN_LOOP` | 以上一個輸出作為目前速度 |
 
@@ -388,7 +388,7 @@ Humble 的 `stop` 區域不分命令方向：車頭前有障礙物時，連 Back
 
 | 模式 | Surround（`base_link`） | 速度上限 |
 | :-- | :-- | :-- |
-| 一般 | x −1.35–0.80 m、y ±0.75 m；與預設相同 | 1.0 m/s、0.75 rad/s |
+| 一般 | x −1.35–0.80 m、y ±0.75 m；與預設相同 | 0.75 m/s、0.5 rad/s |
 | Crawl | x −0.90–0.45 m、y ±0.55 m；全寬 1.10 m | 0.10 m/s、0.20 rad/s |
 
 啟用時 RPP 的期望線速度改為 0.10 m/s、轉向速度改為 0.15 rad/s，smoother 的角速度上限改為 ±0.20 rad/s，避免追蹤曲線時的角速度讓低速車體反覆切回大區域。smoother 後新增 selector；只有命令在 Crawl 上限內，且 `/odometry/local` 的 twist 與相鄰位姿差分都在 0.12 m/s、0.22 rad/s 內持續 0.5 秒，才允許縮小。要求較快線速度或量測超過門檻時，先停車再擴大，原生 monitor 確認切換後才轉發命令。Crawl 仍不分行進方向，也會阻擋原地轉向；不是容許貼牆旋轉。
@@ -419,9 +419,9 @@ Humble 的 `stop` 區域不分命令方向：車頭前有障礙物時，連 Back
 | 收到 `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟才能恢復 |
 | 0.5 秒未收到新的速度命令 | 發布零速；下一個命令從零起步 |
 | 選用 adaptive 模式，但缺少有效限速心跳或正等待切換確認 | 發布零速；否則套用目前區域的線／角速度上限 |
-| 其他 | 限速 `max_linear_speed` 1.0 m/s、`max_angular_speed` 0.75 rad/s（`collision_monitor.yaml`／車種 profile），再限制加速；減速與停車立即轉發 |
+| 其他 | 限速 `max_linear_speed` 0.75 m/s、`max_angular_speed` 0.5 rad/s（`collision_monitor.yaml`／車種 profile），再限制加速；減速與停車立即轉發 |
 
-目前速度設定已提高至 1.0 m/s／0.75 rad/s；adaptive crawl 仍維持 0.1 m/s／0.2 rad/s。以下是 2026-10-02、尚未修正 Nova Carter 車頭方向時的歷史量測，不是目前差速輪朝前設定的驗收結果。當時在 Isaac Sim Office 場景重跑一輪新速度測試，四個方向的實體障礙煞停與感測 watchdog 停車均通過：
+目前兩種車的速度上限已降低至 0.75 m/s／0.5 rad/s，導航、手動控制與安全閘一致；加速度與防撞區域不變，adaptive crawl 仍維持 0.1 m/s／0.2 rad/s。降低最高速度不代表已解決所有打滑原因。以下是 2026-10-02、尚未修正 Nova Carter 車頭方向時的歷史量測，不是目前差速輪朝前設定的驗收結果。當時在 Isaac Sim Office 場景重跑一輪新速度測試，四個方向的實體障礙煞停與感測 watchdog 停車均通過：
 
 | 測試 | 停車前實測速度 | 停車時間（模擬秒） | 停車前移動距離 | 最小 padded footprint 淨空 |
 | :-- | :-- | :-- | :-- | :-- |

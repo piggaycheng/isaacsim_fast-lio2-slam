@@ -75,6 +75,6 @@ cmd_vel_safety:
     max_linear_accel: 0.8
     max_angular_accel: 1.5
     # Speed caps (robot limits); navigation.yaml's velocity_smoother stays within them.
-    max_linear_speed: 1.0
-    max_angular_speed: 0.75
+    max_linear_speed: 0.75
+    max_angular_speed: 0.5
     command_timeout: 0.5

@@ -42,9 +42,9 @@ class CovarianceDrive(Node):
         linear = float(self.declare_parameter("linear_speed", 0.25).value)
         angular = float(self.declare_parameter("arc_angular_speed", 0.4).value)
         spin = float(self.declare_parameter("spin_speed", 0.5).value)
-        # Isaac's /cmd_vel receiver rejects |wz| > 0.75 rad/s or |vx| > 1.0 m/s.
-        if not (0 < linear <= 1.0 and 0 < angular <= 0.75 and 0 < spin <= 0.75 and cycles > 0):
-            raise ValueError("speeds must be positive and within 1.0 m/s / 0.75 rad/s")
+        # Match Isaac's /cmd_vel receiver limits.
+        if not (0 < linear <= 0.75 and 0 < angular <= 0.5 and 0 < spin <= 0.5 and cycles > 0):
+            raise ValueError("speeds must be positive and within 0.75 m/s / 0.5 rad/s")
         self.segments = pattern(cycles, linear, angular, spin)
         self.total = sum(duration for duration, _, _ in self.segments)
         self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)

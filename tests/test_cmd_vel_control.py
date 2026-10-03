@@ -32,8 +32,8 @@ class TestCmdVelReceiver(unittest.TestCase):
 
     def test_speed_limits_are_inclusive_in_both_directions(self):
         for sign in (1, -1):
-            self.receiver.accept_twist((sign * 1.0, 0, 0), (0, 0, sign * 0.75))
-            self.assertEqual(self.receiver.command(), (sign * 1.0, sign * 0.75))
+            self.receiver.accept_twist((sign * 0.75, 0, 0), (0, 0, sign * 0.5))
+            self.assertEqual(self.receiver.command(), (sign * 0.75, sign * 0.5))
 
     def test_carter_navigation_and_simulator_limits_match(self):
         config = ROOT / "ros2_ws/src/slam_localization_3d/config"
@@ -45,11 +45,11 @@ class TestCmdVelReceiver(unittest.TestCase):
             self.assertEqual(parameters["max_linear_speed"], self.receiver.max_linear)
             self.assertEqual(parameters["max_angular_speed"], self.receiver.max_angular)
         smoother = overrides["velocity_smoother"]["ros__parameters"]
-        self.assertEqual(smoother["max_velocity"], [1.0, 0.0, 0.75])
-        self.assertEqual(smoother["min_velocity"], [-1.0, 0.0, -0.75])
+        self.assertEqual(smoother["max_velocity"], [0.75, 0.0, 0.5])
+        self.assertEqual(smoother["min_velocity"], [-0.75, 0.0, -0.5])
         controller = overrides["controller_server"]["ros__parameters"]["FollowPath"]
-        self.assertEqual(controller["desired_linear_vel"], 1.0)
-        self.assertEqual(controller["rotate_to_heading_angular_vel"], 0.75)
+        self.assertEqual(controller["desired_linear_vel"], 0.75)
+        self.assertEqual(controller["rotate_to_heading_angular_vel"], 0.5)
         assignments = {
             target.id: ast.literal_eval(node.value)
             for node in ast.parse((ROOT / "scripts/standalone.py").read_text()).body
@@ -58,14 +58,31 @@ class TestCmdVelReceiver(unittest.TestCase):
             if isinstance(target, ast.Name)
             and target.id in ("LINEAR_JOG_SPEED", "ANGULAR_JOG_SPEED")
         }
-        self.assertEqual(assignments, {"LINEAR_JOG_SPEED": 1.0, "ANGULAR_JOG_SPEED": 0.75})
+        self.assertEqual(assignments, {"LINEAR_JOG_SPEED": 0.75, "ANGULAR_JOG_SPEED": 0.5})
+
+    def test_both_robot_profiles_use_the_requested_limits(self):
+        profiles = ROOT / "ros2_ws/src/slam_localization_3d/config/robots"
+        for robot_type in ("nova_carter", "carter_v1"):
+            with self.subTest(robot_type=robot_type):
+                overrides = yaml.safe_load((profiles / f"{robot_type}.yaml").read_text())[
+                    "parameter_overrides"]
+                for node in ("cmd_vel_safety", "adaptive_surround"):
+                    parameters = overrides[node]["ros__parameters"]
+                    self.assertEqual(parameters["max_linear_speed"], 0.75)
+                    self.assertEqual(parameters["max_angular_speed"], 0.5)
+                smoother = overrides["velocity_smoother"]["ros__parameters"]
+                self.assertEqual(smoother["max_velocity"], [0.75, 0.0, 0.5])
+                self.assertEqual(smoother["min_velocity"], [-0.75, 0.0, -0.5])
+                controller = overrides["controller_server"]["ros__parameters"]["FollowPath"]
+                self.assertEqual(controller["desired_linear_vel"], 0.75)
+                self.assertEqual(controller["rotate_to_heading_angular_vel"], 0.5)
 
     def test_invalid_ros_message_stops_instead_of_reusing_velocity(self):
         for linear, angular in (
-            ((1.001, 0, 0), (0, 0, 0)),
-            ((-1.001, 0, 0), (0, 0, 0)),
-            ((0, 0, 0), (0, 0, 0.751)),
-            ((0, 0, 0), (0, 0, -0.751)),
+            ((0.751, 0, 0), (0, 0, 0)),
+            ((-0.751, 0, 0), (0, 0, 0)),
+            ((0, 0, 0), (0, 0, 0.501)),
+            ((0, 0, 0), (0, 0, -0.501)),
             ((float("nan"), 0, 0), (0, 0, 0)),
             ((0.1, 0.1, 0), (0, 0, 0)),
         ):
@@ -121,9 +138,9 @@ class TestCmdVelSafety(unittest.TestCase):
             fast = Twist()
             fast.linear.x = 1.0
             fast.angular.z = -1.2
-            check(fast, (1.0, -0.75))
+            check(fast, (0.75, -0.5))
             fast.linear.x = -1.0
-            check(fast, (-1.0, -0.75))
+            check(fast, (-0.75, -0.5))
             invalid = Twist()
             invalid.linear.y = 1.0
             check(invalid, (0.0, 0.0))

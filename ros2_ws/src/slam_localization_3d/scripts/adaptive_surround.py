@@ -33,8 +33,8 @@ class AdaptiveSurround(Node):
         ).value
         self.footprint_padding = self.declare_parameter("footprint_padding", 0.01).value
         # Full-profile limits; must match cmd_vel_safety's max_linear/angular_speed.
-        self.max_linear_speed = self.declare_parameter("max_linear_speed", 1.0).value
-        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.75).value
+        self.max_linear_speed = self.declare_parameter("max_linear_speed", 0.75).value
+        self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.5).value
         try:
             self.validate_configuration()
         except ValueError:
