@@ -77,7 +77,7 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_3d_localization.sh              # 獨立的 3D 定位顯示
 ```
 
-導航堆疊啟動完成後，用 RViz 的 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。
+導航堆疊啟動完成後，用 RViz 的 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)。
 
 常用參數：
 
@@ -85,8 +85,6 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 - `--map FILE`：指定地圖 YAML，不是直接指定 PGM；直接使用 `scripts/run_3d_localization.sh` 時改用 `--pgm FILE`。
 - `--pcd FILE`：指定 3D PCD 地圖（3D 模式）。
 - `--manual-initial-pose`：改用 RViz 的 **2D Pose Estimate** 手動初始化（3D 模式）。
-- `--box X,Y[,SX,SY,SZ]`：加入靜態箱子障礙物。
-- `--filter-editor`：RViz Keepout／Speed 區域標註，例如 `./scripts/run_nav.sh --mode 3d --navigate --filter-editor`。
 
 ### 多車導航
 
@@ -96,9 +94,7 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 ```
 
-`--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定。位置單位為公尺、航向為弧度；自行指定 `--robot` 時，省略 TYPE 仍代表 `nova_carter`。不指定任何 `--robot` 時，第二台預設使用 `carter_v1` 的獨立 profile（LiDAR 安裝與待校正參數見[多車文件](docs/multi_robot.md#carter-v1)）。每車各有一個導航 container；RViz 的 **Fleet Control** 下拉選單選車，再按 **Set navigation goal** 並在地圖上拖曳。
-
-多車時 Isaac viewport 預設固定俯視，不跟隨第一台車。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。**目前沒有車輛間的路權／交通協調**，狹窄通道可能互相卡住。
+`--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定（位置單位為公尺、航向為弧度，省略 TYPE 為 `nova_carter`）；RViz 的 **Fleet Control** 選車後送目標。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。架構、車種設定與限制見[多車文件](docs/multi_robot.md)。
 
 各腳本完整參數可用 `--help` 查看；`scripts/run_slam.sh` 沒有參數介面。
 
@@ -110,58 +106,25 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 | `docker/entrypoint.sh` | 容器入口，載入 ROS 環境並執行命令，不需從主機直接啟動 |
 | `docker/ros_compose.sh` | 啟動腳本共用的 Compose helper，供其他腳本 `source` 使用 |
 
-## 3. 更換車種：footprint 與 covariance
+## 3. 更換車種：量測 footprint
 
-換成非 Nova Carter 的車種時，不能直接沿用 Carter 的車體尺寸、輪徑、輪距、感測器外參與 covariance。以 `ros2_ws/src/slam_localization_3d/config/robots/nova_carter.yaml` 為範本複製成 `<type>.yaml`，設定 `simulation`、`sensor_frames` 與 `parameter_overrides`；Carter profile 已列出所有車種相關參數（輪子、covariance、footprint、self filter、安全區域與速度），新車逐項換成自己的值；多車入口可用 `--robot NAME:<type>@X,Y` 選擇新車種，設定格式見[新增車種](docs/multi_robot.md#新增車種)。
+換成非 Nova Carter 的車種時，不能沿用 Carter 的車體尺寸、輪徑、輪距、感測器外參與 covariance。車種 profile 的建立方式見[新增車種](docs/multi_robot.md#新增車種)，covariance 校正見[協方差校正](docs/covariance_calibration.md)。
 
-| 工具 | 用途 |
-|---|---|
-| `scripts/usd_bbox.py` | 從 USD 模型量測車體 bounding box，輸出 Nav2 footprint |
-| `slam_localization_3d` 的 `covariance_drive.py` | 發布校正路線的速度指令，收集靜止、直行與旋轉樣本；**不是計算 covariance 的工具** |
-| `ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py` | 離線分析 rosbag，估計輪速、IMU 與 PCD 定位的 covariance |
-
-### 量測 footprint
-
-在主機使用 **Isaac Sim 的 Python launcher**，將下列路徑與 frame 換成新車的模型及 ROS `base_link` 對應的 USD prim：
+`scripts/usd_bbox.py` 可從 USD 模型量測車體 bounding box，輸出 Nav2 footprint。在主機使用 Isaac Sim 的 Python launcher，將路徑與 frame 換成新車的模型及 `base_link` 對應的 USD prim：
 
 ```bash
-isaac_python=/path/to/isaacsim/python.sh
-"$isaac_python" scripts/usd_bbox.py /path/to/new_robot.usd \
+<ISAACSIM_PATH>/python.sh scripts/usd_bbox.py /path/to/new_robot.usd \
   --frame base_link --yaw-deg 0 --padding 0.06
 ```
 
-`--yaw-deg` 必須符合 USD frame 與 ROS `base_link` 的方向差；目前 Nova Carter 與 Carter v1 都以差速輪那端為車頭，朝 USD +x，使用 0 度。`--padding 0.06` 只是示例，不是所有車種都適用的安全距離；`--shape hull` 可改為凸包，`--json` 可輸出完整量測結果。沒有 USD 模型的實機，需以實測尺寸或可信的車體模型建立 footprint。
+`--yaw-deg` 須符合 USD frame 與 ROS `base_link` 的方向差（Nova Carter 與 Carter v1 都以差速輪端為車頭，朝 USD +x，使用 0 度）；`--padding 0.06` 只是示例；`--shape hull` 可改為凸包，`--json` 輸出完整結果。沒有 USD 模型的實機需以實測尺寸建立 footprint。
 
-將輸出的 footprint 同步填入 global／local costmap（`config/observation_costmaps.yaml`），並調整 `slam_nav/config/ground_obstacle_filter.yaml` 的 `self_filter_bounds`，以及 `config/collision_monitor.yaml` 的停止／減速區域。以上相對路徑的 `config/` 位於 `slam_localization_3d`；新車種應寫在自己 profile 的 `parameter_overrides`（對應鍵見 `nova_carter.yaml`），不要改動共用預設值。工具**不會自動寫入設定，也不會量測煞停距離**；修改後仍需驗證車體包絡與碰撞停止行為。
-
-### 校正 covariance（協方差）
-
-先確認新車的輪子幾何與感測器外參正確，並啟動定位、關閉 Nav2 自主導航。以下是 **ROS 容器已啟動、使用無 namespace topics** 時的範例；錄製 bag 與駕駛需在不同終端執行：
-
-```bash
-# 終端 1：錄製；校正路線完成後按 Ctrl+C 停止錄製
-docker compose exec ros /workspace/docker/entrypoint.sh \
-  ros2 bag record -o cov_bag \
-  /wheel/odom /nav/imu /Odometry /localization_3d/global_pose
-
-# 終端 2：模擬環境中的校正路線；也可改用手動駕駛收集樣本
-docker compose exec ros /workspace/docker/entrypoint.sh \
-  ros2 run slam_localization_3d covariance_drive.py --ros-args -p use_sim_time:=true
-
-# 錄製完成後，離線計算建議值；預設不修改 YAML
-docker compose run --rm ros \
-  python3 ros2_ws/src/slam_localization_3d/scripts/covariance_calibration.py cov_bag
-```
-
-**`covariance_drive.py` 會直接發布 `/cmd_vel`，不經 Nav2 或碰撞檢查。** 實機應改用 `use_sim_time:=false`，先確認指令接到正確底盤、準備足夠淨空與急停；不要直接照模擬範例讓真車行駛。
-
-LIO body 到 `base_link` 的轉換預設由 `--robot-type` profile 的 `sensor_frames.imu_link` 反推；要測試其他值時可用 `--lio-body-to-base X Y Z YAW`（公尺／弧度）覆寫。若有 namespace，錄製時改用該車的完整 topic，分析時透過 `--wheel-topic`、`--imu-topic`、`--lio-topic`、`--pcd-topic` 指定；駕駛節點也需 remap `/cmd_vel`。以 `--robot-type <type>` 指定車種（預設 `nova_carter`），工具會讀取該 profile 中錄製當下使用的 covariance floor。
-
-確認建議值後加 `--apply`，結果只會寫入該車種 profile 的 `parameter_overrides`；共用的 `local_odometry.yaml`、`global_fusion.yaml` 不含輪速、IMU、PCD covariance 等車種相關值（2D 模式也從 Nova Carter profile 讀取）。重新建置並重啟後再驗證，完整流程、輸出判讀與限制見[協方差校正](docs/covariance_calibration.md)。
+將 footprint 同步填入新車 profile 的 `parameter_overrides`：global／local costmap（`observation_costmaps.yaml`）、`ground_obstacle_filter` 的 `self_filter_bounds`，以及 `collision_monitor` 的停止／減速區域，不要改動共用預設值。工具不會自動寫入設定，也不會量測煞停距離，修改後仍需驗證碰撞停止行為。
 
 ## 詳細文件
 
-- [ROS 工作區整合與操作手冊](ros2_ws/README.md)
+- [專案概觀：流程、設計理念與疑難排解](docs/overview.md)（建議先讀）
+- [Isaac Sim 橋接與 Docker 運作](docs/isaac_bridge.md)
 - [建圖流程](docs/mapping_flow.md)
 - [3D 定位架構](docs/3d_localization.md)
 - [導航、安全限制與驗證](docs/nav.md)

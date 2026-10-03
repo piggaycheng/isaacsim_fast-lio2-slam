@@ -6,7 +6,7 @@
 
 3D 融合導航需使用與 PGM 同座標系的 PCD：停用 AMCL（PGM 只供 Nav2 costmap 使用），將 [FAST_LIO_LOCALIZATION2](https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2) 的 PCD 配準結果轉為品質閘控後的全域 pose，結合輪式里程計與 IMU，由校正時效閘控節點（correction freshness gate，`global_tf_gate`）獨自發布 `map -> odom`。**2D AMCL 與 3D 融合模式不能同時發布這條 TF。**
 
-獨立的 3D 定位模式已由 `slam_localization_3d` 套件及 `./scripts/run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作方式見 [`ros2_ws/README.md`](../ros2_ws/README.md)。
+獨立的 3D 定位模式已由 `slam_localization_3d` 套件及 `./scripts/run_3d_localization.sh` 提供，可在 RViz 的 Office PGM 地圖上觀察 PCD 配準位置。此模式的 `map -> camera_init -> body -> base_link` TF 只在配準被接受後發布 `map -> camera_init`，不與 2D 或 3D 融合導航同時啟動。操作細節見下方「獨立 3D 定位模式」。
 
 ## 只有 PGM：純 2D 定位（目前已實作）
 
@@ -162,9 +162,26 @@ local_odometry:
 
 加上 `--navigate` 後的 costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈見 [`nav.md`](nav.md)。導航時不能同時使用鍵盤或 auto-jog。
 
+## 獨立 3D 定位模式
+
+```bash
+./scripts/run_3d_localization.sh                     # 只顯示 PCD 配準
+./scripts/run_3d_localization.sh --global-fusion     # 加入輪速／IMU／PCD 融合，不啟動 Nav2 costmap
+./scripts/run_3d_localization.sh --global-fusion --obstacle-cloud   # 另發布 /perception/obstacles
+./scripts/run_3d_localization.sh --global-fusion --costmaps         # 觀察 costmap，不啟動 planner／controller
+```
+
+`--help` 列出地圖、headless 與初始化選項。Office 出生點 `(0, 0)` 附近預設會自動送出近似初始位姿；要在目前位置重新初始化，使用 RViz 的 **2D Pose Estimate**；`--manual-initial-pose` 則要求手動估計（自訂 PCD／PGM 一律需要）。RViz 顯示 PGM 地圖、配準點雲、`map` 座標下的 Carter 箭頭與路徑。
+
+- 此模式以上游定位節點的薄包裝啟動，只擁有 `map -> camera_init`；`/submap` 視覺化點雲只含實際的 XYZ（與有的話 intensity），不合成 RGB／intensity，也不改動送入 FAST-LIO 的原始 `/isaac/lidar_points`；冗餘的 `/cur_scan_in_map` 不發布，ICP 仍直接使用 `/cloud_registered`。不可與 `scripts/run_nav.sh` 同時執行。
+- 單純 `--global-fusion` 時以 Local EKF 發布 `odom -> base_link`；Global EKF 發布 `/odometry/global`（TF 關閉），由校正時效閘控節點獨自發布 `map -> odom`，PGM 只顯示於 RViz。
+- `/scan` 與 2D 模式使用同一組高度 0.1–2.0 m 的 `pointcloud_to_laserscan` 設定，只是 2D 障礙投影，**不是**地面分割或 3D costmap。`--obstacle-cloud` 的地面濾除與限制見 [`nav.md`](nav.md#感測--costmap)；RViz 的 3D 障礙顯示預設關閉以減少渲染負擔。
+- RViz 的 **Accepted PCD Position** 不畫 covariance：未觀測的高度／傾角軸刻意設為很大的變異數，畫出來會變成誤導的垂直線；covariance 仍保留在發布的訊息中供 EKF 使用。
+- 輪速里程計與模擬控制器須使用相同的接地輪半徑（Nova Carter 0.14 m）；若輪速里程計誤用較小的控制器半徑，移動中的 scan 會在兩次 PCD 校正之間相對地圖漂移。
+
 ## 參數與限制
 
-- **控制**：手動 W/S 與導航線速度上限為 1.0 m/s；Nav2 目標速度 1.0 m/s，角速度上限及手動 A/D 為 0.75 rad/s，固定前視距離 0.8 m，必要時依曲率、接近目標及碰撞預測降速。命令中斷 0.5 秒或 PCD 校正逾時 4 秒時停車。新速度已通過一輪 Isaac Sim 障礙煞停與 baseline 導航測試，尚非所有場景的安全保證；量測結果見 [導航文件](nav.md#cmd_vel_safety)。
+- **控制**：手動 W/S 與導航線速度上限為 0.75 m/s，角速度上限及手動 A/D 為 0.5 rad/s（Nav2 目標線速度 0.75 m/s），固定前視距離 0.8 m，必要時依曲率、接近目標及碰撞預測降速。命令中斷 0.5 秒或 PCD 校正逾時 4 秒時停車。安全鏈與限制見 [導航文件](nav.md#cmd_vel_safety)。
 - **輪速**：Nova Carter 驅動輪接地碰撞體半徑 0.14 m、輪距 0.4132 m；控制器與輪速里程計須使用一致幾何，否則定位校正會持續補償里程誤差。
 - **航向**：2D／3D 共用的 `slam_nav/config/local_odometry.yaml` 讓 Local EKF 融合輪速 yaw 位姿與 IMU 角速度；2D 專用的 AMCL、地圖伺服器及 RViz 啟動設定在 `slam_localization_2d`。輪速航向約束停車時的陀螺儀偏差累積，但打滑時輪速仍可能漂移，真車須重新定標輪速不確定度。局部 costmap 刻意使用 `odom`，在 RViz 的 `map` 座標下會隨 `map -> odom` 校正呈現旋轉，不應僅為了讓畫面平行而改成 `map`。
 - **障礙物**：低於 `/scan` 裁切高度的障礙物可能被濾掉。`--obstacle-cloud` 以 RANSAC 分割近水平地面並以 8 cm 體素降採樣；地面無效時停止發布障礙點雲，但 self-filtered 分支仍可產生 `/scan`，TF 無效時兩個分支都受影響。感知資料流與限制見 [`nav.md`](nav.md)。斜坡、動態障礙物清除與狹窄路線的碰撞安全仍未驗證。
