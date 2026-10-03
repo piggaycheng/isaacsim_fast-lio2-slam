@@ -40,9 +40,10 @@ spec.loader.exec_module(fusion_launch)
 class AdaptiveLaunchTest(unittest.TestCase):
     def test_static_mode_uses_original_configs_without_selector(self):
         context = LaunchContext()
-        context.launch_configurations["adaptive_surround"] = "false"
+        context.launch_configurations.update(adaptive_surround="false", direction_zones="false")
         paths = [str(PACKAGE / "config" / filename) for filename in (
             "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
+            "direction_zones.yaml",
         )]
         actions = fusion_launch.configure_surround(context, *paths)
         self.assertEqual(len(actions), 2)
@@ -58,7 +59,7 @@ class AdaptiveLaunchTest(unittest.TestCase):
             adaptive_surround="true", navigate="false", costmaps="true", obstacle_cloud="true",
         )
         with self.assertRaisesRegex(ValueError, "requires navigation"):
-            fusion_launch.configure_surround(context, "", "", "")
+            fusion_launch.configure_surround(context, "", "", "", "")
 
 
 class AdaptiveTest(unittest.TestCase):
@@ -416,6 +417,7 @@ class RealHumbleSurroundTest(unittest.TestCase):
             actions = fusion_launch.configure_surround(context, *[
                 str(PACKAGE / "config" / filename) for filename in (
                     "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
+                    "direction_zones.yaml",
                 )
             ])
         for action in actions:

@@ -310,10 +310,22 @@ The editor publishes both masks and filter info, and costmap readiness
 waits for both masks before activation. See `docs/nav.md` for the workflow
 and limitations.
 
+With `--navigate`, `direction_zones.py` switches collision-monitor zone sets by
+command direction, like safety-scanner field sets (Humble has no
+`VelocityPolygon`). Forward enables Stop, Slow and the Surround trimmed to
+0.15 m behind the padded footprint; reverse enables the Surround trimmed to
+0.15 m ahead of it; in-place rotation enables the full Surround. Both trimmed
+zones are derived at launch from each robot profile (`config/direction_zones.yaml`).
+Zones switch atomically through native `.enabled` parameters only after a zero
+command and fresh odometry confirming standstill, so BackUp is no longer
+blocked by an obstacle in the front Stop zone. FootprintApproach stays enabled.
+`--static-zones` (`direction_zones:=false`) restores all zones in every direction;
+`--adaptive-surround` takes precedence over direction zones.
+
 For experimental speed-adaptive Surround on Humble, run
 `./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround` (or
 `scripts/run_3d_localization.sh --global-fusion --navigate --adaptive-surround`).
-The default remains the original fixed Surround. The opt-in selector atomically
+It replaces the direction zones. The opt-in selector atomically
 switches native polygon enable flags, not unsupported runtime point updates:
 full x [-0.80, 1.10], y +/-0.75 m; crawl x [-0.45, 0.90], y +/-0.55 m.
 Crawl commands are capped at 0.10 m/s and 0.20 rad/s by both the selector and
@@ -425,7 +437,8 @@ in both costmaps, so the 1 Hz replanning routes around them. Controller and
 recovery commands go to `/nav2/cmd_vel_nav`; Nav2's `velocity_smoother`
 (`config/navigation.yaml`, open loop, 0.8 m/s² acceleration and 1.5 m/s²
 deceleration) publishes the ramped `/nav2/cmd_vel`. Safety stops happen after
-the smoother, so they remain immediate. `/nav2/cmd_vel` then passes through Nav2's `collision_monitor`
+the smoother, so they remain immediate. `/nav2/cmd_vel` then passes through the direction-zone
+selector (`/nav2/cmd_vel_direction`) and Nav2's `collision_monitor`
 (`config/collision_monitor.yaml`: front and surround stop zones, a front slowdown zone and
 a footprint time-to-collision check on `/perception/obstacles` and `/scan`),
 then through a ROS 2 safety node (PCD correction and obstacle sensor

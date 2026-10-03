@@ -14,6 +14,7 @@ obstacle_cloud=false
 costmaps=false
 navigate=false
 adaptive_surround=false
+direction_zones=true
 filter_editor=false
 filter_state="$project_dir/maps/costmap_filters/editor.json"
 filter_state_set=false
@@ -52,6 +53,8 @@ Options:
                       maps/costmap_filters/editor.json).
       --adaptive-surround
                       Experimental low-speed Surround; requires --global-fusion --navigate.
+      --static-zones  Keep all collision zones active in every direction instead
+                      of switching forward/reverse/rotate zone sets.
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
       --box X,Y[,SX,SY,SZ]
@@ -90,6 +93,7 @@ while (($# > 0)); do
     --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
     --adaptive-surround) adaptive_surround=true; shift ;;
+    --static-zones) direction_zones=false; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
     --box)
       if (($# < 2)); then
@@ -171,7 +175,8 @@ launch_args=(map_pcd:="$container_pcd" map_pgm:="$container_pgm" rviz:="$rviz"
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
-    navigate:="$navigate" adaptive_surround:="$adaptive_surround" "${filter_args[@]}")
+    navigate:="$navigate" adaptive_surround:="$adaptive_surround"
+    direction_zones:="$direction_zones" "${filter_args[@]}")
 fi
 start_ros launch slam_localization_3d "$launch_file" "${launch_args[@]}"
 

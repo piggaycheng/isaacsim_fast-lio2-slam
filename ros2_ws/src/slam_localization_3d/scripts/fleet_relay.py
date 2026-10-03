@@ -22,6 +22,7 @@ RELAYED_TOPICS = (
     ("scan", LaserScan),
     ("perception/obstacles", PointCloud2),
     ("collision_monitor/polygon_stop", PolygonStamped),
+    ("collision_monitor/polygon_surround", PolygonStamped),
     ("collision_monitor/polygon_slowdown", PolygonStamped),
 )
 STATIC_QOS = QoSProfile(

@@ -133,9 +133,80 @@ def configure_filters(context, observation_config):
     ]
 
 
-def configure_surround(context, collision_config, navigation_config, adaptive_config):
+def rectangle(x_max, x_min, y_max, y_min):
+    """Clockwise axis-aligned rectangle in collision_monitor's points layout."""
+    return [x_max, y_max, x_max, y_min, x_min, y_min, x_min, y_max]
+
+
+def configure_direction_zones(context, collision_config, navigation_config, direction_config):
+    """Add forward/reverse surround variants that direction_zones.py switches between."""
+    kind = robot_type(context)
+    collision = load_parameters(collision_config, kind)
+    swing = float(load_parameters(direction_config, kind)["direction_zones"]["ros__parameters"]["swing_margin"])
+    local = load_parameters(
+        LaunchConfiguration("costmap_config").perform(context), kind,
+    )["local_costmap"]["local_costmap"]["ros__parameters"]
+    padding = float(local["footprint_padding"])
+    footprint_x = [float(point[0]) for point in json.loads(local["footprint"])]
+    front, rear = max(footprint_x) + padding, min(footprint_x) - padding
+    monitor = collision["collision_monitor"]["ros__parameters"]
+    surround = [float(value) for value in monitor["PolygonSurround"]["points"]]
+    xs, ys = surround[::2], surround[1::2]
+    if surround != rectangle(max(xs), min(xs), max(ys), min(ys)):
+        raise ValueError("Direction zones require a clockwise axis-aligned PolygonSurround")
+    if not (swing >= 0 and min(xs) < rear - swing and max(xs) > front + swing):
+        raise ValueError("PolygonSurround must extend beyond the footprint plus swing_margin")
+    monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_direction"
+    # All surround variants share one topic; Humble only publishes enabled polygons.
+    monitor["PolygonSurroundForward"] = dict(
+        monitor["PolygonSurround"], enabled=True,
+        points=rectangle(max(xs), rear - swing, max(ys), min(ys)),
+    )
+    monitor["PolygonSurroundReverse"] = dict(
+        monitor["PolygonSurround"], enabled=False,
+        points=rectangle(front + swing, min(xs), max(ys), min(ys)),
+    )
+    monitor["PolygonSurround"]["enabled"] = False
+    monitor["polygons"] += ["PolygonSurroundForward", "PolygonSurroundReverse"]
+    for name in ("PolygonStop", "PolygonSlow"):
+        monitor[name]["enabled"] = True
+    directory = tempfile.TemporaryDirectory(prefix="isaac_direction_zones_")
+    path = os.path.join(directory.name, "collision.yaml")
+    with open(path, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(collision, stream)
+
+    def cleanup(event, context):
+        directory.cleanup()
+        return []
+
+    selector = Node(
+        package="slam_localization_3d", executable="direction_zones.py",
+        name="direction_zones", output="screen",
+        parameters=[RobotParameterFile(
+            direction_config, LaunchConfiguration("namespace"), LaunchConfiguration("robot_type"),
+        ), {"use_sim_time": True}],
+    )
+    return [
+        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
+        SetLaunchConfiguration("collision_config", path),
+        SetLaunchConfiguration("navigation_config", navigation_config),
+        selector,
+        RegisterEventHandler(OnProcessExit(
+            target_action=selector,
+            on_exit=lambda event, context: [] if context.is_shutdown else [
+                # Commands stop flowing; cmd_vel_safety's command timeout stops the robot.
+                LogInfo(msg="ERROR: Direction zones exited; navigation stopped, restart required"),
+            ],
+        )),
+    ]
+
+
+def configure_surround(context, collision_config, navigation_config, adaptive_config, direction_config):
     enabled = LaunchConfiguration("adaptive_surround").perform(context).lower() == "true"
     if not enabled:
+        if (LaunchConfiguration("direction_zones").perform(context).lower() == "true"
+                and LaunchConfiguration("navigate").perform(context).lower() == "true"):
+            return configure_direction_zones(context, collision_config, navigation_config, direction_config)
         return [
             SetLaunchConfiguration("collision_config", collision_config),
             SetLaunchConfiguration("navigation_config", navigation_config),
@@ -505,6 +576,11 @@ def generate_launch_description():
             DeclareLaunchArgument("navigate", default_value="false"),
             DeclareLaunchArgument("adaptive_surround", default_value="false",
                                   description="Experimental acknowledged low-speed surround profiles"),
+            DeclareLaunchArgument(
+                "direction_zones", default_value="true",
+                description="Switch forward/reverse/rotate collision zones by command direction "
+                            "(navigate only; adaptive_surround takes precedence)",
+            ),
             DeclareLaunchArgument("filter_editor", default_value="false",
                                   description="Enable live RViz polygon annotation"),
             DeclareLaunchArgument(
@@ -522,6 +598,7 @@ def generate_launch_description():
                 function=configure_surround,
                 args=[os.path.join(package, "config", filename) for filename in (
                     "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
+                    "direction_zones.yaml",
                 )],
             ),
             OpaqueFunction(function=robot_nodes, args=[package, nav]),

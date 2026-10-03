@@ -82,6 +82,7 @@ flowchart TD
     Controller["controller_server<br/>GoalHeadingLatchedRPP + local_costmap"]
     Behavior["behavior_server<br/>BackUp、Wait"]
     Smoother["velocity_smoother<br/>加減速限制"]
+    Direction["direction_zones<br/>依前進／倒退／旋轉切換保護區"]
     Monitor["collision_monitor<br/>前方至 x 1.30 m、周圍 y ±0.75 m<br/>停車/減速、footprint 碰撞預估"]
     Obstacles["/perception/obstacles、/scan"]
     Safety["cmd_vel_safety<br/>感測/校正過期立即停車、限速<br/>停車後從零加速"]
@@ -96,7 +97,8 @@ flowchart TD
     BT -->|"失敗時 recovery"| Behavior
     Controller -->|"/nav2/cmd_vel_nav"| Smoother
     Behavior -->|"/nav2/cmd_vel_nav"| Smoother
-    Smoother -->|"/nav2/cmd_vel"| Monitor
+    Smoother -->|"/nav2/cmd_vel"| Direction
+    Direction -->|"/nav2/cmd_vel_direction<br/>切換 polygon .enabled"| Monitor
     Obstacles --> Monitor
     Obstacles -->|"資料時效 watchdog"| Safety
     Monitor -->|"/nav2/cmd_vel_monitored"| Safety
@@ -320,8 +322,10 @@ ClearEntireCostmap 會清掉 global costmap 所有看過的障礙物，但 stati
 `controller_server` 和 `behavior_server` 都不直接控制車子，它們的 `/cmd_vel` 被重新映射到 `/nav2/cmd_vel_nav`，先經過 `velocity_smoother` 限制加減速，再依序經過兩道安全關卡才到 Isaac Sim 訂閱的 `/cmd_vel`：
 
 ```
-controller / behavior → /nav2/cmd_vel_nav → velocity_smoother → /nav2/cmd_vel → collision_monitor → /nav2/cmd_vel_monitored → cmd_vel_safety → /cmd_vel
+controller / behavior → /nav2/cmd_vel_nav → velocity_smoother → /nav2/cmd_vel → direction_zones → /nav2/cmd_vel_direction → collision_monitor → /nav2/cmd_vel_monitored → cmd_vel_safety → /cmd_vel
 ```
+
+`direction_zones` 只在 `--navigate` 時啟動，見下方「方向切換保護區」。使用 `--static-zones` 或 `--adaptive-surround` 時不啟動，`velocity_smoother` 直接接到 `collision_monitor`。
 
 兩道安全關卡都只會降速或停車，不會加速，所以最終速度取最嚴格的限制。smoother 放在安全關卡之前，安全停車不會被平滑延遲。
 
@@ -352,9 +356,33 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 | `PolygonSlow` | 車頭前 0.75 m（x 0.65–1.40 m，y ±0.50 m） | 超過 3 個點就降為 50% |
 | `FootprintApproach` | local costmap 的 footprint（`/local_costmap/published_footprint`） | 沿目前命令模擬 1.5 秒，依距離碰撞的時間按比例降速；會考慮行進方向，後退和原地旋轉也會檢查 |
 
+上表是 `collision_monitor.yaml` 的原始區域，也就是 `--static-zones` 時全部同時生效的設定。預設會依行進方向只啟用其中一組，見下一節。
+
 固定停車區需在車體輪廓外預留感測與控制延遲、物理煞停行程及安全裕度；發布零速不代表車體瞬間停止。`FootprintApproach` 使用 local costmap 發布的 footprint，但固定停車／減速區不會隨 footprint 自動更新。換車或提高速度時需重新調整並驗證，不能只修改 footprint。
 
-預設仍是上述固定區域。可用 `./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround` 選用實驗性的兩段式速度自適應 Surround（`adaptive_surround.yaml`）；Humble 沒有原生 `VelocityPolygon`，因此不是不停更新 `points`，而是透過原生 `.enabled` 的原子參數服務切換兩個預先設定的區域：
+#### 方向切換保護區（預設）
+
+Humble 的 `stop` 區域不分命令方向：車頭前有障礙物時，連 BackUp 後退與原地旋轉也會被擋下，recovery 可能永遠動不了。工業 AGV 的安全雷射掃描器會依行進方向與速度切換保護區組（field set）；Nav2 Iron 之後的 `VelocityPolygon` 也是同樣概念。Humble 沒有這個功能，因此由 `direction_zones.py` 以原生 `<polygon>.enabled` 原子參數服務，在三組預先設定的區域之間切換：
+
+| 方向組 | 判斷（命令） | 啟用的區域 | 轉發限制 |
+| :-- | :-- | :-- | :-- |
+| forward | `linear.x` > 0.01 m/s | `PolygonStop`、`PolygonSlow`、`PolygonSurroundForward`（Surround 的後緣縮到 padded footprint 後方 0.15 m） | 只轉發 `linear.x` ≥ 0 |
+| reverse | `linear.x` < −0.01 m/s | `PolygonSurroundReverse`（Surround 的前緣縮到 padded footprint 前方 0.15 m） | 只轉發 `linear.x` ≤ 0 |
+| rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | 完整 `PolygonSurround` | 線速度歸零，只轉發角速度 |
+
+- `FootprintApproach` 一直啟用，沿命令模擬 footprint，也會檢查轉彎時車角的掃掠。
+- Forward/Reverse 區域由 launch 依車種 profile 的 `PolygonSurround` 與 local costmap footprint 自動產生，不需另外設定。保留的 `swing_margin: 0.15` m（`direction_zones.yaml`）是轉彎時被縮側車角的擺動裕度。Nova Carter：forward x −0.36–1.10 m，reverse x −0.80–0.81 m。Carter v1：forward x −0.66–0.80 m，reverse x −1.10–0.51 m。
+- 各方向保護的範圍與原本固定區域相同：前進仍有 Stop／Slow 與前方、側方 Surround，倒退仍有完整後方 Surround，原地旋轉仍是完整 Surround。只有在「不會往那邊移動」的方向上取消停車。
+- 切換方式與安全雷射的 field switching 相同：要求不同方向時先輸出零速，等至少 `settle_time` 0.2 秒，且收到一筆 barrier 之後的 `/odometry/local` 證實 twist 與位姿差分都在 0.03 m/s、0.05 rad/s 內，才送出原子切換；monitor 回覆成功前一律輸出零速。命令過期（0.3 秒）、里程計過期（0.3 秒）時不切換。切換被拒絕、逾時或 selector 結束時，命令不再流到 monitor，`cmd_vel_safety` 在 0.5 秒命令逾時後停車，需重啟。
+- RPP 在原地轉向與前進之間轉換時，會先短暫停住再切換，代價約 0.2–0.4 秒。
+- 所有 Surround 變體都發布在 `/collision_monitor/polygon_surround`；Humble 只發布啟用中的區域，所以 RViz 顯示目前那組。
+- 典型 deadlock 的處理：前方障礙物進入 `PolygonStop` 而停車後，BackUp 會切到 reverse 組並後退；之後若障礙物在完整 Surround（車頭前 1.10 m）之外，也能原地旋轉。障礙物在完整 Surround 內時，旋轉仍會被擋下，因為旋轉時車角確實可能掃到。
+
+可用 `./scripts/run_nav.sh --mode 3d --navigate --static-zones`（或 launch 參數 `direction_zones:=false`）恢復全部區域同時生效的舊行為。
+
+#### 速度自適應 Surround（實驗）
+
+可用 `./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround` 選用實驗性的兩段式速度自適應 Surround（`adaptive_surround.yaml`），啟用時取代方向切換保護區；Humble 沒有原生 `VelocityPolygon`，因此不是不停更新 `points`，而是透過原生 `.enabled` 的原子參數服務切換兩個預先設定的區域：
 
 | 模式 | Surround（`base_link`） | 速度上限 |
 | :-- | :-- | :-- |
@@ -371,10 +399,10 @@ Nav2 Humble 內建的 `nav2_collision_monitor`，設定在 `collision_monitor.ya
 
 - 感測來源：`/perception/obstacles`（地面濾除後的 3D 點）和 `/scan`（2D 切片）。找不到地面時，`ground_obstacle_filter` 會停止發布，這時仍有 `/scan` 可用。
 - 不再排除半徑 0.5 m 內的所有點。`ground_obstacle_filter.yaml` 的 `self_filter_bounds: [-0.20, 0.65, -0.32, 0.32]` 只排除車身矩形內的點（向上延伸，避免自體反射）；`min_range: 0.0`。導航的 `/scan` 使用同一份自體濾除點雲，並覆寫 `range_min: 0.0`、`range_max: 20.0`，所以車身外的近距離點可以同時進入 scan 與障礙點雲。
-- `PolygonSurround` 不分行進方向：側方或後方太近時，前進、倒退、原地旋轉都會被擋下。障礙物離開且新資料確認區域淨空後才恢復。
+- 每組區域內仍不分細部方向：例如前進時側方太近，前進與轉彎都會被擋下。障礙物離開且新資料確認區域淨空後才恢復。
 - 停止區全寬 1.50 m 不代表 1.50 m 以上的通道必定可通過。車體修正航向時，長方形停止區在通道橫向的投影會變寬；即使車身尚有淨距，也可能因牆面進入停止區而卡住。
 - 這解決的是軟體距離濾除造成的盲區，不代表 LiDAR 沒有物理遮蔽、量測最短距離或點數不足的盲區。車身自體濾除範圍與保護區必須隨機器人幾何一起調整，必要時需加近距離感測器。
-- 停車區不分方向：障礙物在停車區內時，BackUp 後退也會被擋下，只能等障礙物離開，或在 recovery 用完後中止目標。
+- 預設的方向切換保護區讓 BackUp 不會被車頭前的障礙物擋下；`--static-zones` 或 `--adaptive-surround` 時停車區不分方向，障礙物在停車區內時 BackUp 也會被擋下，只能等障礙物離開，或在 recovery 用完後中止目標。
 - 來源時間戳落後目前 ROS 時間達 1 秒時，Humble 版會忽略該來源；最後一層 `cmd_vel_safety` 會在兩個來源都過期或尚未收到時強制停車。
 - 停車後會繼續發布零速 2 秒（`stop_pub_timeout`），之後停止發布；Isaac Sim 在 0.5 秒收不到命令時也會自行停車。
 - RViz 會顯示前方停車區（紅）、周圍停車區（粉紅）和減速區（橘）。

@@ -309,6 +309,18 @@ def load_launch(name):
 
 
 class FleetRvizTest(unittest.TestCase):
+    def test_surround_display_is_enabled_for_each_robot(self):
+        config = robot_fleet.fleet_rviz(["carter1", "carter2"])
+        groups = [d for d in config["Visualization Manager"]["Displays"]
+                  if d["Class"] == "rviz_common/Group"]
+        for group in groups:
+            surround = next(d for d in group["Displays"]
+                            if d["Name"] == "Collision surround stop zone")
+            self.assertTrue(surround["Enabled"])
+            self.assertEqual(surround["Class"], "rviz_default_plugins/Polygon")
+            self.assertEqual(surround["Topic"]["Value"],
+                             f"/fleet/{group['Name']}/collision_monitor/polygon_surround")
+
     def topics(self, value):
         if isinstance(value, dict):
             found = [value["Value"]] if isinstance(value.get("Value"), str) and \

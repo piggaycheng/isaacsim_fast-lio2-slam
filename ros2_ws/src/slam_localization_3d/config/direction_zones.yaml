@@ -1,0 +1,20 @@
+# Direction-aware collision_monitor zone sets (direction_zones.py), derived at launch
+# from the robot's PolygonSurround and local_costmap footprint:
+#   forward: PolygonStop, PolygonSlow, PolygonSurround trimmed behind the footprint
+#   reverse: PolygonSurround trimmed ahead of the footprint
+#   rotate:  the full PolygonSurround
+direction_zones:
+  ros__parameters:
+    # Kept beyond the padded footprint on the trimmed side for corner swing while
+    # turning (about 0.75 rad/s * 0.4 m lateral corner offset over a 0.5 s stop).
+    swing_margin: 0.15
+    # Commands below these magnitudes do not request a zone change.
+    linear_deadband: 0.01
+    angular_deadband: 0.02
+    # Zones switch only after a zero command and measured standstill.
+    standstill_linear: 0.03
+    standstill_angular: 0.05
+    settle_time: 0.2
+    odom_timeout: 0.3
+    command_timeout: 0.3
+    switch_timeout: 1.0

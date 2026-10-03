@@ -11,6 +11,7 @@ rviz=true
 manual_initial_pose=false
 navigate=false
 adaptive_surround=false
+static_zones=false
 filter_editor=false
 filter_state=""
 boxes=()
@@ -30,6 +31,8 @@ Options:
       --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
       --adaptive-surround
                        Experimental speed-adaptive Surround; requires --navigate.
+      --static-zones   Keep all collision zones active in every direction
+                       (default switches forward/reverse/rotate zone sets).
       --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
       --filter-state FILE
                        Persistent editor JSON (default: maps/costmap_filters/editor.json).
@@ -87,6 +90,7 @@ while (($# > 0)); do
       ;;
     --navigate) navigate=true; shift ;;
     --adaptive-surround) adaptive_surround=true; shift ;;
+    --static-zones) static_zones=true; shift ;;
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
     --no-rviz) rviz=false; shift ;;
@@ -120,8 +124,9 @@ args+=("${boxes[@]}")
 if [[ "$mode" == 2d ]]; then
   if [[ -n "$map_pcd" ||
         -n "$filter_state" || "$filter_editor" == true ||
-        "$manual_initial_pose" == true || "$navigate" == true ]]; then
-    echo "--pcd, --manual-initial-pose, --navigate and costmap filters require --mode 3d" >&2
+        "$manual_initial_pose" == true || "$navigate" == true ||
+        "$static_zones" == true ]]; then
+    echo "--pcd, --manual-initial-pose, --navigate, --static-zones and costmap filters require --mode 3d" >&2
     exit 2
   fi
   exec "$project_dir/scripts/run_2d_localization.sh" --map "$map_file" "${args[@]}"
@@ -130,6 +135,7 @@ if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
 if [[ "$navigate" == true ]]; then args+=(--navigate); fi
 if [[ "$adaptive_surround" == true ]]; then args+=(--adaptive-surround); fi
+if [[ "$static_zones" == true ]]; then args+=(--static-zones); fi
 if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
 if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
 exec "$project_dir/scripts/run_3d_localization.sh" --global-fusion --costmaps \

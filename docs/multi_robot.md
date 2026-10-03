@@ -50,6 +50,7 @@ flowchart LR
   - 機體座標系的 topic（`scan`、`perception/obstacles`、collision monitor polygon）轉發到 `/fleet/NAME/...` 並改寫 `frame_id`。
   - 位於 `map` 座標系的 topic（路徑、global footprint、`odometry/global`、global costmap、地圖）RViz 直接訂閱 `/NAME/...`，不需轉發。
   - RViz 設定由 `robot_fleet.fleet_rviz()` 產生：每車一個顏色的 display group，加上 **Fleet Control** 選車面板及一組共用的「2D Pose Estimate／2D Goal Pose」工具。
+  - 每車群組預設顯示粉紅色 **Collision surround stop zone**，透過 `/fleet/NAME/collision_monitor/polygon_surround` 顯示目前啟用的 Surround；方向切換完成後，形狀會跟著更新。Stop／Slow 停用時 RViz 可能保留最後一筆圖形，仍看得到不代表仍在生效。
 - Isaac 端：`scripts/standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic。`/clock` 只由第一台車發佈；`/diagnostics` 為全域共用。
 
 ## 送導航目標
