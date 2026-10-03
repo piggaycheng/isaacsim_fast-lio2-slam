@@ -8,7 +8,7 @@
 
 - Linux、NVIDIA GPU 與可用的 NVIDIA 驅動。
 - Docker、Docker Compose v2、NVIDIA Container Toolkit。
-- Isaac Sim 安裝在 `/home/user/isaacsim-6.1.0`；目前腳本使用此路徑，若安裝位置不同，需調整 `scripts/standalone.py` 的 shebang 與測試腳本中的 `isaac_python`。
+- 已安裝 Isaac Sim 6.1.0（本文以 `<ISAACSIM_PATH>` 代表安裝目錄，例如 `~/isaacsim-6.1.0`，實際路徑依各機器而異）。目前 `scripts/standalone.py`、`scripts/usd_bbox.py` 第一行的 shebang 寫死了某個安裝路徑，首次使用前請改成 `#!<ISAACSIM_PATH>/python.sh`；`tests/` 內的驗證腳本則可用環境變數 `ISAAC_PYTHON=<ISAACSIM_PATH>/python.sh` 覆寫。
 - GUI 模式需要可用的 X11／XWayland 顯示環境及 `DISPLAY`；若使用 Xauthority 驗證，需設定 `XAUTHORITY` 指向可用的授權檔。
 - Isaac Sim 的 Office／Nova Carter 資產需可存取。
 
