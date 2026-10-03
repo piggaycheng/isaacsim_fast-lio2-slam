@@ -90,9 +90,31 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 
 2D 定位模式（`localization_2d.launch.py`）只支援 Nova Carter。
 
+## 外部派車系統（如 Open-RMF）
+
+本專案不含車輛間的路權與交通管理，這部分由外部派車系統負責；例如在外部執行 Open-RMF 並自行撰寫 fleet adapter，把這套環境當成多台自走車使用。可用的介面（`NAME` 為車輛 namespace）：
+
+| 需求 | 介面 |
+| :-- | :-- |
+| 下達目標 | action `/NAME/navigate_to_pose`（`nav2_msgs/NavigateToPose`），`frame_id: map`；取消用 action cancel |
+| 車輛位姿 | `/NAME/odometry/global`（`map` 座標），或 `/NAME/tf` 的 `map -> base_link`（TF 已重映射到 `/NAME/tf`） |
+| 即時速度 | `/NAME/odometry/local` |
+| 緊急停車 | `/NAME/navigation/emergency_stop`（`Bool`）；鎖定停車，需重啟才能恢復，不是一般暫停 |
+| 時間 | `/clock`，只由第一台車發布；外部節點須使用模擬時間（`use_sim_time`） |
+
+整合時須注意：
+
+- **網路**：外部程式與本專案使用相同的 `ROS_DOMAIN_ID`、`ROS_LOCALHOST_ONLY` 與 RMW；container 為 host network，主機上的程式可直接看到 topic。ROS 版本須與 Humble 的介面相容。
+- **座標**：`map` 與 Isaac world 對齊，nav graph 直接使用 Isaac 座標，不需換算。
+- **逐段下單**：Nav2 只追蹤單一目標，不會執行外部系統的時間預約。要讓外部系統的協調生效，fleet adapter 須照計畫把路徑點逐段送給 Nav2，需要等待時不送下一段或取消目前目標，並持續回報位姿。兩點之間由 Nav2 自行規劃，路徑點要夠密才不會偏離計畫車道。
+- **保護區比車體大**：collision monitor 的 Surround 是固定矩形（Nova Carter：x −1.35–0.80 m、y ±0.75 m；Carter v1：x −1.10–0.80 m、y ±0.81 m），遠大於車體寬度。外部系統的車輛 profile（vicinity）與車道間距須配合這個範圍，否則兩車在外部系統認為安全的間距下通過，仍會觸發對方的保護區而停車，與計畫不一致。
+- **到位與失敗**：到位容差為位置 0.15 m、航向 0.25 rad，到位後鎖定。導航失敗時 recovery 約 30 秒後才中止目標（`ABORTED`），adapter 須設逾時並回報重新規劃。
+- **電量**：沒有 `BatteryState`，需由 adapter 自行提供。
+- 車輛須已完成定位並出現 `navigator active` 後才能下單；生成位置與車種由 `run_multi_nav.sh --robot ...` 決定。
+
 ## 目前限制
 
-- 車輛之間沒有協調：彼此只當作 LiDAR 障礙物，沒有路權或交通管理，對向時可能互相卡住。
+- 車輛之間沒有協調：彼此只當作 LiDAR 障礙物，沒有路權或交通管理，單獨使用時對向可能互相卡住；需由上述外部派車系統協調。
 - 鍵盤操控已停用，多車使用 ROS `cmd_vel`。
 - `filter_editor`（Keepout／Speed）與單車 validation 場景仍只支援單車。
 - Fleet RViz 不顯示 local costmap。
