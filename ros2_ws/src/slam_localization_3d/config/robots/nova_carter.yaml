@@ -33,7 +33,8 @@ sensor_frames:
 # local_ekf (odom -> base_link) inputs, any of wheel, imu, lio
 # (slam_nav/config/local_ekf_inputs.yaml). Launch argument local_odometry_inputs
 # overrides it. Without wheel the wheel_encoder_odometry parameters are optional
-# and the global EKF propagates with the local EKF velocity instead.
+# and the global EKF propagates with /lio/twist (variances in global_fusion.yaml);
+# lio requires the lio_odometry variances below.
 local_odometry:
   inputs: [wheel, imu]
 
@@ -64,6 +65,13 @@ parameter_overrides:
       orientation_variance: 0.01
       angular_velocity_variance: 0.000826544
       linear_acceleration_variance: 0.04
+  # Per-scan FAST-LIO pose noise for local_ekf (only used with the lio input;
+  # the global EKF's /lio/twist variances live in config/global_fusion.yaml).
+  lio_odometry:
+    ros__parameters:
+      # Written by covariance_calibration.py --apply.
+      position_variance: 8.37166e-07
+      yaw_variance: 1.19203e-07
   # --- PCD localization covariance (config/global_fusion.yaml) ---
   global_pose_adapter:
     ros__parameters:

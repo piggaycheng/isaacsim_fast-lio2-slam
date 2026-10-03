@@ -23,7 +23,8 @@ sensor_frames:
   lidar_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
   imu_link: {x: -0.06, y: 0.0, z: 0.50, roll: 0.0, pitch: 0.0, yaw: 0.0}
 
-# local_ekf (odom -> base_link) inputs: see nova_carter.yaml.
+# local_ekf (odom -> base_link) inputs: see nova_carter.yaml. Selecting lio needs
+# lio_odometry position_variance/yaw_variance overrides (not calibrated for Carter v1).
 local_odometry:
   inputs: [wheel, imu]
 

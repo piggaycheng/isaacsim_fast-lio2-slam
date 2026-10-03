@@ -330,7 +330,8 @@ def robot_nodes(context, package, nav):
         actions.append(Node(
             package="slam_localization_3d", executable="lio_odometry.py",
             name="lio_odometry", output="screen",
-            parameters=[*nav_parameters, {"imu_mount": imu_mount(profile)}],
+            # local_odometry.yaml: lio/odom; global_fusion.yaml: lio/twist variances.
+            parameters=[*nav_parameters, fusion_config, {"imu_mount": imu_mount(profile)}],
             remappings=upstream,
         ))
     actions += [

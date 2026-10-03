@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import rclpy
+from geometry_msgs.msg import TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -14,9 +15,10 @@ import lio_odometry  # noqa: E402
 from localization_3d_pose import compose_pose  # noqa: E402
 
 
-def odometry(sec, x, y, yaw, z=0.526):
+def odometry(sec, x, y, yaw, z=0.526, nanosec=0):
     message = Odometry()
     message.header.stamp.sec = sec
+    message.header.stamp.nanosec = nanosec
     message.header.frame_id = "camera_init"
     message.child_frame_id = "body"
     pose = message.pose.pose
@@ -57,10 +59,15 @@ class LioOdometryNodeTest(unittest.TestCase):
             Parameter("imu_mount", value=[0.5, 0.0, 0.5, 0.0, 0.0, 0.0]),
             Parameter("position_variance", value=0.04),
             Parameter("yaw_variance", value=0.01),
+            Parameter("twist_linear_variance", value=3e-5),
+            Parameter("twist_angular_variance", value=7e-6),
         ])
         self.received = []
+        self.twists = []
         self.listener = Node("lio_odometry_listener")
         self.listener.create_subscription(Odometry, "lio/odom", self.received.append, 10)
+        self.listener.create_subscription(
+            TwistWithCovarianceStamped, "lio/twist", self.twists.append, 10)
         self.executor = SingleThreadedExecutor()
         self.executor.add_node(self.node)
         self.executor.add_node(self.listener)
@@ -76,6 +83,8 @@ class LioOdometryNodeTest(unittest.TestCase):
         for _ in range(50):
             self.executor.spin_once(timeout_sec=0.02)
             if len(self.received) > count:
+                for _ in range(5):
+                    self.executor.spin_once(timeout_sec=0.01)
                 return self.received[-1]
         self.fail("lio/odom not published")
 
@@ -105,6 +114,36 @@ class LioOdometryNodeTest(unittest.TestCase):
         self.node.on_odometry(invalid)
         self.executor.spin_once(timeout_sec=0.05)
         self.assertEqual(len(self.received), count)
+
+    def test_twist_is_base_link_velocity_with_its_own_variances(self):
+        self.publish(odometry(1, 0.0, 0.0, 0.0))
+        self.assertEqual(self.twists, [])
+        # Body moves 0.1 m forward and turns 0.05 rad in 0.1 s.
+        self.publish(odometry(1, 0.1, 0.0, 0.05, nanosec=100_000_000))
+        self.assertEqual(len(self.twists), 1)
+        twist = self.twists[-1]
+        self.assertEqual(twist.header.frame_id, "base_link")
+        self.assertEqual((twist.header.stamp.sec, twist.header.stamp.nanosec), (1, 100_000_000))
+        self.assertAlmostEqual(twist.twist.twist.angular.z, 0.5, places=6)
+        # base_link is 0.5 m behind body: turning moves it sideways (to the right).
+        # The increment is expressed in the previous base_link frame (yaw 0 here).
+        expected = (0.1 - 0.5 * math.cos(0.05) + 0.5, -0.5 * math.sin(0.05))
+        self.assertAlmostEqual(twist.twist.twist.linear.x, expected[0] * 10, places=6)
+        self.assertAlmostEqual(twist.twist.twist.linear.y, expected[1] * 10, places=6)
+        covariance = twist.twist.covariance
+        self.assertEqual((covariance[0], covariance[7], covariance[35]), (3e-5, 3e-5, 7e-6))
+        # Independent of the local pose variances.
+        self.assertEqual(self.received[-1].pose.covariance[0], 0.04)
+
+    def test_no_twist_across_gaps_or_reanchoring(self):
+        self.publish(odometry(5, 0.0, 0.0, 0.0))
+        self.publish(odometry(7, 1.0, 0.0, 0.0))
+        self.assertEqual(self.twists, [], "2 s gap exceeds max_twist_interval")
+        self.publish(odometry(1, 0.0, 0.0, 0.0))
+        self.assertEqual(self.twists, [], "clock reset re-anchors without a twist")
+        self.publish(odometry(1, 0.02, 0.0, 0.0, nanosec=100_000_000))
+        self.assertEqual(len(self.twists), 1)
+        self.assertAlmostEqual(self.twists[-1].twist.twist.linear.x, 0.2, places=6)
 
 
 if __name__ == "__main__":

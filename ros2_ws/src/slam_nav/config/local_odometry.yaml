@@ -59,6 +59,8 @@ lio_odometry:
     use_sim_time: true
     odom_frame: odom
     base_frame: base_link
-    # FAST-LIO publishes no covariance: fixed per-pose variances (m^2, rad^2).
-    position_variance: 0.0001
-    yaw_variance: 0.0001
+    # FAST-LIO publishes no covariance. The per-scan lio/odom pose variances
+    # position_variance (m^2) and yaw_variance (rad^2) are vehicle-specific and
+    # live only in the robot profile (required when local_odometry.inputs has
+    # lio); calibrate them with covariance_calibration.py. The lio/twist
+    # variances for the global EKF are in slam_localization_3d global_fusion.yaml.

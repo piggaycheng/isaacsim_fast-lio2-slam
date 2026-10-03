@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import math
+import re
 import sys
 import tempfile
 import unittest
@@ -100,11 +101,16 @@ class RobotProfileTest(unittest.TestCase):
         for robot_type in ("nova_carter", "carter_v1"):
             robot_fleet.load_robot_profile(robot_type)
         overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
+        # Input-specific parameters are only required when the profile selects the input.
+        inputs = {node: name for name, required in robot_fleet.INPUT_OVERRIDES.items()
+                  for node in required}
         for node, keys in VEHICLE_OVERRIDES.items():
             with self.subTest(node=node), tempfile.TemporaryDirectory() as directory:
                 incomplete = copy.deepcopy(overrides)
                 del incomplete[node]["ros__parameters"][keys[-1]]
-                write_profile(directory, "incomplete", parameter_overrides=incomplete)
+                selected = ["imu", inputs[node]] if node in inputs else ["wheel", "imu"]
+                write_profile(directory, "incomplete", parameter_overrides=incomplete,
+                              local_odometry={"inputs": selected})
                 with self.assertRaisesRegex(ValueError, f"{node}.ros__parameters needs {keys[-1]}"):
                     robot_fleet.load_robot_profile("incomplete", directory)
 
@@ -480,22 +486,40 @@ class LocalOdometryInputsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "typo.yaml: local_odometry.inputs: unknown"):
                 robot_fleet.load_robot_profile("typo", directory)
 
-    def test_global_ekf_uses_lio_increments_without_wheel(self):
+    def test_global_ekf_uses_lio_twist_without_wheel(self):
         fusion = yaml.safe_load((CONFIG / "global_fusion.yaml").read_text())
         self.assertIs(robot_fleet.with_global_ekf_inputs(fusion, ("wheel", "imu")), fusion)
         path = robot_namespace.robot_parameter_file(
             str(CONFIG / "global_fusion.yaml"), "carter1", "nova_carter",
             transform=lambda config: robot_fleet.with_global_ekf_inputs(config, ("lio", "imu")),
         )
-        ekf = yaml.safe_load(Path(path).read_text())["carter1"]["global_ekf"]["ros__parameters"]
-        self.assertEqual(ekf["odom0"], "/carter1/lio/odom")
-        self.assertTrue(ekf["odom0_differential"])
-        self.assertEqual([index for index, value in enumerate(ekf["odom0_config"]) if value],
-                         [0, 1, 5])
-        self.assertNotIn("odom1", ekf)
+        config = yaml.safe_load(Path(path).read_text())["carter1"]
+        ekf = config["global_ekf"]["ros__parameters"]
+        self.assertEqual(ekf["twist0"], "/carter1/lio/twist")
+        self.assertEqual([index for index, value in enumerate(ekf["twist0_config"]) if value],
+                         [6, 7, 11])
+        self.assertFalse([key for key in ekf if re.match(r"odom\d", key)])
         self.assertEqual((ekf["imu0"], ekf["pose0"]),
                          ("/carter1/nav/imu", "/carter1/localization_3d/global_pose"))
+        # The global twist variances are global_fusion.yaml's own; the profile's local
+        # (calibrated) pose variances merge alongside them but are never used there.
+        lio = config["lio_odometry"]["ros__parameters"]
+        base = fusion["lio_odometry"]["ros__parameters"]
+        for key in ("twist_linear_variance", "twist_angular_variance"):
+            self.assertEqual(lio[key], base[key])
 
+    def test_lio_input_requires_profile_variances(self):
+        profile = yaml.safe_load((CONFIG / "robots/nova_carter.yaml").read_text())
+        overrides = profile["parameter_overrides"]
+        del overrides["lio_odometry"]
+        with tempfile.TemporaryDirectory() as directory:
+            write_profile(directory, "no_lio", parameter_overrides=overrides)
+            loaded = robot_fleet.load_robot_profile("no_lio", directory)
+            with self.assertRaisesRegex(ValueError, "input 'lio'.*lio_odometry"):
+                robot_fleet.local_odometry_inputs(loaded, "lio,imu")
+        for path in (NAV_CONFIG / "local_odometry.yaml", CONFIG / "global_fusion.yaml"):
+            parameters = yaml.safe_load(path.read_text())["lio_odometry"]["ros__parameters"]
+            self.assertFalse({"position_variance", "yaw_variance"} & set(parameters), path.name)
 
 if __name__ == "__main__":
     unittest.main()

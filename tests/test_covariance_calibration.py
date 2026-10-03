@@ -187,6 +187,8 @@ class TestCovarianceCalibration(unittest.TestCase):
                                                 return_value=noise))
                 stack.enter_context(patch.object(calibration, "wheel_systematic",
                                                 return_value=(0.0, 1.0)))
+                stack.enter_context(patch.object(calibration, "lio_scan_noise",
+                                                return_value=None))
                 stack.enter_context(patch.object(calibration, "pcd_error_variance",
                                                 return_value=None))
                 stack.enter_context(patch.object(calibration, "pcd_repeatability",
@@ -205,6 +207,32 @@ class TestCovarianceCalibration(unittest.TestCase):
                     validation.call_args.args[3],
                     max(minimum, static_variance) * np.median(np.diff(data.imu_t)),
                 )
+
+    def test_lio_scan_noise_recovers_white_pose_noise(self):
+        rng = np.random.default_rng(7)
+        position_sigma, yaw_sigma = 0.004, 0.002
+        data = FakeLioData(rng, position_sigma, yaw_sigma)
+        lio = calibration.lio_scan_noise(data, [(1.0, 29.0)], 0.0)
+        for key, expected in (
+            ("motion_position_variance", position_sigma ** 2),
+            ("motion_yaw_variance", yaw_sigma ** 2),
+            ("static_position_variance", position_sigma ** 2),
+            ("static_yaw_variance", yaw_sigma ** 2),
+        ):
+            with self.subTest(key=key):
+                self.assertAlmostEqual(lio[key] / expected, 1.0, delta=0.15)
+        variances = calibration.recommend_lio_variances(lio, 1e-8, 1e-8)
+        report = calibration.lio_ground_truth_validation(data, *variances)
+        self.assertAlmostEqual(report[1][0], 1.0, delta=0.2)
+        self.assertAlmostEqual(report[1][1], 1.0, delta=0.2)
+        # White noise: the increment error does not grow with the lag.
+        self.assertAlmostEqual(report[10][1], report[1][1], delta=0.2)
+
+    def test_lio_recommendation_uses_larger_estimate_and_floor(self):
+        lio = {"motion_position_variance": 1e-6, "static_position_variance": 4e-6,
+               "motion_yaw_variance": 2e-7, "static_yaw_variance": float("nan")}
+        self.assertEqual(calibration.recommend_lio_variances(lio, 1e-8, 1e-8), (4e-6, 2e-7))
+        self.assertEqual(calibration.recommend_lio_variances(lio, 1e-5, 1e-5), (1e-5, 1e-5))
 
     def test_align_se2(self):
         source = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 2.0]])
@@ -292,7 +320,7 @@ class TestCovarianceCalibration(unittest.TestCase):
     def test_lio_body_to_base_defaults_to_profile_mount(self):
         from localization_3d_pose import BODY_TO_BASE
         args = calibration.parse_args(["bag"])
-        for actual, expected in zip(args.lio_body_to_base, (*BODY_TO_BASE[0], math.pi)):
+        for actual, expected in zip(args.lio_body_to_base, (*BODY_TO_BASE[0], 0.0)):
             self.assertAlmostEqual(actual, expected, places=8)
         with TemporaryDirectory() as directory:
             Path(directory, "other.yaml").write_text(yaml.safe_dump({"sensor_frames": {"imu_link": {
@@ -342,6 +370,29 @@ class FakeTruthData:
         self.pcd_t = t
         self.pcd_pose = np.column_stack((t + 0.01, t * 0, t * 0))
         self.pcd_covariance = np.array([np.diag((1e-4, 1e-4, 1e-4))] * len(t))
+
+
+class FakeLioData:
+    """Exact wheels/IMU/truth and FAST-LIO poses with white per-scan noise."""
+
+    def __init__(self, rng, position_sigma, yaw_sigma, duration=300.0):
+        t = np.arange(0.0, duration, 0.005)
+        moving = t > 30.0
+        speed = np.where(moving, 0.25 * np.sign(np.sin(t / 7.0)), 0.0)
+        rate = np.where(moving, 0.4 * np.sin(t / 5.0), 0.0)
+        yaw = np.concatenate(([0.0], np.cumsum(rate[:-1] * 0.005)))
+        x = np.concatenate(([0.0], np.cumsum(speed[:-1] * np.cos(yaw[:-1]) * 0.005)))
+        y = np.concatenate(([0.0], np.cumsum(speed[:-1] * np.sin(yaw[:-1]) * 0.005)))
+        self.truth = calibration.Trajectory.create(t, x, y, yaw)
+        self.wheel = calibration.Trajectory.create(t[::4], x[::4], y[::4], yaw[::4])
+        self.imu_t, self.imu_wz = t[::2], rate[::2]
+        scan = t[::20]
+        sx, sy, syaw = self.truth.at(scan)
+        self.lio = calibration.Trajectory.create(
+            scan, sx + rng.normal(0, position_sigma, len(scan)),
+            sy + rng.normal(0, position_sigma, len(scan)),
+            syaw + rng.normal(0, yaw_sigma, len(scan)),
+        )
 
 
 class FakeCovariance:

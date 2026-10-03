@@ -99,7 +99,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 | `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF |
 | `parameter_overrides` | 深度合併到含有該節點鍵的所有參數檔（list 整個取代）。Carter profile 列出全部車種相關值：輪速里程計與 covariance、IMU covariance、PCD covariance floor、costmap footprint／inflation、self filter、collision monitor 與 adaptive surround 區域、速度與加速度上限 |
 
-接著以 `--robot NAME:<type>@X,Y` 使用。輪速里程計（關節、輪徑、輪距、encoder 模型）與輪速／IMU／PCD covariance 只寫在 profile，共用的 `local_odometry.yaml`、`global_fusion.yaml` 不含這些值；profile 缺少任何一項（`robot_fleet.REQUIRED_OVERRIDES`；輪速參數 `robot_fleet.INPUT_OVERRIDES` 只在 `local_odometry.inputs` 含 `wheel` 時需要）會在載入時報錯。footprint、安全區域與速度則仍以 Nova Carter 的值作為共用設定檔預設，`nova_carter.yaml` 的這些 overrides 必須與其相同（`test_robot_namespace.py` 會檢查）；其他車種在自己的 profile 逐項替換並自行驗證。
+接著以 `--robot NAME:<type>@X,Y` 使用。輪速里程計（關節、輪徑、輪距、encoder 模型）與輪速／IMU／PCD covariance 只寫在 profile，共用的 `local_odometry.yaml`、`global_fusion.yaml` 不含這些值；profile 缺少任何一項（`robot_fleet.REQUIRED_OVERRIDES`；`robot_fleet.INPUT_OVERRIDES` 依輸入要求：輪速參數只在 `local_odometry.inputs` 含 `wheel` 時需要，`lio_odometry` 的 `position_variance`／`yaw_variance` 只在含 `lio` 時需要）會在載入時報錯。footprint、安全區域與速度則仍以 Nova Carter 的值作為共用設定檔預設，`nova_carter.yaml` 的這些 overrides 必須與其相同（`test_robot_namespace.py` 會檢查）；其他車種在自己的 profile 逐項替換並自行驗證。
 
 `sensor_frames.imu_link` 是 FAST-LIO body 的安裝位置：launch 把它以 `imu_mount` 參數傳給 `localization_3d_pose`、`global_pose_adapter`、`lio_odometry`，反推 body → `base_link`；`covariance_calibration.py` 也由此推得 `--lio-body-to-base` 預設值。速度上限是 `cmd_vel_safety` 與 `adaptive_surround` 的 `max_linear_speed`／`max_angular_speed`。
 
@@ -114,7 +114,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 - 輪子關節為 `left_wheel`／`right_wheel`，輪半徑 0.24 m，輪子 collision cylinder 中心間距約 0.538410 m，車體朝 USD +x 前進。
 - 可見與 collision 幾何量測後，使用 footprint x `[-0.50, 0.35]`、y `[-0.38, 0.38]`，兩種幾何均有至少約 6 cm 包絡餘量；LiDAR 點雲量測地面 `ground_z=-0.24` m，地面候選搜尋範圍為此高度周圍 ±0.35 m。
 - 原始 RTX LiDAR 在 `chassis_link/XT_32_10Hz` 的 `(-0.06, 0, 0.38)` 無法輸出點雲；實測抬高至 `(-0.06, 0, 0.50)` 後恢復，避免車體 LiDAR housing 的自體遮擋。profile 的 `lidar_translation` 與 `sensor_frames` 均使用此模擬安裝位置。另建立與 LiDAR 同位置的 IMU，保留 FAST-LIO 的零 LiDAR／IMU 外參。
-- 輪速、IMU 角速度與 PCD covariance 已在 2026-10-03 依文件路線以**不使用真值**的校正工具（預設參數）求得並寫入，真值只用於驗證；另一份完整路線 bag 固定參數驗證，六項真值 ratio 全部 PASS。PCD 定位 RMSE 約 1.99 cm、0.080°；數值、指令與證據見 [covariance_calibration.md](covariance_calibration.md#carter-v1-校正紀錄)。IMU orientation／linear acceleration 仍是預設值，實機與不同速度／場景需重新驗證，煞停距離也需另行量測。
+- 輪速、IMU 角速度與 PCD covariance 已在 2026-10-03 依文件路線以**不使用真值**的校正工具（預設參數）求得並寫入，真值只用於驗證；另一份完整路線 bag 固定參數驗證，六項真值 ratio 全部 PASS。PCD 定位 RMSE 約 1.99 cm、0.080°；校正操作見 [covariance_calibration.md](covariance_calibration.md)，目前參數見 `config/robots/carter_v1.yaml`，錄製證據位於 `ros2_ws/log/covariance/carter_v1/`（不納入版本控制）。IMU orientation／linear acceleration 仍是預設值，實機與不同速度／場景需重新驗證，煞停距離也需另行量測。
 
 量測包絡可執行：
 

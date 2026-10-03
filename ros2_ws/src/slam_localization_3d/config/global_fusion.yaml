@@ -55,3 +55,16 @@ global_pose_adapter:
     # Fallback only when a correction carries no ICP covariance.
     covariance_xy: 0.25
     covariance_yaw: 0.09
+
+# Global-EKF side of slam_localization_3d lio_odometry (lio/twist). Used only
+# when the local_ekf inputs have no wheel odometry: global_ekf then propagates
+# with the scan-to-scan LIO velocity instead of /wheel/odom. These variances are
+# separate from the local lio/odom pose variances (position_variance,
+# yaw_variance in the robot profile) so covariance calibration of the local EKF
+# leaves the global EKF unchanged. Tuned, not calibrated: 2e-5 equals what
+# robot_localization derived from the former differential lio/odom input
+# (2 x 1e-4 pose variance x 0.1 s scan interval).
+lio_odometry:
+  ros__parameters:
+    twist_linear_variance: 2.0e-5
+    twist_angular_variance: 2.0e-5

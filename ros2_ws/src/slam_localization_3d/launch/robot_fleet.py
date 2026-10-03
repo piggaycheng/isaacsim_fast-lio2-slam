@@ -43,19 +43,23 @@ LOCAL_ODOMETRY_INPUTS = ("wheel", "imu", "lio")
 DEFAULT_LOCAL_ODOMETRY_INPUTS = ("wheel", "imu")
 ROBOT_LOCALIZATION_INPUT_PATTERN = re.compile(r"^(odom|imu|pose|twist)\d+(_.*)?$")
 # Without wheel odometry (so LIO is a local input) the global EKF propagates
-# between PCD corrections with the LIO pose increments instead. The local EKF's
-# velocity would only be inferred from the same lagged poses.
-GLOBAL_EKF_LIO_ODOMETRY = {
-    "odom0": "/lio/odom",
-    "odom0_config": [True, True, False, False, False, True,
-                     False, False, False, False, False, False,
-                     False, False, False],
-    "odom0_differential": True,
-    "odom0_queue_size": 10,
-    "odom0_nodelay": True,
+# between PCD corrections with the scan-to-scan LIO velocity (lio_odometry's
+# lio/twist) instead. Its covariance has its own parameters (global_fusion.yaml
+# lio_odometry twist_*_variance), so calibrating the local LIO pose variance
+# never changes the global EKF.
+GLOBAL_EKF_LIO_TWIST = {
+    "twist0": "/lio/twist",
+    "twist0_config": [False, False, False, False, False, False,
+                      True, True, False, False, False, True,
+                      False, False, False],
+    "twist0_queue_size": 10,
+    "twist0_nodelay": True,
 }
 # Vehicle-specific parameters needed only when a local_ekf input is selected.
 INPUT_OVERRIDES = {
+    "lio": {
+        "lio_odometry": ("position_variance", "yaw_variance"),
+    },
     "wheel": {
         "wheel_encoder_odometry": (
             "left_joint", "right_joint", "wheel_radius", "wheel_base",
@@ -281,13 +285,13 @@ def with_local_ekf_inputs(config, templates, inputs, node="local_ekf"):
 
 
 def with_global_ekf_inputs(config, inputs, node="global_ekf"):
-    """Without wheel odometry, propagate the global EKF with the LIO pose increments."""
+    """Without wheel odometry, propagate the global EKF with the LIO velocity."""
     if "wheel" in inputs:
         return config
     result = copy.deepcopy(config)
     parameters = {key: value for key, value in result[node]["ros__parameters"].items()
-                  if not re.match(r"^odom\d+(_.*)?$", key)}
-    parameters.update(copy.deepcopy(GLOBAL_EKF_LIO_ODOMETRY))
+                  if not re.match(r"^(odom|twist)\d+(_.*)?$", key)}
+    parameters.update(copy.deepcopy(GLOBAL_EKF_LIO_TWIST))
     result[node]["ros__parameters"] = parameters
     return result
 

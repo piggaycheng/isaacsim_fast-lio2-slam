@@ -26,6 +26,17 @@ The estimates only use quantities available on a real vehicle:
   information (LIO error is not isotropic, so it is not subtracted).
 * LIO body->base offset: the wheels define the turning centre, so a wrong
   offset shows up as translation during turns; it is refitted and reported.
+* LIO per-scan pose noise (lio_odometry position_variance / yaw_variance):
+  local_ekf fuses every FAST-LIO pose as an absolute odom pose, so it needs the
+  white (scan-to-scan) part of the LIO error; slow drift is shared by the odom
+  frame and needs no covariance. With white per-scan noise var, the increment
+  between consecutive scans has variance 2 var:
+      Var(LIO yaw increment - IMU yaw)           >= 2 yaw_variance
+      Var(LIO lateral increment - wheel lateral) >= 2 position_variance
+  (the wheels cannot slide sideways). The gyro and wheel error over one scan
+  stays in, so both are upper bounds. Consecutive-scan differences at
+  standstill are a second estimate; the larger of the two is recommended. The global EKF's LIO velocity input
+  (lio/twist, global_fusion.yaml) has separate parameters and is not changed.
 * PCD error per axis: PCD registration error is slowly varying (map and
   scan geometry), so consecutive poses share most of it. Relative motion
   between PCD poses 10-60 s apart is compared with FAST-LIO relative motion;
@@ -466,6 +477,130 @@ def wheel_systematic(windows):
 
 
 
+def mean_square(values, iterations=4, outlier_ratio=25.0):
+    """Mean of squares without gross failures (same rule as weighted_nnls)."""
+    squares = np.asarray(values, dtype=float) ** 2
+    keep = np.ones(len(squares), dtype=bool)
+    mean = float(np.mean(squares)) if len(squares) else float("nan")
+    for _ in range(iterations):
+        if keep.sum() < 2:
+            break
+        mean = float(np.mean(squares[keep]))
+        keep = squares <= outlier_ratio * max(mean, 1e-18)
+    return mean, int(keep.sum())
+
+
+def lio_scan_pairs(data, max_gap):
+    """Indices (i, i + 1) of consecutive LIO scans covered by wheel and IMU data."""
+    t = data.lio.t
+    first = np.arange(len(t) - 1)
+    gap = np.diff(t)
+    start = max(data.wheel.t[0], data.imu_t[0])
+    end = min(data.wheel.t[-1], data.imu_t[-1])
+    if data.truth is not None:
+        start, end = max(start, data.truth.t[0]), min(end, data.truth.t[-1])
+    keep = (gap > 0) & (gap <= max_gap) & (t[first] >= start) & (t[first + 1] <= end)
+    return first[keep]
+
+
+def scan_increments(trajectory, t0, t1):
+    """Relative motion (dx, dy, dyaw) from t0 to t1 for arrays of times."""
+    x0, y0, yaw0 = trajectory.at(t0)
+    x1, y1, yaw1 = trajectory.at(t1)
+    c, s = np.cos(yaw0), np.sin(yaw0)
+    dx, dy = x1 - x0, y1 - y0
+    return np.column_stack((c * dx + s * dy, -s * dx + c * dy, yaw1 - yaw0))
+
+
+def lio_scan_noise(data, segments, imu_bias, max_gap=0.3):
+    """Per-scan white LIO pose variance (x/y, yaw) from motion and standstill scan increments.
+
+    Motion: lateral increments against the wheels (no side slip) and yaw increments
+    against the bias-corrected gyro. Both references' own error over one scan stays in,
+    so these are upper bounds; the gyro error is not white (it grows faster than the
+    interval), so the 2 s window rate cannot be scaled down and subtracted.
+    """
+    first = lio_scan_pairs(data, max_gap)
+    if len(first) < 50:
+        return None
+    t0, t1 = data.lio.t[first], data.lio.t[first + 1]
+    lio = scan_increments(data.lio, t0, t1)
+    wheel = scan_increments(data.wheel, t0, t1)
+    imu_yaw = integrate(data.imu_t, data.imu_wz - imu_bias)
+    yaw_difference = lio[:, 2] - (imu_yaw(t1) - imu_yaw(t0))
+    yaw_square, yaw_used = mean_square(yaw_difference)
+    lateral_square, lateral_used = mean_square(lio[:, 1] - wheel[:, 1])
+    along_square, _ = mean_square(lio[:, 0] - wheel[:, 0])
+
+    # Standstill: consecutive-scan differences are 2 sigma^2 of white per-scan noise;
+    # spread about the segment mean would also count slow wander that local_ekf need not see.
+    position_differences, yaw_differences = [], []
+    for start, end in segments:
+        mask = (data.lio.t >= start) & (data.lio.t <= end)
+        if mask.sum() < 5:
+            continue
+        gap_ok = np.diff(data.lio.t[mask]) <= max_gap
+        position_differences += [np.diff(data.lio.x[mask])[gap_ok],
+                                 np.diff(data.lio.y[mask])[gap_ok]]
+        yaw_differences.append(np.diff(data.lio.yaw[mask])[gap_ok])
+    static_count = sum(len(values) for values in yaw_differences)
+    static = (
+        (mean_square(np.concatenate(position_differences))[0] / 2,
+         mean_square(np.concatenate(yaw_differences))[0] / 2)
+        if static_count >= 20 else (float("nan"), float("nan"))
+    )
+    return {
+        "pairs": len(first),
+        "scan_interval": float(np.median(t1 - t0)),
+        "motion_position_variance": lateral_square / 2,
+        "motion_yaw_variance": yaw_square / 2,
+        "along_track_bound": along_square / 2,
+        "yaw_rows_used": yaw_used,
+        "lateral_rows_used": lateral_used,
+        "static_position_variance": static[0],
+        "static_yaw_variance": static[1],
+        "static_scans": static_count,
+    }
+
+
+def recommend_lio_variances(lio, min_position, min_yaw):
+    def larger(*values):
+        return max(value for value in values if np.isfinite(value))
+
+    return (
+        larger(lio["motion_position_variance"], lio["static_position_variance"], min_position),
+        larger(lio["motion_yaw_variance"], lio["static_yaw_variance"], min_yaw),
+    )
+
+
+def lio_ground_truth_validation(data, position_variance, yaw_variance, lags=(1, 3, 10)):
+    """Ratio of true scan-increment error to 2 x recommended variance, per lag in scans.
+
+    Lag 1 is what local_ekf sees between scans; larger lags show how much of the
+    LIO error is correlated (drift) rather than white.
+    """
+    report = {}
+    t = data.lio.t
+    for lag in lags:
+        first = lio_scan_pairs(data, max_gap=0.3)
+        first = first[first + lag < len(t)]
+        first = first[(t[first + lag] - t[first]) <= 0.3 * lag]
+        first = first[t[first + lag] <= data.truth.t[-1]]
+        if len(first) < 20:
+            continue
+        t0, t1 = t[first], t[first + lag]
+        error = scan_increments(data.lio, t0, t1) - scan_increments(data.truth, t0, t1)
+        error[:, 2] = wrap(error[:, 2])
+        report[lag] = (
+            float(np.mean(error[:, :2] ** 2) / (2 * position_variance)),
+            float(np.mean(error[:, 2] ** 2) / (2 * yaw_variance)),
+            float(np.mean(error[:, :2] ** 2) / 2),
+            float(np.mean(error[:, 2] ** 2) / 2),
+        )
+    return report
+
+
+
 PCD_LAG_BINS = ((0.0, 5.0), (5.0, 15.0), (15.0, 40.0), (40.0, 80.0), (80.0, 160.0))
 
 
@@ -772,8 +907,9 @@ def parse_args(argv):
     parser.add_argument("--ground-truth", action="store_true",
                         help="Validate against simulator truth (Isaac Sim only)")
     parser.add_argument("--truth-topic", default="/isaac/ground_truth/odom")
-    parser.add_argument("--truth-yaw-offset", type=float, default=math.pi,
-                        help="base_link yaw minus the truth frame yaw (Nova Carter: pi; Carter v1: 0)")
+    parser.add_argument("--truth-yaw-offset", type=float, default=0.0,
+                        help="base_link yaw minus the truth frame yaw (0 when base_link +x is "
+                             "the USD +x, as for Nova Carter and Carter v1)")
     parser.add_argument("--robot-type", default=DEFAULT_ROBOT_TYPE,
                         help="Robot profile (config/robots/<type>.yaml) whose overrides were "
                              "active while recording and that --apply updates")
@@ -784,6 +920,10 @@ def parse_args(argv):
     parser.add_argument("--min-imu-variance", type=float, default=1e-6,
                         help="Minimum gyro measurement variance (rad^2/s^2); use an independently "
                              "measured floor when motion/filter errors defeat the noise fit")
+    parser.add_argument("--min-lio-position-variance", type=float, default=1e-8,
+                        help="Minimum per-scan LIO position variance (m^2)")
+    parser.add_argument("--min-lio-yaw-variance", type=float, default=1e-8,
+                        help="Minimum per-scan LIO yaw variance (rad^2)")
     args = parser.parse_args(argv)
     if args.lio_body_to_base is None:
         args.lio_body_to_base = profile_body_to_base(robot_profile_path(args))
@@ -818,6 +958,12 @@ def main(argv=None):
         args.min_imu_variance,
     )
     systematic_yaw, distance_scale = wheel_systematic(windows)
+    # Production body->base offset: it is what lio_odometry publishes to local_ekf.
+    lio = lio_scan_noise(data, segments, imu_bias)
+    lio_variances = (
+        recommend_lio_variances(lio, args.min_lio_position_variance, args.min_lio_yaw_variance)
+        if lio is not None else None
+    )
     profile = robot_profile_path(args)
 
     def fusion_parameter(key, default):
@@ -866,6 +1012,24 @@ def main(argv=None):
     drift = "n/a" if math.isnan(systematic_yaw) else f"{systematic_yaw:+.4f} rad/m"
     print(f"  wheel systematic yaw drift {drift}, distance scale vs LIO "
           f"{distance_scale:.4f} (calibrate wheel radius/base if far from 0 / 1)")
+    if lio is None:
+        print("  LIO per-scan noise: not enough consecutive scans", file=sys.stderr)
+    else:
+        interval = lio["scan_interval"]
+        print(f"  LIO per-scan pose noise ({lio['pairs']} scan pairs, {interval:.3f} s):")
+        print(f"    motion upper bounds: lateral vs wheel {lio['motion_position_variance']:.3e} m^2 "
+              f"(along-track {lio['along_track_bound']:.3e}), "
+              f"yaw vs IMU {lio['motion_yaw_variance']:.3e} rad^2")
+        print(f"    standstill ({lio['static_scans']} scans): "
+              f"{lio['static_position_variance']:.3e} m^2, {lio['static_yaw_variance']:.3e} rad^2")
+        print(f"    -> position_variance {lio_variances[0]:.3e} "
+              f"(sigma {math.sqrt(lio_variances[0]) * 1000:.2f} mm), yaw_variance "
+              f"{lio_variances[1]:.3e} (sigma {math.degrees(math.sqrt(lio_variances[1])):.4f} deg)")
+        windows_per_scan = args.window / interval
+        print(f"    LIO yaw over a {args.window:.1f} s window: hat {noise['lio_yaw_variance_per_window']:.3e}"
+              f" vs white per-scan noise {2 * lio_variances[1]:.3e} rad^2 "
+              f"(much larger means correlated LIO drift, which local_ekf cannot see; "
+              f"{windows_per_scan:.0f} scans/window)")
     if pcd is None:
         print("  PCD: not enough pose pairs", file=sys.stderr)
     else:
@@ -898,6 +1062,19 @@ def main(argv=None):
             passed &= result != "FAIL"
             print(f"  {name:15s} ratio {values[0]:6.2f} {result}; "
                   f"truth-fitted {', '.join(f'{v:.3e}' for v in values[1:])}")
+        if lio_variances is not None:
+            lio_report = lio_ground_truth_validation(data, *lio_variances)
+            for lag, (position_ratio, yaw_ratio, position_true, yaw_true) in lio_report.items():
+                if lag == 1:
+                    for name, ratio in (("lio_position", position_ratio), ("lio_yaw", yaw_ratio)):
+                        # Recommendations include wheel/gyro error over one scan.
+                        result = verdict(ratio, upper_bound=True)
+                        passed &= result != "FAIL"
+                        print(f"  {name:15s} ratio {ratio:6.2f} {result} (per scan); truth-fitted "
+                              f"{position_true if name == 'lio_position' else yaw_true:.3e}")
+                else:
+                    print(f"  lio over {lag:2d} scans  ratio xy {position_ratio:6.2f}, "
+                          f"yaw {yaw_ratio:6.2f} (information: correlated drift)")
         report = validation["pcd"]
         label = "recommended" if pcd_predicted is not None else "published"
         for axis, ratio in zip(("x", "y", "yaw"), report["ratio"]):
@@ -919,6 +1096,12 @@ def main(argv=None):
     for key, value in wheel.items():
         print(f"    {key}: {value:.6g}")
     print(f"nav_imu_adapter:\n  ros__parameters:\n    angular_velocity_variance: {imu_variance:.6g}")
+    lio_parameters = None
+    if lio_variances is not None:
+        lio_parameters = {"position_variance": lio_variances[0], "yaw_variance": lio_variances[1]}
+        print("lio_odometry:\n  ros__parameters:")
+        for key, value in lio_parameters.items():
+            print(f"    {key}: {value:.6g}")
     pcd_parameters = None
     if pcd_floors is not None:
         pcd_parameters = {
@@ -937,6 +1120,8 @@ def main(argv=None):
             ("wheel_encoder_odometry", wheel),
             ("nav_imu_adapter", {"angular_velocity_variance": imu_variance}),
         ]
+        if lio_parameters is not None:
+            updates.append(("lio_odometry", lio_parameters))
         if pcd_parameters is not None:
             updates.append(("global_pose_adapter", pcd_parameters))
         for section, values in updates:

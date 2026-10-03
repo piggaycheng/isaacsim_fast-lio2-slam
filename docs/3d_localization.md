@@ -144,8 +144,8 @@ local_odometry:
 
 - LIO 位姿以絕對值融合：FAST-LIO 本身的里程計連續，PCD 重定位只改 `map -> odom`。若改成 differential（只取增量當速度），兩次掃描之間陀螺儀偏差與時間差會累積成 yaw 漂移且無法修正。
 - LIO 時間戳約落後 0.1 秒，選 `lio` 時 `local_ekf` 啟用 `smooth_lagged_data` 回溯重播，並以 `predict_to_current_time` 依 `frequency` 發布到目前時間的 TF。
-- FAST-LIO 不提供 covariance，`lio_odometry` 使用 `local_odometry.yaml` 的固定 `position_variance`／`yaw_variance`。
-- 沒有 `wheel` 時，`global_ekf` 改以 `/lio/odom` 的位姿增量（differential）預測，取代 `/wheel/odom`。
+- FAST-LIO 不提供 covariance。`/lio/odom` 的 `position_variance`／`yaw_variance` 是每次掃描的白雜訊，只寫在車種 profile 的 `lio_odometry`（由 [`covariance_calibration.py`](covariance_calibration.md) 校正）；選了 `lio` 而 profile 缺這兩項時，啟動會報錯。
+- 沒有 `wheel` 時，`global_ekf` 改以 `lio_odometry` 另外發布的 `/lio/twist`（相鄰兩次掃描的 `base_link` 速度）預測，取代 `/wheel/odom`。它的 `twist_linear_variance`／`twist_angular_variance` 是 `global_fusion.yaml` 的另一組參數，不隨上述 local 校正改變。global 的 LIO 與 PCD 來自同一顆 LiDAR，誤差相關，這組值是手動調整而非量測。
 - `nav_imu_adapter` 一律啟動（`global_ekf` 也融合 IMU）。2D 模式（AMCL）不支援 `lio`。
 - 只有 `wheel` 時才需要 profile 的輪速參數；covariance 校正工具（[`covariance_calibration.md`](covariance_calibration.md)）仍需輪速資料。
 
