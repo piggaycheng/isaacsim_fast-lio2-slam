@@ -70,6 +70,8 @@ stop_ros_containers() {
     down_pids+=("$!")
   done
   for pid in "${down_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+  # RTSP server of standalone.py; Isaac Sim may exit without stopping it.
+  docker rm -f isaacsim-fastlio2-rtsp >/dev/null 2>&1 || true
   for pid in "${ros_log_pids[@]}"; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
 }

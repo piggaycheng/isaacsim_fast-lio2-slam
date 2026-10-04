@@ -34,6 +34,11 @@ OVERVIEW_CAMERA_MARGIN = 5.0
 OVERVIEW_CAMERA_MIN_HEIGHT = 12.0
 # The Office ceiling is at about 3 m; clip everything above this height.
 OVERVIEW_CAMERA_CUT_HEIGHT = 2.6
+# Fixed Office ceiling cameras: Office world XY (m), looking at CEILING_CAMERA_TARGET.
+CEILING_CAMERA_POSITIONS = [(-14.0, 10.0), (4.5, 10.0), (4.5, -10.0), (-14.0, -10.0)]
+CEILING_CAMERA_HEIGHT = 2.9
+CEILING_CAMERA_TARGET = (0.0, 0.0, 0.0)
+CEILING_CAMERA_ROOT = "/World/CeilingCameras"
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
     "--/app/renderer/skipGpuRenderProducts=false",
@@ -69,6 +74,16 @@ parser.add_argument(
     help="Add a static collision box on the floor at world X,Y (m, same as the Office "
     "map frame). Default size 0.6,0.6,1.0 m. Repeat for more boxes.",
 )
+parser.add_argument(
+    "--camera", action="append", default=[], metavar="[ROBOT=]CAMERA",
+    help="Publish a camera as ROS 2 sensor_msgs/Image on [/ROBOT]/camera/NAME/image_raw. "
+    "CAMERA is a prim path relative to the robot prim (e.g. chassis_link/sensors/front_owl/camera) "
+    "or an absolute prim path; ROBOT defaults to the first robot. Repeat for more cameras.",
+)
+parser.add_argument(
+    "--camera-resolution", default="640x480", metavar="WxH", help="Camera image size.",
+)
+parser.add_argument("--camera-fps", type=float, default=15.0, help="Camera publish rate (max 60).")
 args, _ = parser.parse_known_args()
 if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
@@ -133,6 +148,34 @@ def parse_box(text: str) -> list[float]:
 
 
 boxes = [parse_box(text) for text in args.box]
+
+
+def parse_cameras() -> list[tuple[SimRobot, str, str]]:
+    """Return (robot, camera prim path, stream name) per --camera."""
+    try:
+        width, height = (int(value) for value in args.camera_resolution.lower().split("x"))
+        if width <= 0 or height <= 0 or not 0 < args.camera_fps <= 60:
+            raise ValueError
+    except ValueError:
+        parser.error("--camera-resolution expects WxH and --camera-fps must be in (0, 60]")
+    cameras = []
+    for text in args.camera:
+        robot_name, _, camera = text.rpartition("=")
+        sim_robot = next((r for r in robots if r.name == robot_name), None) if robot_name else robots[0]
+        if sim_robot is None or not camera:
+            parser.error(f"--camera {text!r} does not name a spawned robot and a camera")
+        if camera.startswith("/"):
+            path, stream = camera, camera.strip("/").replace("/", "_")
+        else:
+            path = f"{sim_robot.prim_path}/{camera}"
+            stream = camera.removeprefix("chassis_link/sensors/").replace("/", "_")
+        cameras.append((sim_robot, path, stream))
+    if len({(r.name, stream) for r, _, stream in cameras}) != len(cameras):
+        parser.error("--camera streams must be unique per robot")
+    return cameras
+
+
+camera_streams = parse_cameras()
 lidar_motion_compensation_state = args.lidar_motion_compensation.upper()
 
 simulation_app = SimulationApp(
@@ -167,6 +210,7 @@ simulation_app.update()
 
 pressed_keys = set()
 input_interface = None
+camera_runtime = []
 keyboard = None
 keyboard_subscription = None
 if args.ros_cmd_vel:
@@ -358,6 +402,74 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
     )
 
 
+def create_camera_enable_subscriber(graph_path: str, enable_topic: str) -> str:
+    """Subscribe to a std_msgs/Bool topic; returns the attribute holding the last value."""
+    keys = og.Controller.Keys
+    og.Controller.edit(
+        {"graph_path": graph_path, "evaluator_name": "execution"},
+        {
+            keys.CREATE_NODES: [
+                ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
+                ("SubscribeEnable", "isaacsim.ros2.bridge.ROS2Subscriber"),
+            ],
+            keys.CONNECT: [("OnPlaybackTick.outputs:tick", "SubscribeEnable.inputs:execIn")],
+            keys.SET_VALUES: [
+                ("SubscribeEnable.inputs:messagePackage", "std_msgs"),
+                ("SubscribeEnable.inputs:messageName", "Bool"),
+                ("SubscribeEnable.inputs:topicName", enable_topic),
+                ("SubscribeEnable.inputs:queueSize", 1),
+            ],
+        },
+    )
+    return f"{graph_path}/SubscribeEnable.outputs:data"
+
+
+class CameraStream:
+    """A camera that renders and streams over RTSP only while its enable topic is true."""
+
+    def __init__(self, graph_path: str, camera_prim: str, rtsp_path: str, enable_topic: str):
+        from rtsp_stream import RtspCamera
+
+        width, height = (int(value) for value in args.camera_resolution.lower().split("x"))
+        self.enable_topic = enable_topic
+        self.rtsp = RtspCamera(camera_prim, rtsp_path, width, height, args.camera_fps)
+        self.enabled_attribute = og.Controller.attribute(
+            create_camera_enable_subscriber(graph_path, enable_topic)
+        )
+
+    def update(self) -> None:
+        self.rtsp.set_enabled(bool(self.enabled_attribute.get()))
+        self.rtsp.update()
+
+
+def create_camera_stream(graph_path: str, camera_prim: str, name: str, prefix: str = "") -> CameraStream:
+    stream = CameraStream(
+        graph_path, camera_prim, f"{prefix.strip('/')}/{name}".strip("/"), f"{prefix}/{name}/enable",
+    )
+    print(
+        f"Camera {camera_prim}: off; publish true to {stream.enable_topic} to stream "
+        f"rtsp://<host>:8554/{stream.rtsp.path}"
+    )
+    return stream
+
+
+def create_ceiling_cameras(stage) -> list[CameraStream]:
+    """Add the fixed ceiling cameras, all off until /ceiling_cams/NAME/enable is true."""
+    target = Gf.Vec3d(*CEILING_CAMERA_TARGET)
+    streams = []
+    for index, (x, y) in enumerate(CEILING_CAMERA_POSITIONS, start=1):
+        name = f"ceiling_cam_{index}"
+        path = f"{CEILING_CAMERA_ROOT}/{name}"
+        camera = UsdGeom.Camera.Define(stage, path)
+        eye = Gf.Vec3d(x, y, CEILING_CAMERA_HEIGHT)
+        look_at = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0.0, 0.0, 1.0))
+        UsdGeom.Xformable(camera).AddTransformOp().Set(look_at.GetInverse())
+        streams.append(
+            create_camera_stream(f"/World/Camera_ROS2_{name}", path, name, "/ceiling_cams")
+        )
+    return streams
+
+
 def create_ros2_drive_subscriber(sim_robot: SimRobot) -> None:
     graph_path = sim_robot.graph_path("/World/CarterROS2Drive")
     keys = og.Controller.Keys
@@ -526,6 +638,14 @@ try:
         create_ros2_publishers(sim_robot, publish_clock=index == 0)
         if sim_robot.receiver is not None:
             create_ros2_drive_subscriber(sim_robot)
+    camera_runtime += create_ceiling_cameras(stage)
+    for camera_robot, camera_path, stream in camera_streams:
+        if not stage.GetPrimAtPath(camera_path).IsValid():
+            raise RuntimeError(f"Camera prim was not found: {camera_path}")
+        camera_runtime.append(create_camera_stream(
+            camera_robot.graph_path(f"/World/Camera_ROS2_{stream}"), camera_path,
+            f"camera/{stream}", f"/{camera_robot.name}" if camera_robot.name else "",
+        ))
     command_receiver = lead.receiver
 
     validation_scene = None
@@ -635,7 +755,14 @@ try:
             if overview_camera is not None:
                 overview_camera.update()
             simulation_app.update()
+            for camera_stream in camera_runtime:
+                camera_stream.update()
 finally:
+    from rtsp_stream import shutdown_server
+
+    for camera_stream in camera_runtime:
+        camera_stream.rtsp.close()
+    shutdown_server()
     for sim_robot in robots:
         if sim_robot.receiver is not None and sim_robot.robot is not None:
             sim_robot.drive(0.0, 0.0)
