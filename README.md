@@ -129,4 +129,5 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 - [3D 定位架構](docs/3d_localization.md)
 - [導航、安全限制與驗證](docs/nav.md)
 - [多車架構、車種設定與部署](docs/multi_robot.md)
+- [對外連線：MQTT 與 RTSP 相機](docs/online.md)
 - [更換車輛後的協方差校正](docs/covariance_calibration.md)
