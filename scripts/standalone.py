@@ -34,11 +34,10 @@ OVERVIEW_CAMERA_MARGIN = 5.0
 OVERVIEW_CAMERA_MIN_HEIGHT = 12.0
 # The Office ceiling is at about 3 m; clip everything above this height.
 OVERVIEW_CAMERA_CUT_HEIGHT = 2.6
-# Fixed Office top-down cameras over the four quadrants: Office world XY (m). They sit above
-# the ceiling; the near plane (height - CEILING_CAMERA_CUT_HEIGHT) clips the ceiling away.
-CEILING_CAMERA_POSITIONS = [(-9.4, 5.0), (-0.1, 5.0), (-0.1, -5.0), (-9.4, -5.0)]
-CEILING_CAMERA_HEIGHT = 12.0
-CEILING_CAMERA_CUT_HEIGHT = 2.6
+# Fixed Office ceiling cameras: Office world XY (m), looking at CEILING_CAMERA_TARGET.
+CEILING_CAMERA_POSITIONS = [(-14.0, 10.0), (4.5, 10.0), (4.5, -10.0), (-14.0, -10.0)]
+CEILING_CAMERA_HEIGHT = 2.9
+CEILING_CAMERA_TARGET = (0.0, 0.0, 0.0)
 CEILING_CAMERA_ROOT = "/World/CeilingCameras"
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
@@ -445,17 +444,16 @@ def create_camera_stream(camera_prim: str, name: str, prefix: str = "") -> Camer
 
 
 def create_ceiling_cameras(stage) -> list[CameraStream]:
-    """Add the fixed top-down cameras, all off until MQTT enables them."""
+    """Add the fixed ceiling cameras, all off until MQTT enables them."""
+    target = Gf.Vec3d(*CEILING_CAMERA_TARGET)
     streams = []
     for index, (x, y) in enumerate(CEILING_CAMERA_POSITIONS, start=1):
         name = f"ceiling_cam_{index}"
         path = f"{CEILING_CAMERA_ROOT}/{name}"
         camera = UsdGeom.Camera.Define(stage, path)
         eye = Gf.Vec3d(x, y, CEILING_CAMERA_HEIGHT)
-        look_at = Gf.Matrix4d().SetLookAt(eye, Gf.Vec3d(x, y, 0.0), Gf.Vec3d(0.0, 1.0, 0.0))
+        look_at = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0.0, 0.0, 1.0))
         UsdGeom.Xformable(camera).AddTransformOp().Set(look_at.GetInverse())
-        camera.GetClippingRangeAttr().Set(
-            Gf.Vec2f(CEILING_CAMERA_HEIGHT - CEILING_CAMERA_CUT_HEIGHT, 1000.0))
         streams.append(create_camera_stream(path, name, "ceiling_cams"))
     return streams
 
