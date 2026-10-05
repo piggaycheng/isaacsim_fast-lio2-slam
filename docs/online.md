@@ -6,6 +6,8 @@
 ./scripts/run_multi_nav_online.sh --help
 ```
 
+Isaac Sim 預設以 headless 執行（無 GUI），要顯示 GUI 請加 `--gui`。
+
 ## 相機影像（RTSP）
 
 相機以 RTSP（H.264）串流，**不發 ROS image topic**，開關也只走 **MQTT**，因此只有 `./scripts/run_multi_nav_online.sh` 提供相機（`run_multi_nav.sh` 不含相機與 MQTT）。所有相機預設關閉：收到 `true` 才建立 render product 並開始串流，收到 `false` 即停止並釋放，關閉時不耗算圖資源。

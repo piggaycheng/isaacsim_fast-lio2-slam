@@ -4,7 +4,7 @@ set -eo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 map_pgm="$project_dir/maps/office/map_2d.yaml"
 map_pcd="$project_dir/maps/office/map.pcd"
-headless=false
+headless=true
 rviz=true
 auto_initial_pose=true
 robots=()
@@ -41,7 +41,8 @@ Options:
       --manual-initial-pose
                        Set each initial pose in RViz instead of the spawn pose.
       --no-rviz        Do not start the fleet RViz.
-      --headless       Run Isaac Sim without its GUI.
+      --headless       Run Isaac Sim without its GUI (default).
+      --gui            Run Isaac Sim with its GUI.
       --camera [ROBOT=]CAMERA
                        Offer a robot camera as an RTSP stream
                        rtsp://HOST:8554/[ROBOT/]camera/NAME, rendered only after
@@ -88,6 +89,7 @@ while (($# > 0)); do
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
     --headless) headless=true; shift ;;
+    --gui) headless=false; shift ;;
     --ceiling-cameras) camera_args+=("$1"); shift ;;
     --camera|--camera-resolution|--camera-fps|--mqtt-host|--mqtt-port|--mqtt-topic|--mqtt-username|--mqtt-password)
       value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
