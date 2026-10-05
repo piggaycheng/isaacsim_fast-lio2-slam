@@ -39,8 +39,17 @@ Options:
                        true is published to its [/ROBOT]/camera/NAME/enable topic.
                        CAMERA is a prim path relative to the robot (e.g.
                        chassis_link/sensors/front_owl/camera). Repeatable.
+      --ceiling-cameras
+                       Also offer the 4 fixed ceiling cameras as RTSP streams
+                       (rtsp://HOST:8554/ceiling_cams/NAME, enable via /ceiling_cams/NAME/enable).
       --camera-resolution WxH, --camera-fps N
                        Camera image size (default 640x480) and rate (default 15).
+      --mqtt-host HOST [--mqtt-port N] [--mqtt-topic T]
+      [--mqtt-username U --mqtt-password P]
+                       Publish the camera list (names, RTSP paths, enable topics,
+                       enabled state) as a retained JSON message to MQTT topic T
+                       (default slam/cameras, port 1883). Updated only when a
+                       camera is enabled/disabled; {"online":false} on shutdown.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
   -h, --help           Show this help.
@@ -71,7 +80,9 @@ while (($# > 0)); do
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
     --headless) headless=true; shift ;;
-    --camera|--camera-resolution|--camera-fps) value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
+    --ceiling-cameras) camera_args+=("$1"); shift ;;
+    --camera|--camera-resolution|--camera-fps|--mqtt-host|--mqtt-port|--mqtt-topic|--mqtt-username|--mqtt-password)
+      value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;

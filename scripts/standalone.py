@@ -84,6 +84,18 @@ parser.add_argument(
     "--camera-resolution", default="640x480", metavar="WxH", help="Camera image size.",
 )
 parser.add_argument("--camera-fps", type=float, default=15.0, help="Camera publish rate (max 60).")
+parser.add_argument(
+    "--ceiling-cameras", action="store_true",
+    help="Offer the fixed Office ceiling cameras as RTSP streams (off until enabled).",
+)
+parser.add_argument(
+    "--mqtt-host", default=None,
+    help="MQTT broker host. If set, the camera list is published as a retained JSON message.",
+)
+parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port.")
+parser.add_argument("--mqtt-topic", default="slam/cameras", help="Topic of the retained camera list.")
+parser.add_argument("--mqtt-username", default=None, help="MQTT username.")
+parser.add_argument("--mqtt-password", default=None, help="MQTT password.")
 args, _ = parser.parse_known_args()
 if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
@@ -211,6 +223,7 @@ simulation_app.update()
 pressed_keys = set()
 input_interface = None
 camera_runtime = []
+camera_catalog = None
 keyboard = None
 keyboard_subscription = None
 if args.ros_cmd_vel:
@@ -638,7 +651,8 @@ try:
         create_ros2_publishers(sim_robot, publish_clock=index == 0)
         if sim_robot.receiver is not None:
             create_ros2_drive_subscriber(sim_robot)
-    camera_runtime += create_ceiling_cameras(stage)
+    if args.ceiling_cameras:
+        camera_runtime += create_ceiling_cameras(stage)
     for camera_robot, camera_path, stream in camera_streams:
         if not stage.GetPrimAtPath(camera_path).IsValid():
             raise RuntimeError(f"Camera prim was not found: {camera_path}")
@@ -646,6 +660,27 @@ try:
             camera_robot.graph_path(f"/World/Camera_ROS2_{stream}"), camera_path,
             f"camera/{stream}", f"/{camera_robot.name}" if camera_robot.name else "",
         ))
+    if args.mqtt_host:
+        from mqtt_cameras import CameraCatalog
+        from rtsp_stream import RTSP_PORT
+
+        camera_catalog = CameraCatalog(
+            args.mqtt_host, args.mqtt_port, args.mqtt_topic, RTSP_PORT,
+            args.mqtt_username, args.mqtt_password,
+        )
+        camera_catalog.set_cameras([
+            {
+                "name": stream.rtsp.path,
+                "rtsp_path": stream.rtsp.path,
+                "enable_topic": stream.enable_topic,
+                "width": stream.rtsp.width,
+                "height": stream.rtsp.height,
+                "fps": stream.rtsp.fps,
+                "enabled": False,
+            }
+            for stream in camera_runtime
+        ])
+        print(f"Camera list retained on MQTT topic {args.mqtt_topic} at {args.mqtt_host}:{args.mqtt_port}")
     command_receiver = lead.receiver
 
     validation_scene = None
@@ -757,9 +792,15 @@ try:
             simulation_app.update()
             for camera_stream in camera_runtime:
                 camera_stream.update()
+            if camera_catalog is not None:
+                camera_catalog.update_state(
+                    {stream.rtsp.path: stream.rtsp.active for stream in camera_runtime}
+                )
 finally:
     from rtsp_stream import shutdown_server
 
+    if camera_catalog is not None:
+        camera_catalog.close()
     for camera_stream in camera_runtime:
         camera_stream.rtsp.close()
     shutdown_server()
