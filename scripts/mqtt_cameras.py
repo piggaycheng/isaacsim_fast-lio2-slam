@@ -1,11 +1,13 @@
-"""Publish the camera list to an MQTT broker as one retained message.
+"""Publish the camera list to an MQTT broker and take camera on/off commands from it.
 
-New subscribers get the latest list immediately; the list is republished only when
-a camera is enabled or disabled. A last-will message marks it offline if the
-simulation dies without a clean shutdown.
+Commands: publish `true` or `false` to `<topic>/<camera name>/enable`.
+The list is one retained message on `<topic>`, so new subscribers get it immediately.
+It is republished only when a camera is enabled or disabled. A last-will message
+marks it offline if the simulation dies without a clean shutdown.
 """
 
 import json
+import os
 import threading
 
 import paho.mqtt.client as mqtt
@@ -17,12 +19,14 @@ class CameraCatalog:
         self.topic = topic
         self.rtsp_port = rtsp_port
         self.cameras: list[dict] = []
+        self.requested: dict[str, bool] = {}
         self.lock = threading.Lock()
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="isaacsim-cameras")
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"isaacsim-cameras-{os.getpid()}")
         if username:
             self.client.username_pw_set(username, password)
         self.client.will_set(topic, self._payload(False, []), qos=1, retain=True)
         self.client.on_connect = self._on_connect
+        self.client.on_message = self._on_message
         self.client.reconnect_delay_set(min_delay=1, max_delay=10)
         # connect_async never blocks the simulation if the broker is down.
         self.client.connect_async(host, port, keepalive=30)
@@ -32,7 +36,27 @@ class CameraCatalog:
         return json.dumps({"online": online, "rtsp_port": self.rtsp_port, "cameras": cameras})
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        client.subscribe(f"{self.topic}/#", qos=1)
         self._publish()
+
+    def _on_message(self, client, userdata, message) -> None:
+        prefix = f"{self.topic}/"
+        if not (message.topic.startswith(prefix) and message.topic.endswith("/enable")):
+            return
+        name = message.topic[len(prefix):-len("/enable")]
+        text = message.payload.decode(errors="ignore").strip().lower()
+        if text in ("true", "1", "on"):
+            value = True
+        elif text in ("false", "0", "off"):
+            value = False
+        else:
+            return
+        with self.lock:
+            self.requested[name] = value
+
+    def is_requested(self, name: str) -> bool:
+        with self.lock:
+            return self.requested.get(name, False)
 
     def _publish(self) -> None:
         with self.lock:

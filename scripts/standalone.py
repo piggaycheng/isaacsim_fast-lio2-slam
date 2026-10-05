@@ -76,7 +76,8 @@ parser.add_argument(
 )
 parser.add_argument(
     "--camera", action="append", default=[], metavar="[ROBOT=]CAMERA",
-    help="Publish a camera as ROS 2 sensor_msgs/Image on [/ROBOT]/camera/NAME/image_raw. "
+    help="Offer a camera as an RTSP stream (needs --mqtt-host; off until true is published "
+    "to <mqtt-topic>/[ROBOT/]camera/NAME/enable). "
     "CAMERA is a prim path relative to the robot prim (e.g. chassis_link/sensors/front_owl/camera) "
     "or an absolute prim path; ROBOT defaults to the first robot. Repeat for more cameras.",
 )
@@ -90,13 +91,16 @@ parser.add_argument(
 )
 parser.add_argument(
     "--mqtt-host", default=None,
-    help="MQTT broker host. If set, the camera list is published as a retained JSON message.",
+    help="MQTT broker host. Publishes the camera list as a retained JSON message and "
+    "switches cameras on/off via <mqtt-topic>/<camera>/enable.",
 )
 parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port.")
 parser.add_argument("--mqtt-topic", default="slam/cameras", help="Topic of the retained camera list.")
 parser.add_argument("--mqtt-username", default=None, help="MQTT username.")
 parser.add_argument("--mqtt-password", default=None, help="MQTT password.")
 args, _ = parser.parse_known_args()
+if (args.camera or args.ceiling_cameras) and not args.mqtt_host:
+    parser.error("--camera and --ceiling-cameras are switched over MQTT and require --mqtt-host")
 if args.ros_cmd_vel and (args.auto_jog or args.test):
     parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
 if args.validation_control_dir and not args.ros_cmd_vel:
@@ -415,59 +419,32 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
     )
 
 
-def create_camera_enable_subscriber(graph_path: str, enable_topic: str) -> str:
-    """Subscribe to a std_msgs/Bool topic; returns the attribute holding the last value."""
-    keys = og.Controller.Keys
-    og.Controller.edit(
-        {"graph_path": graph_path, "evaluator_name": "execution"},
-        {
-            keys.CREATE_NODES: [
-                ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
-                ("SubscribeEnable", "isaacsim.ros2.bridge.ROS2Subscriber"),
-            ],
-            keys.CONNECT: [("OnPlaybackTick.outputs:tick", "SubscribeEnable.inputs:execIn")],
-            keys.SET_VALUES: [
-                ("SubscribeEnable.inputs:messagePackage", "std_msgs"),
-                ("SubscribeEnable.inputs:messageName", "Bool"),
-                ("SubscribeEnable.inputs:topicName", enable_topic),
-                ("SubscribeEnable.inputs:queueSize", 1),
-            ],
-        },
-    )
-    return f"{graph_path}/SubscribeEnable.outputs:data"
-
-
 class CameraStream:
-    """A camera that renders and streams over RTSP only while its enable topic is true."""
+    """A camera that renders and streams over RTSP only while enabled over MQTT."""
 
-    def __init__(self, graph_path: str, camera_prim: str, rtsp_path: str, enable_topic: str):
+    def __init__(self, camera_prim: str, rtsp_path: str):
         from rtsp_stream import RtspCamera
 
         width, height = (int(value) for value in args.camera_resolution.lower().split("x"))
-        self.enable_topic = enable_topic
         self.rtsp = RtspCamera(camera_prim, rtsp_path, width, height, args.camera_fps)
-        self.enabled_attribute = og.Controller.attribute(
-            create_camera_enable_subscriber(graph_path, enable_topic)
-        )
+        self.enable_topic = f"{args.mqtt_topic}/{rtsp_path}/enable"
 
     def update(self) -> None:
-        self.rtsp.set_enabled(bool(self.enabled_attribute.get()))
+        self.rtsp.set_enabled(camera_catalog.is_requested(self.rtsp.path))
         self.rtsp.update()
 
 
-def create_camera_stream(graph_path: str, camera_prim: str, name: str, prefix: str = "") -> CameraStream:
-    stream = CameraStream(
-        graph_path, camera_prim, f"{prefix.strip('/')}/{name}".strip("/"), f"{prefix}/{name}/enable",
-    )
+def create_camera_stream(camera_prim: str, name: str, prefix: str = "") -> CameraStream:
+    stream = CameraStream(camera_prim, f"{prefix.strip('/')}/{name}".strip("/"))
     print(
-        f"Camera {camera_prim}: off; publish true to {stream.enable_topic} to stream "
+        f"Camera {camera_prim}: off; publish true to MQTT {stream.enable_topic} to stream "
         f"rtsp://<host>:8554/{stream.rtsp.path}"
     )
     return stream
 
 
 def create_ceiling_cameras(stage) -> list[CameraStream]:
-    """Add the fixed ceiling cameras, all off until /ceiling_cams/NAME/enable is true."""
+    """Add the fixed ceiling cameras, all off until MQTT enables them."""
     target = Gf.Vec3d(*CEILING_CAMERA_TARGET)
     streams = []
     for index, (x, y) in enumerate(CEILING_CAMERA_POSITIONS, start=1):
@@ -477,9 +454,7 @@ def create_ceiling_cameras(stage) -> list[CameraStream]:
         eye = Gf.Vec3d(x, y, CEILING_CAMERA_HEIGHT)
         look_at = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0.0, 0.0, 1.0))
         UsdGeom.Xformable(camera).AddTransformOp().Set(look_at.GetInverse())
-        streams.append(
-            create_camera_stream(f"/World/Camera_ROS2_{name}", path, name, "/ceiling_cams")
-        )
+        streams.append(create_camera_stream(path, name, "ceiling_cams"))
     return streams
 
 
@@ -657,8 +632,7 @@ try:
         if not stage.GetPrimAtPath(camera_path).IsValid():
             raise RuntimeError(f"Camera prim was not found: {camera_path}")
         camera_runtime.append(create_camera_stream(
-            camera_robot.graph_path(f"/World/Camera_ROS2_{stream}"), camera_path,
-            f"camera/{stream}", f"/{camera_robot.name}" if camera_robot.name else "",
+            camera_path, f"camera/{stream}", camera_robot.name or "",
         ))
     if args.mqtt_host:
         from mqtt_cameras import CameraCatalog

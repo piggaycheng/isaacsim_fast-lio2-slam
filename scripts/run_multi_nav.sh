@@ -9,7 +9,6 @@ rviz=true
 auto_initial_pose=true
 robots=()
 boxes=()
-camera_args=()
 
 usage() {
   cat <<'EOF'
@@ -33,23 +32,6 @@ Options:
                        Set each initial pose in RViz instead of the spawn pose.
       --no-rviz        Do not start the fleet RViz.
       --headless       Run Isaac Sim without its GUI.
-      --camera [ROBOT=]CAMERA
-                       Offer a robot camera as an RTSP stream
-                       rtsp://HOST:8554/[ROBOT/]camera/NAME, rendered only after
-                       true is published to its [/ROBOT]/camera/NAME/enable topic.
-                       CAMERA is a prim path relative to the robot (e.g.
-                       chassis_link/sensors/front_owl/camera). Repeatable.
-      --ceiling-cameras
-                       Also offer the 4 fixed ceiling cameras as RTSP streams
-                       (rtsp://HOST:8554/ceiling_cams/NAME, enable via /ceiling_cams/NAME/enable).
-      --camera-resolution WxH, --camera-fps N
-                       Camera image size (default 640x480) and rate (default 15).
-      --mqtt-host HOST [--mqtt-port N] [--mqtt-topic T]
-      [--mqtt-username U --mqtt-password P]
-                       Publish the camera list (names, RTSP paths, enable topics,
-                       enabled state) as a retained JSON message to MQTT topic T
-                       (default slam/cameras, port 1883). Updated only when a
-                       camera is enabled/disabled; {"online":false} on shutdown.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
   -h, --help           Show this help.
@@ -80,9 +62,6 @@ while (($# > 0)); do
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
     --headless) headless=true; shift ;;
-    --ceiling-cameras) camera_args+=("$1"); shift ;;
-    --camera|--camera-resolution|--camera-fps|--mqtt-host|--mqtt-port|--mqtt-topic|--mqtt-username|--mqtt-password)
-      value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -147,5 +126,5 @@ fi
 isaac_args=(--ros-cmd-vel --lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 for robot in "${robots[@]}"; do isaac_args+=(--robot "$robot"); done
-isaac_args+=("${boxes[@]}" "${camera_args[@]}")
+isaac_args+=("${boxes[@]}")
 "$project_dir/scripts/standalone.py" "${isaac_args[@]}"
