@@ -17,6 +17,10 @@ simulation:
   wheel_base: 0.538410
   forward_sign: 1.0
   spawn_height: 0.26
+  # Pan/tilt gimbal with a camera (revolute joints, no visual geometry), optional.
+  # translation: pan/tilt axis origin relative to chassis_link (m); the camera sits 3 cm
+  # ahead of it. Pan is unlimited; speeds in deg/s, limits in deg.
+  gimbal: {translation: [0.17, 0.0, 0.50], max_speed_deg_s: 90.0, tilt_limits_deg: [-90.0, 90.0]}
 
 # base_link -> LiDAR / co-located FAST-LIO body (m, rad).
 sensor_frames:

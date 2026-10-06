@@ -83,6 +83,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 | :-- | :-- |
 | `simulation.*` | Isaac 資產、articulation／LiDAR／IMU prim、輪子關節、輪徑、輪距、前進方向、生成高度 |
 | `simulation.lidar_translation`（選用） | 覆寫 LiDAR prim 相對 parent 的位置（m） |
+| `simulation.gimbal`（選用） | 在車上生成雲台與相機（無外觀，純 transform）：`translation`（pan/tilt 軸原點，相對 `chassis_link`，m）、`max_speed_deg_s`（預設 90）、`tilt_limits_deg`（預設 ±90）。pan（`gimbal_pan_joint`，繞 z）與 tilt（`gimbal_tilt_joint`，繞 y，正值向下）是位置驅動的 revolute joint，pan 無限位可 360° 旋轉。相機 prim 為 `<車 prim>/gimbal_tilt/camera`（朝車頭 +x）。ROS：目前姿態包含在 `/[ROBOT/]isaac/joint_states`（rad，pan 為連續累積角）；目標姿態發布 `sensor_msgs/JointState` 到 `/[ROBOT/]gimbal/joint_command`（`name` 為 `gimbal_pan_joint`／`gimbal_tilt_joint`，可只給其中一個，`position` 為 rad）。pan 以最短路徑、限速轉到目標，tilt 夾在限位內。指定 `--mqtt-host` 時相機自動加入 MQTT 列表（`camera/gimbal`，預設關閉、收到 enable 才串流） |
 | `local_odometry.inputs` | `local_ekf` 融合的來源（`wheel`、`imu`、`lio`），見 [`3d_localization.md`](3d_localization.md#local-ekf-輸入選擇)；非輪式機器人用 `[lio, imu]` |
 | `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF；`imu_link` 即 FAST-LIO body 的安裝位置 |
 | `parameter_overrides` | 深度合併到各參數檔：輪速里程計與 covariance、IMU／PCD covariance、costmap footprint、self filter、collision monitor 與 adaptive surround 區域、速度與加速度上限 |

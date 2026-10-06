@@ -5,7 +5,9 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
 from cmd_vel_control import receiver_for
+from gimbal_control import PAN_JOINT, TILT_JOINT, controller_for
 from isaacsim import SimulationApp
 
 sys.path.insert(
@@ -21,6 +23,13 @@ SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
 # Prim of the single robot when no --robot is given (root ROS namespace).
 CARTER_PRIM_PATH = "/World/Carter"
 GROUND_TRUTH_TOPIC = "/isaac/ground_truth/odom"
+# Gimbal bodies are tiny; drive gains are per degree and keep the joints well damped.
+GIMBAL_BODY_MASS = 0.05
+GIMBAL_BODY_INERTIA = 1e-3
+GIMBAL_STIFFNESS = 0.05
+GIMBAL_DAMPING = 0.0015
+GIMBAL_MAX_TORQUE = 2.0
+GIMBAL_CAMERA_OFFSET = 0.03
 BOX_PRIM_ROOT = "/World/TestBoxes"
 DEFAULT_BOX_SIZE = [0.6, 0.6, 1.0]
 LINEAR_JOG_SPEED = 0.75
@@ -127,6 +136,8 @@ class SimRobot:
         self.robot = None
         self.controller = None
         self.receiver = None
+        self.gimbal_dofs = None
+        self.gimbal_time = 0.0
 
     def topic(self, name: str) -> str:
         return namespaced_topic(self.name, name)
@@ -186,6 +197,12 @@ def parse_cameras() -> list[tuple[SimRobot, str, str]]:
             path = f"{sim_robot.prim_path}/{camera}"
             stream = camera.removeprefix("chassis_link/sensors/").replace("/", "_")
         cameras.append((sim_robot, path, stream))
+    if args.mqtt_host:
+        # Every gimbal camera is offered (off until enabled) as camera/gimbal.
+        for sim_robot in robots:
+            path = f"{sim_robot.prim_path}/gimbal_tilt/camera"
+            if "gimbal" in sim_robot.simulation and all(c[1] != path for c in cameras):
+                cameras.append((sim_robot, path, "gimbal"))
     if len({(r.name, stream) for r, _, stream in cameras}) != len(cameras):
         parser.error("--camera streams must be unique per robot")
     return cameras
@@ -422,9 +439,10 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
 class CameraStream:
     """A camera that renders and streams over RTSP only while enabled over MQTT."""
 
-    def __init__(self, camera_prim: str, rtsp_path: str):
+    def __init__(self, camera_prim: str, rtsp_path: str, display_name: str):
         from rtsp_stream import RtspCamera
 
+        self.display_name = display_name
         width, height = (int(value) for value in args.camera_resolution.lower().split("x"))
         self.rtsp = RtspCamera(camera_prim, rtsp_path, width, height, args.camera_fps)
         self.enable_topic = f"{args.mqtt_topic}/{rtsp_path}/enable"
@@ -434,8 +452,12 @@ class CameraStream:
         self.rtsp.update()
 
 
-def create_camera_stream(camera_prim: str, name: str, prefix: str = "") -> CameraStream:
-    stream = CameraStream(camera_prim, f"{prefix.strip('/')}/{name}".strip("/"))
+def create_camera_stream(
+    camera_prim: str, name: str, prefix: str = "", display_name: str = "",
+) -> CameraStream:
+    stream = CameraStream(
+        camera_prim, f"{prefix.strip('/')}/{name}".strip("/"), display_name or name,
+    )
     print(
         f"Camera {camera_prim}: off; publish true to MQTT {stream.enable_topic} to stream "
         f"rtsp://<host>:8554/{stream.rtsp.path}"
@@ -454,7 +476,9 @@ def create_ceiling_cameras(stage) -> list[CameraStream]:
         eye = Gf.Vec3d(x, y, CEILING_CAMERA_HEIGHT)
         look_at = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0.0, 0.0, 1.0))
         UsdGeom.Xformable(camera).AddTransformOp().Set(look_at.GetInverse())
-        streams.append(create_camera_stream(path, name, "ceiling_cams"))
+        streams.append(create_camera_stream(
+            path, name, "ceiling_cams", f"Ceiling camera {index}",
+        ))
     return streams
 
 
@@ -496,6 +520,140 @@ def create_ros2_drive_subscriber(sim_robot: SimRobot) -> None:
         "    try:\n"
         f"        receiver_for({sim_robot.name!r}).accept_twist(\n"
         "            db.inputs.linearVelocity, db.inputs.angularVelocity)\n"
+        "    except ValueError as error:\n"
+        "        db.log_error(str(error))\n"
+    )
+
+
+def add_gimbal(sim_robot: SimRobot, stage) -> None:
+    """Add a massless pan/tilt gimbal carrying a camera (forward = +x) to the chassis, if the profile has one.
+
+    Two collision-free rigid bodies (pan about z, tilt about y) hang off the chassis on
+    position-driven revolute joints, so they join the robot's articulation; the camera
+    is a plain transform child of the tilt body. There is no visual geometry.
+    """
+    gimbal = sim_robot.simulation.get("gimbal")
+    if gimbal is None:
+        return
+    pan_path, tilt_path = f"{sim_robot.prim_path}/gimbal_pan", f"{sim_robot.prim_path}/gimbal_tilt"
+    if stage.GetPrimAtPath(pan_path).IsValid():
+        raise RuntimeError(f"{sim_robot.label} gimbal prim already exists: {pan_path}")
+    translation = Gf.Vec3d(*gimbal["translation"])
+    chassis = stage.GetPrimAtPath(sim_robot.articulation_path)
+    time_code = Usd.TimeCode.Default()
+    chassis_world = UsdGeom.Xformable(chassis).ComputeLocalToWorldTransform(time_code)
+    parent_world = UsdGeom.Xformable(chassis.GetParent()).ComputeLocalToWorldTransform(time_code)
+    # Bodies start exactly at the joint frame so the joints are satisfied at t=0.
+    local = Gf.Matrix4d().SetTranslate(translation) * chassis_world * parent_world.GetInverse()
+
+    def body(path):
+        prim = UsdGeom.Xform.Define(stage, path)
+        prim.AddTransformOp().Set(local)
+        UsdPhysics.RigidBodyAPI.Apply(prim.GetPrim())
+        mass = UsdPhysics.MassAPI.Apply(prim.GetPrim())
+        mass.CreateMassAttr(GIMBAL_BODY_MASS)
+        mass.CreateDiagonalInertiaAttr(Gf.Vec3f(GIMBAL_BODY_INERTIA))
+        mass.CreateCenterOfMassAttr(Gf.Vec3f(0.0))
+
+    def revolute(path, parent_path, child_path, axis, local_pos, limits=None):
+        joint = UsdPhysics.RevoluteJoint.Define(stage, path)
+        joint.CreateBody0Rel().SetTargets([parent_path])
+        joint.CreateBody1Rel().SetTargets([child_path])
+        joint.CreateLocalPos0Attr(Gf.Vec3f(*local_pos))
+        joint.CreateLocalRot0Attr(Gf.Quatf(1.0))
+        joint.CreateLocalPos1Attr(Gf.Vec3f(0.0))
+        joint.CreateLocalRot1Attr(Gf.Quatf(1.0))
+        joint.CreateAxisAttr(axis)
+        if limits is not None:
+            joint.CreateLowerLimitAttr(math.degrees(limits[0]))
+            joint.CreateUpperLimitAttr(math.degrees(limits[1]))
+        drive = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "angular")
+        drive.CreateTypeAttr("force")
+        drive.CreateStiffnessAttr(GIMBAL_STIFFNESS)
+        drive.CreateDampingAttr(GIMBAL_DAMPING)
+        drive.CreateMaxForceAttr(GIMBAL_MAX_TORQUE)
+        drive.CreateTargetPositionAttr(0.0)
+
+    body(pan_path)
+    body(tilt_path)
+    tilt_limits = [math.radians(v) for v in gimbal.get("tilt_limits_deg", (-90.0, 90.0))]
+    # Pan has no limits: it turns continuously.
+    revolute(f"{sim_robot.prim_path}/{PAN_JOINT}", sim_robot.articulation_path, pan_path, "Z", translation)
+    revolute(f"{sim_robot.prim_path}/{TILT_JOINT}", pan_path, tilt_path, "Y", (0.0, 0.0, 0.0), tilt_limits)
+    camera = UsdGeom.Camera.Define(stage, f"{tilt_path}/camera")
+    camera_xform = UsdGeom.Xformable(camera)
+    camera_xform.AddTranslateOp().Set(Gf.Vec3d(GIMBAL_CAMERA_OFFSET, 0.0, 0.0))
+    # USD cameras look along -Z with +Y up; rotate so they look along +x with +z up.
+    camera_xform.AddRotateXYZOp().Set(Gf.Vec3f(90.0, 0.0, -90.0))
+    camera.CreateClippingRangeAttr(Gf.Vec2f(0.05, 100.0))
+    controller = controller_for(sim_robot.name)
+    controller.max_speed = math.radians(float(gimbal.get("max_speed_deg_s", 90.0)))
+    controller.tilt_limits = tuple(tilt_limits)
+    print(f"Added {sim_robot.label} gimbal camera {tilt_path}/camera")
+
+
+def update_gimbal(sim_robot: SimRobot, now: float) -> None:
+    """Drive the gimbal joints toward the latest ROS goal; call once per simulation step."""
+    if "gimbal" not in sim_robot.simulation:
+        return
+    controller = controller_for(sim_robot.name)
+    if sim_robot.gimbal_dofs is None:
+        sim_robot.gimbal_dofs = sim_robot.robot.get_dof_indices([PAN_JOINT, TILT_JOINT]).numpy().tolist()
+        pan, tilt = sim_robot.robot.get_dof_positions(dof_indices=sim_robot.gimbal_dofs).numpy()[0]
+        controller.reset(float(pan), float(tilt))
+        sim_robot.gimbal_time = now
+        return
+    targets = controller.step(now - sim_robot.gimbal_time)
+    sim_robot.gimbal_time = now
+    sim_robot.robot.set_dof_position_targets(
+        np.array([targets], dtype=np.float32), dof_indices=sim_robot.gimbal_dofs,
+    )
+
+
+def update_gimbals() -> None:
+    now = SimulationManager.get_simulation_time()
+    for sim_robot in robots:
+        update_gimbal(sim_robot, now)
+
+
+def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
+    """Subscribe to <robot>/gimbal/joint_command (sensor_msgs/JointState, rad)."""
+    graph_path = sim_robot.graph_path("/World/Gimbal_ROS2")
+    keys = og.Controller.Keys
+    _, nodes, _, _ = og.Controller.edit(
+        {"graph_path": graph_path, "evaluator_name": "execution"},
+        {
+            keys.CREATE_NODES: [
+                ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
+                ("SubscribeJointState", "isaacsim.ros2.bridge.ROS2SubscribeJointState"),
+                ("RecordCommand", "omni.graph.scriptnode.ScriptNode"),
+            ],
+            keys.CONNECT: [
+                ("OnPlaybackTick.outputs:tick", "SubscribeJointState.inputs:execIn"),
+                ("SubscribeJointState.outputs:execOut", "RecordCommand.inputs:execIn"),
+            ],
+            keys.SET_VALUES: [
+                ("SubscribeJointState.inputs:topicName", sim_robot.topic("/gimbal/joint_command")),
+                ("SubscribeJointState.inputs:queueSize", 1),
+            ],
+        },
+    )
+    script_node = nodes[2]
+    for name, base_type in (("jointNames", og.BaseDataType.TOKEN), ("positionCommand", og.BaseDataType.DOUBLE)):
+        og.Controller.create_attribute(
+            script_node, f"inputs:{name}", og.Type(base_type, 1, 1),
+            og.AttributePortType.ATTRIBUTE_PORT_TYPE_INPUT,
+        )
+        og.Controller.connect(
+            og.Controller.attribute(f"{graph_path}/SubscribeJointState.outputs:{name}"),
+            script_node.get_attribute(f"inputs:{name}"),
+        )
+    script_node.get_attribute("inputs:script").set(
+        "def compute(db):\n"
+        "    from gimbal_control import controller_for\n"
+        "    try:\n"
+        f"        controller_for({sim_robot.name!r}).accept_joint_state(\n"
+        "            [str(n) for n in db.inputs.jointNames], list(db.inputs.positionCommand))\n"
         "    except ValueError as error:\n"
         "        db.log_error(str(error))\n"
     )
@@ -552,6 +710,7 @@ def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
         outputChannelId=True,
     )
     sim_robot.lidar_sensor = lidar_sensor
+    add_gimbal(sim_robot, stage)
 
     IMU.create(
         sim_robot.imu_path,
@@ -626,6 +785,8 @@ try:
         create_ros2_publishers(sim_robot, publish_clock=index == 0)
         if sim_robot.receiver is not None:
             create_ros2_drive_subscriber(sim_robot)
+        if "gimbal" in sim_robot.simulation:
+            create_gimbal_subscriber(sim_robot)
     if args.ceiling_cameras:
         camera_runtime += create_ceiling_cameras(stage)
     for camera_robot, camera_path, stream in camera_streams:
@@ -633,6 +794,7 @@ try:
             raise RuntimeError(f"Camera prim was not found: {camera_path}")
         camera_runtime.append(create_camera_stream(
             camera_path, f"camera/{stream}", camera_robot.name or "",
+            f"{camera_robot.label} {stream}",
         ))
     if args.mqtt_host:
         from mqtt_cameras import CameraCatalog
@@ -645,6 +807,7 @@ try:
         camera_catalog.set_cameras([
             {
                 "name": stream.rtsp.path,
+                "display_name": stream.display_name,
                 "rtsp_path": stream.rtsp.path,
                 "enable_topic": stream.enable_topic,
                 "width": stream.rtsp.width,
@@ -715,6 +878,7 @@ try:
         start_position = lead.robot.get_world_poses()[0].numpy()[0]
         for _ in range(60):
             lead.drive(0.2, 0.0)
+            update_gimbals()
             if follow_camera_path is not None:
                 update_follow_camera(lead, follow_camera_path)
             if overview_camera is not None:
@@ -759,6 +923,7 @@ try:
                     # Keyboard drives the followed (first) robot only.
                     command = get_jog_command() if sim_robot is lead else (0.0, 0.0)
                 sim_robot.drive(*command)
+            update_gimbals()
             if follow_camera_path is not None:
                 update_follow_camera(lead, follow_camera_path)
             if overview_camera is not None:
