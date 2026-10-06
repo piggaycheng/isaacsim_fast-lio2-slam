@@ -608,6 +608,25 @@ def update_gimbal(sim_robot: SimRobot, now: float) -> None:
     sim_robot.robot.set_dof_position_targets(
         np.array([targets], dtype=np.float32), dof_indices=sim_robot.gimbal_dofs,
     )
+    publish_gimbal_state(sim_robot, now)
+
+
+def publish_gimbal_state(sim_robot: SimRobot, now: float) -> None:
+    """Feed the measured gimbal joints to the <robot>/gimbal/joint_states publisher."""
+    dofs = sim_robot.gimbal_dofs
+    positions = sim_robot.robot.get_dof_positions(dof_indices=dofs).numpy()[0]
+    velocities = sim_robot.robot.get_dof_velocities(dof_indices=dofs).numpy()[0]
+    node = f"{sim_robot.graph_path('/World/Gimbal_ROS2')}/PublishGimbalState"
+    for name, value in (
+        ("jointNames", [PAN_JOINT, TILT_JOINT]),
+        ("jointPositions", [float(v) for v in positions]),
+        ("jointVelocities", [float(v) for v in velocities]),
+        ("jointEfforts", [0.0, 0.0]),
+        ("jointDofTypes", [1, 1]),
+        ("stageMetersPerUnit", 1.0),
+        ("timeStamp", now),
+    ):
+        og.Controller.set(og.Controller.attribute(f"{node}.inputs:{name}"), value)
 
 
 def update_gimbals() -> None:
@@ -617,7 +636,7 @@ def update_gimbals() -> None:
 
 
 def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
-    """Subscribe to <robot>/gimbal/joint_command (sensor_msgs/JointState, rad)."""
+    """Subscribe to <robot>/gimbal/joint_command and publish <robot>/gimbal/joint_states (JointState, rad)."""
     graph_path = sim_robot.graph_path("/World/Gimbal_ROS2")
     keys = og.Controller.Keys
     _, nodes, _, _ = og.Controller.edit(
@@ -627,14 +646,17 @@ def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
                 ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
                 ("SubscribeJointState", "isaacsim.ros2.bridge.ROS2SubscribeJointState"),
                 ("RecordCommand", "omni.graph.scriptnode.ScriptNode"),
+                ("PublishGimbalState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
             ],
             keys.CONNECT: [
                 ("OnPlaybackTick.outputs:tick", "SubscribeJointState.inputs:execIn"),
                 ("SubscribeJointState.outputs:execOut", "RecordCommand.inputs:execIn"),
+                ("OnPlaybackTick.outputs:tick", "PublishGimbalState.inputs:execIn"),
             ],
             keys.SET_VALUES: [
                 ("SubscribeJointState.inputs:topicName", sim_robot.topic("/gimbal/joint_command")),
                 ("SubscribeJointState.inputs:queueSize", 1),
+                ("PublishGimbalState.inputs:topicName", sim_robot.topic("/gimbal/joint_states")),
             ],
         },
     )
