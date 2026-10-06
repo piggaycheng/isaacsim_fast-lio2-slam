@@ -30,7 +30,7 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 
 ## 車輛位置轉發（MQTT，給 fleet adapter）
 
-`run_multi_nav_online.sh` 會在每台車的容器內啟動 `mqtt_pose_bridge.py`（namespace `/NAME`），把 `/NAME/odometry/global`（`map` 座標）轉成 MQTT，讓外部 fleet adapter 不必使用 ROS：
+`run_multi_nav_online.sh` 會在每台車的容器內啟動 `slam_fleet_bridge` 套件的 `fleet_bridge_node.py`（namespace `/NAME`）。每台車只用**一條** MQTT 連線，同時負責位置轉發與下方的任務指令，讓外部 fleet adapter 不必使用 ROS。位置部分把 `/NAME/odometry/global`（`map` 座標）轉成 MQTT：
 
 | Topic | 內容 |
 | :-- | :-- |
@@ -41,4 +41,20 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - `stamp` 是模擬時間（秒），`yaw` 單位為 rad。
 - 容器 image 需含 `paho-mqtt`：更新後先 `docker compose build ros`，再 `docker compose run --rm ros build`。
 - 單獨使用：`ros2 launch slam_localization_3d robot.launch.py ... mqtt_host:=HOST`（`mqtt_host` 為空時不啟動）。
-- 目前只轉發位置；下達目標、取消與狀態回報尚未實作。
+
+## 車端任務 Behavior Tree（py_trees）
+
+同一個 `fleet_bridge_node.py` 會把 fleet adapter 的指令交給 py_trees 依序執行（`robot.launch.py` 參數 `task_bt:=false` 可關閉任務功能，只保留位置轉發）。指令由 `task_bt.py` 解析並建出 `Sequence`，各步驟依序執行，任一步失敗就中止。
+
+| Topic | 方向 | 內容 |
+| :-- | :-- | :-- |
+| `fleet/NAME/command` | adapter → 車（QoS 1，不要 retained） | `{"goal_id":"42","steps":[{"type":"navigate","x":1.0,"y":2.0,"yaw":0.0}]}` |
+| `fleet/NAME/cancel` | adapter → 車（QoS 1） | `{"goal_id":"42"}`（`goal_id` 可省略，取消目前任務） |
+| `fleet/NAME/task_state` | 車 → adapter（QoS 1，retained） | `{"robot","goal_id","status","step","steps","message"}` |
+
+- `status`：`running`、`succeeded`、`aborted`、`canceled`、`rejected`。狀態改變時立即發布，執行中每秒重發一次；完成後保留最後狀態直到下一個任務。
+- 步驟類型：目前只有 `navigate`（`x`、`y`、`yaw` 為 `map` 座標，`yaw` 預設 0，呼叫 `/NAME/navigate_to_pose`）。`rotate`、`take_photo` 已列入協定但尚未實作，含這些步驟的指令會被 `rejected`，不會執行任何步驟。
+- 同一個 `goal_id` 重複送出會被忽略；不同 `goal_id` 會先取消目前任務（含 Nav2 目標）再開始新任務。
+- `rejected`（格式錯誤或步驟尚未實作）只回報該指令，不影響執行中的任務，所以 adapter 要用 `goal_id` 對應狀態。
+- 新增步驟類型：在 `task_bt.py` 的 `STEP_TYPES` 加驗證函式，並在 `fleet_bridge_node.py` 的 step factory 建立對應 behaviour（`update()` 不可阻塞）。
+- 容器 image 需含 `py_trees`（Dockerfile 已加入）。

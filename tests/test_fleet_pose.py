@@ -7,12 +7,12 @@ from pathlib import Path
 from nav_msgs.msg import Odometry
 
 sys.path.insert(0, str(
-    Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/scripts"
+    Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_fleet_bridge/scripts"
 ))
-from mqtt_pose_bridge import pose_payload, yaw_from_quaternion  # noqa: E402
+from fleet_pose import pose_payload, yaw_from_quaternion  # noqa: E402
 
 
-class MqttPoseBridgeTest(unittest.TestCase):
+class FleetPoseTest(unittest.TestCase):
     def test_payload_has_planar_pose_and_yaw(self):
         message = Odometry()
         message.header.frame_id = "map"

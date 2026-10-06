@@ -46,8 +46,9 @@ def robot_stack(context, package):
     mqtt_host = LaunchConfiguration("mqtt_host").perform(context)
     if mqtt_host:
         actions.append(Node(
-            package="slam_localization_3d", executable="mqtt_pose_bridge.py",
-            namespace=spec.name, output="screen",
+            package="slam_fleet_bridge", executable="fleet_bridge_node.py",
+            # Absolute: global_fusion's pushed namespace would otherwise prefix it again.
+            namespace=f"/{spec.name}", output="screen",
             parameters=[{
                 "use_sim_time": True,
                 "mqtt_host": mqtt_host,
@@ -55,6 +56,7 @@ def robot_stack(context, package):
                 "mqtt_topic_prefix": LaunchConfiguration("mqtt_topic_prefix").perform(context),
                 "mqtt_username": LaunchConfiguration("mqtt_username").perform(context),
                 "mqtt_password": LaunchConfiguration("mqtt_password").perform(context),
+                "task_bt": LaunchConfiguration("task_bt").perform(context).lower() == "true",
             }],
         ))
     return actions
@@ -81,9 +83,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "mqtt_host", default_value="",
-            description="MQTT broker; when set, publishes the pose to <prefix>/<robot>/state",
+            description="MQTT broker; when set, starts the fleet bridge (pose and tasks over MQTT)",
         ),
         DeclareLaunchArgument("mqtt_port", default_value="1883"),
+        DeclareLaunchArgument(
+            "task_bt", default_value="true",
+            description="Accept py_trees task commands on fleet/NAME/command (needs mqtt_host)",
+        ),
         DeclareLaunchArgument("mqtt_topic_prefix", default_value="fleet"),
         DeclareLaunchArgument("mqtt_username", default_value=""),
         DeclareLaunchArgument("mqtt_password", default_value=""),

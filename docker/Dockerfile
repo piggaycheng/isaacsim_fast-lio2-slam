@@ -68,6 +68,10 @@ RUN pip3 install --no-cache-dir \
       'numpy==1.23.5' 'open3d==0.18.0' transforms3d pybase64 transformations 'paho-mqtt>=2.0' \
     && pip3 install --no-cache-dir --no-deps 'ros2-numpy==0.0.5'
 
+# Separate layer from the open3d install above so adding or bumping py_trees
+# does not re-download the large open3d wheel (that layer's cache stays valid).
+RUN pip3 install --no-cache-dir 'py_trees>=2.2,<3'
+
 COPY ros2_ws/src/Livox-SDK2 /tmp/Livox-SDK2
 RUN cmake -S /tmp/Livox-SDK2 -B /tmp/livox-build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /tmp/livox-build -j"$(nproc)" \

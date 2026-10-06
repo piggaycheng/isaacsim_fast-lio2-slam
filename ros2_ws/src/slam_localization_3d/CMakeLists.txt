@@ -54,7 +54,6 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/covariance_calibration.py
   scripts/covariance_drive.py
   scripts/fleet_relay.py
-  scripts/mqtt_pose_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES scripts/xyz_cloud.py scripts/costmap_zone_geometry.py DESTINATION lib/${PROJECT_NAME})
