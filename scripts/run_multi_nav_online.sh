@@ -95,6 +95,7 @@ while (($# > 0)); do
     --no-rviz) rviz=false; shift ;;
     --headless) headless=true; shift ;;
     --gui) headless=false; shift ;;
+    --no-ceiling-cameras) ceiling_cameras=false; shift ;;
     --ceiling-cameras) camera_args+=("$1"); shift ;;
     --mqtt-host) value "$@"; mqtt_host="$2"; shift 2 ;;
     --mqtt-port) value "$@"; mqtt_port="$2"; shift 2 ;;
