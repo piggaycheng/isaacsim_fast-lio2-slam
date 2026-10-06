@@ -27,3 +27,18 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - **MQTT**：`--mqtt-host`（預設 `$MQTT_HOST` 或 `localhost`）、`--mqtt-port`（1883）、`--mqtt-topic`（`slam/cameras`）、`--mqtt-username/--mqtt-password`。相機列表以 retained JSON 發布在 `slam/cameras`（名稱、`rtsp_path`、`enable` topic、解析度、fps、`enabled`），僅在相機開關變動時更新，結束時發布 `{"online":false}`（異常斷線由 LWT 發布）。Broker 可晚於模擬啟動，client 會在背景重連。需在 Isaac Sim Python 安裝 `paho-mqtt`。
 - `--camera-resolution WxH`（預設 640x480）、`--camera-fps N`（預設 15，最高 60）。
 - RTSP server 是 MediaMTX（Docker image `bluenviron/mediamtx:latest-ffmpeg`，host network，埠 8554），第一次開啟相機時才啟動；編碼用同一 image 內的 ffmpeg（`libx264`）。首次使用會自動下載 image。瀏覽器不能直接播 RTSP，網頁需另行轉成 WebRTC／HLS（MediaMTX 也提供，埠 8889／8888，但此專案未設定）。
+
+## 車輛位置轉發（MQTT，給 fleet adapter）
+
+`run_multi_nav_online.sh` 會在每台車的容器內啟動 `mqtt_pose_bridge.py`（namespace `/NAME`），把 `/NAME/odometry/global`（`map` 座標）轉成 MQTT，讓外部 fleet adapter 不必使用 ROS：
+
+| Topic | 內容 |
+| :-- | :-- |
+| `fleet/NAME/state` | JSON `{"robot","frame_id","stamp","x","y","yaw"}`，QoS 0，每秒最多 2 次 |
+| `fleet/NAME/online` | retained，連線後為 `true`，離線或異常斷線（LWT）為 `false` |
+
+- Topic 前綴用 `--fleet-topic-prefix P`（或 `$FLEET_TOPIC_PREFIX`）修改；broker 使用與相機相同的 `--mqtt-host/--mqtt-port/--mqtt-username/--mqtt-password`。
+- `stamp` 是模擬時間（秒），`yaw` 單位為 rad。
+- 容器 image 需含 `paho-mqtt`：更新後先 `docker compose build ros`，再 `docker compose run --rm ros build`。
+- 單獨使用：`ros2 launch slam_localization_3d robot.launch.py ... mqtt_host:=HOST`（`mqtt_host` 為空時不啟動）。
+- 目前只轉發位置；下達目標、取消與狀態回報尚未實作。

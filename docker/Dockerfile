@@ -65,7 +65,7 @@ RUN installed="$(dpkg-query -W -f='${Version}' ros-humble-tf2)"; \
     fi
 
 RUN pip3 install --no-cache-dir \
-      'numpy==1.23.5' 'open3d==0.18.0' transforms3d pybase64 transformations \
+      'numpy==1.23.5' 'open3d==0.18.0' transforms3d pybase64 transformations 'paho-mqtt>=2.0' \
     && pip3 install --no-cache-dir --no-deps 'ros2-numpy==0.0.5'
 
 COPY ros2_ws/src/Livox-SDK2 /tmp/Livox-SDK2

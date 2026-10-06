@@ -16,6 +16,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec  # noqa: E402
@@ -34,7 +35,7 @@ def robot_stack(context, package):
         namespace=spec.name, robot_type=spec.robot_type,
         **{f"initial_{axis}": str(value) for axis, value in zip(("x", "y", "z", "yaw"), pose)},
     )
-    return [
+    actions = [
         LogInfo(msg=f"Robot {spec.name}: type={spec.robot_type} "
                     f"spawn=({spec.x}, {spec.y}, {spec.yaw}) initial_pose={pose}"),
         IncludeLaunchDescription(
@@ -42,6 +43,21 @@ def robot_stack(context, package):
             launch_arguments=arguments.items(),
         ),
     ]
+    mqtt_host = LaunchConfiguration("mqtt_host").perform(context)
+    if mqtt_host:
+        actions.append(Node(
+            package="slam_localization_3d", executable="mqtt_pose_bridge.py",
+            namespace=spec.name, output="screen",
+            parameters=[{
+                "use_sim_time": True,
+                "mqtt_host": mqtt_host,
+                "mqtt_port": int(LaunchConfiguration("mqtt_port").perform(context)),
+                "mqtt_topic_prefix": LaunchConfiguration("mqtt_topic_prefix").perform(context),
+                "mqtt_username": LaunchConfiguration("mqtt_username").perform(context),
+                "mqtt_password": LaunchConfiguration("mqtt_password").perform(context),
+            }],
+        ))
+    return actions
 
 
 def generate_launch_description():
@@ -63,5 +79,13 @@ def generate_launch_description():
             "local_odometry_inputs", default_value="",
             description="Comma-separated local_ekf inputs (wheel, imu, lio); empty uses the profile",
         ),
+        DeclareLaunchArgument(
+            "mqtt_host", default_value="",
+            description="MQTT broker; when set, publishes the pose to <prefix>/<robot>/state",
+        ),
+        DeclareLaunchArgument("mqtt_port", default_value="1883"),
+        DeclareLaunchArgument("mqtt_topic_prefix", default_value="fleet"),
+        DeclareLaunchArgument("mqtt_username", default_value=""),
+        DeclareLaunchArgument("mqtt_password", default_value=""),
         OpaqueFunction(function=robot_stack, args=[package]),
     ])

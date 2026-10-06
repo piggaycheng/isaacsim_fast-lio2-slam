@@ -15,6 +15,7 @@ mqtt_port="${MQTT_PORT:-1883}"
 mqtt_topic="${MQTT_TOPIC:-slam/cameras}"
 mqtt_username=""
 mqtt_password=""
+fleet_topic_prefix="${FLEET_TOPIC_PREFIX:-fleet}"
 ceiling_cameras=true
 
 usage() {
@@ -59,6 +60,10 @@ Options:
                        topic (default $MQTT_TOPIC/slam/cameras). The camera list is a
                        retained JSON message on T, updated when a camera is switched;
                        {"online":false} on shutdown. The broker may start later.
+      --fleet-topic-prefix P
+                       Each robot publishes its map pose as JSON (x, y, yaw, stamp) to
+                       MQTT P/NAME/state (default $FLEET_TOPIC_PREFIX or fleet), plus
+                       retained P/NAME/online (false via last will) for a fleet adapter.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
   -h, --help           Show this help.
@@ -91,8 +96,14 @@ while (($# > 0)); do
     --headless) headless=true; shift ;;
     --gui) headless=false; shift ;;
     --ceiling-cameras) camera_args+=("$1"); shift ;;
-    --camera|--camera-resolution|--camera-fps|--mqtt-host|--mqtt-port|--mqtt-topic|--mqtt-username|--mqtt-password)
+    --mqtt-host) value "$@"; mqtt_host="$2"; shift 2 ;;
+    --mqtt-port) value "$@"; mqtt_port="$2"; shift 2 ;;
+    --mqtt-topic) value "$@"; mqtt_topic="$2"; shift 2 ;;
+    --mqtt-username) value "$@"; mqtt_username="$2"; shift 2 ;;
+    --mqtt-password) value "$@"; mqtt_password="$2"; shift 2 ;;
+    --camera|--camera-resolution|--camera-fps)
       value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
+    --fleet-topic-prefix) value "$@"; fleet_topic_prefix="$2"; shift 2 ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -140,6 +151,10 @@ fi
 require_ros_workspace
 set -u
 
+pose_mqtt_args=(mqtt_host:="$mqtt_host" mqtt_port:="$mqtt_port" mqtt_topic_prefix:="$fleet_topic_prefix")
+if [[ -n "$mqtt_username" ]]; then
+  pose_mqtt_args+=(mqtt_username:="$mqtt_username" mqtt_password:="$mqtt_password")
+fi
 names=()
 for robot in "${robots[@]}"; do
   name="${robot%%@*}"
@@ -147,7 +162,8 @@ for robot in "${robots[@]}"; do
   names+=("$name")
   start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
     map_pcd:="$(container_path "$map_pcd")" map_pgm:="$(container_path "$map_pgm")" \
-    rviz:=false auto_initial_pose:="$auto_initial_pose"
+    rviz:=false auto_initial_pose:="$auto_initial_pose" \
+    "${pose_mqtt_args[@]}"
 done
 if [[ "$rviz" == true ]]; then
   start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
