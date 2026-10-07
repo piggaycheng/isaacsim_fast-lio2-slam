@@ -10,7 +10,7 @@ from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from slam_sensor_control.action import GimbalMove
+from slam_sensor_control.action import GimbalMove, GimbalRotate
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ros2_ws/src/slam_sensor_control/scripts"))
@@ -55,7 +55,9 @@ class TestGimbalActionServer(unittest.TestCase):
         for node in (cls.server, cls.fake, cls.client_node):
             cls.executor.add_node(node)
         threading.Thread(target=cls.executor.spin, daemon=True).start()
+        cls.rotate_client = ActionClient(cls.client_node, GimbalRotate, "gimbal/rotate")
         assert cls.client.wait_for_server(timeout_sec=5.0)
+        assert cls.rotate_client.wait_for_server(timeout_sec=5.0)
 
     @classmethod
     def tearDownClass(cls):
@@ -67,6 +69,14 @@ class TestGimbalActionServer(unittest.TestCase):
     def send(self, pan, tilt):
         goal = GimbalMove.Goal(pan=pan, tilt=tilt)
         future = self.client.send_goal_async(goal)
+        deadline = time.monotonic() + 5.0
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return future.result()
+
+    def rotate(self, delta_pan, delta_tilt):
+        future = self.rotate_client.send_goal_async(
+            GimbalRotate.Goal(delta_pan=delta_pan, delta_tilt=delta_tilt))
         deadline = time.monotonic() + 5.0
         while not future.done() and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -115,6 +125,27 @@ class TestGimbalActionServer(unittest.TestCase):
         second = self.send(-1.0, 0.0)
         self.assertFalse(self.result_of(first).success)
         self.assertTrue(self.result_of(second).success)
+
+    def test_relative_rotation_adds_to_current_pose(self):
+        self.fake.goal = None
+        self.fake.pan, self.fake.tilt = math.radians(170.0), 0.1
+        time.sleep(0.2)
+        handle = self.rotate(math.radians(30.0), 0.2)
+        self.assertTrue(handle.accepted)
+        self.assertTrue(self.result_of(handle).success)
+        self.assertAlmostEqual(wrap_to_pi(self.fake.pan - math.radians(200.0)), 0.0, delta=math.radians(1.5))
+        self.assertAlmostEqual(self.fake.tilt, 0.3, delta=math.radians(1.5))
+
+    def test_relative_rotation_rejects_more_than_half_turn(self):
+        self.assertFalse(self.rotate(math.radians(200.0), 0.0).accepted)
+
+    def test_relative_rotation_aborts_beyond_tilt_limit(self):
+        self.fake.goal = None
+        self.fake.tilt = math.radians(80.0)
+        time.sleep(0.2)
+        result = self.result_of(self.rotate(0.0, math.radians(30.0)))
+        self.assertFalse(result.success)
+        self.assertIn("out of limits", result.message)
 
 
 if __name__ == "__main__":

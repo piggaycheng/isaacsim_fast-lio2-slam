@@ -1,0 +1,16 @@
+# Rotate the pan/tilt gimbal by a relative amount (rad) from its pose when the goal starts.
+# |delta_pan| must be <= pi; pan takes the shortest way round.
+float64 delta_pan
+float64 delta_tilt
+---
+# success is true only after the measured pose matches the computed target within tolerance.
+bool success
+string message
+float64 pan
+float64 tilt
+---
+# Current measured pose and remaining (wrapped) error.
+float64 pan
+float64 tilt
+float64 pan_error
+float64 tilt_error

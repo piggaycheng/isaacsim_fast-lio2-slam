@@ -17,7 +17,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from slam_sensor_control.action import GimbalMove
+from slam_sensor_control.action import GimbalMove, GimbalRotate
 
 PAN_JOINT = "gimbal_pan_joint"
 TILT_JOINT = "gimbal_tilt_joint"
@@ -51,6 +51,13 @@ class GimbalActionServer(Node):
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             callback_group=ReentrantCallbackGroup(),
         )
+        self.rotate_server = ActionServer(
+            self, GimbalRotate, "gimbal/rotate",
+            execute_callback=self.execute_rotate,
+            goal_callback=self.on_rotate_goal,
+            cancel_callback=lambda _: CancelResponse.ACCEPT,
+            callback_group=ReentrantCallbackGroup(),
+        )
 
     def on_joint_states(self, message):
         names = list(message.name)
@@ -78,6 +85,16 @@ class GimbalActionServer(Node):
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
 
+    def on_rotate_goal(self, goal):
+        values = (goal.delta_pan, goal.delta_tilt)
+        if not all(math.isfinite(value) for value in values):
+            self.get_logger().warning("Rejected gimbal rotate goal: non-finite angle")
+            return GoalResponse.REJECT
+        if abs(goal.delta_pan) > math.pi:
+            self.get_logger().warning("Rejected gimbal rotate goal: |delta_pan| exceeds pi")
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
+
     def publish_command(self, goal):
         command = JointState()
         command.header.stamp = self.get_clock().now().to_msg()
@@ -85,15 +102,33 @@ class GimbalActionServer(Node):
         command.position = [float(goal.pan), float(goal.tilt)]
         self.command_pub.publish(command)
 
-    def finish(self, handle, status, success, message):
+    def finish(self, handle, status, success, message, action=GimbalMove):
         pose = self.current_pose() or (math.nan, math.nan)
-        result = GimbalMove.Result(success=success, message=message, pan=pose[0], tilt=pose[1])
+        result = action.Result(success=success, message=message, pan=pose[0], tilt=pose[1])
         getattr(handle, status)()
         self.get_logger().info(f"Gimbal goal {status}: {message}")
         return result
 
+    def execute_rotate(self, handle):
+        """Resolve the relative goal against the pose at start, then move like an absolute goal."""
+        deadline = time.monotonic() + self.state_timeout + 1.0
+        pose = self.current_pose()
+        while pose is None and time.monotonic() < deadline and rclpy.ok():
+            time.sleep(1.0 / self.rate)
+            pose = self.current_pose()
+        if pose is None:
+            return self.finish(handle, "abort", False, "No fresh gimbal joint state", GimbalRotate)
+        target = GimbalMove.Goal(
+            pan=pose[0] + handle.request.delta_pan, tilt=pose[1] + handle.request.delta_tilt)
+        if not self.tilt_limits[0] <= target.tilt <= self.tilt_limits[1]:
+            return self.finish(handle, "abort", False,
+                               f"Target tilt {target.tilt:.3f} rad out of limits", GimbalRotate)
+        return self.run(handle, target, GimbalRotate)
+
     def execute(self, handle):
-        goal = handle.request
+        return self.run(handle, handle.request, GimbalMove)
+
+    def run(self, handle, goal, action):
         # A newer goal takes over the gimbal; the older one aborts.
         with self.lock:
             self.active_goal = handle
@@ -102,27 +137,27 @@ class GimbalActionServer(Node):
         while rclpy.ok():
             with self.lock:
                 if self.active_goal is not handle:
-                    return self.finish(handle, "abort", False, "Superseded by a newer goal")
+                    return self.finish(handle, "abort", False, "Superseded by a newer goal", action)
             if handle.is_cancel_requested:
-                return self.finish(handle, "canceled", False, "Canceled")
+                return self.finish(handle, "canceled", False, "Canceled", action)
             elapsed = time.monotonic() - started
             # Command is repeated so a lost message or late-starting simulator cannot stall it.
             self.publish_command(goal)
             pose = self.current_pose()
             if pose is None:
                 if elapsed > self.state_timeout + 1.0:
-                    return self.finish(handle, "abort", False, "No fresh gimbal joint state")
+                    return self.finish(handle, "abort", False, "No fresh gimbal joint state", action)
             else:
                 pan_error = wrap_to_pi(goal.pan - pose[0])
                 tilt_error = goal.tilt - pose[1]
-                handle.publish_feedback(GimbalMove.Feedback(
+                handle.publish_feedback(action.Feedback(
                     pan=pose[0], tilt=pose[1], pan_error=pan_error, tilt_error=tilt_error))
                 if abs(pan_error) <= self.pan_tolerance and abs(tilt_error) <= self.tilt_tolerance:
-                    return self.finish(handle, "succeed", True, "Reached target pose")
+                    return self.finish(handle, "succeed", True, "Reached target pose", action)
             if elapsed > self.timeout:
-                return self.finish(handle, "abort", False, "Timed out before reaching target pose")
+                return self.finish(handle, "abort", False, "Timed out before reaching target pose", action)
             time.sleep(period)
-        return self.finish(handle, "abort", False, "Shutting down")
+        return self.finish(handle, "abort", False, "Shutting down", action)
 
 
 def main():

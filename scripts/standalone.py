@@ -603,6 +603,15 @@ def update_gimbal(sim_robot: SimRobot, now: float) -> None:
         controller.reset(float(pan), float(tilt))
         sim_robot.gimbal_time = now
         return
+    # PhysX cannot drive an unlimited joint past about one turn, so fold the pan back into
+    # (-pi, pi]; the camera orientation is unchanged.
+    pan = float(sim_robot.robot.get_dof_positions(dof_indices=sim_robot.gimbal_dofs[:1]).numpy()[0][0])
+    if abs(pan) > math.pi:
+        turns = 2.0 * math.pi * round(pan / (2.0 * math.pi))
+        sim_robot.robot.set_dof_positions(
+            np.array([[pan - turns]], dtype=np.float32), dof_indices=sim_robot.gimbal_dofs[:1],
+        )
+        controller.pan_target -= turns
     targets = controller.step(now - sim_robot.gimbal_time)
     sim_robot.gimbal_time = now
     sim_robot.robot.set_dof_position_targets(
