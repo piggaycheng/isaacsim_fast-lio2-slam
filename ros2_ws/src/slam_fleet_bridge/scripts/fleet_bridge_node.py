@@ -2,9 +2,11 @@
 """The robot's single MQTT connection for an Open-RMF fleet adapter (amr_mqtt_interface_spec.md).
 
 Topics under rmf/<fleet>/robot/<robot>/ :
-  register (out)        sent on every (re)connect until register_ack succeeds
-  register_ack (in)     handshake; heartbeat and commands start only after success
-  heartbeat (out)       pose from odometry/global, battery, status, current_cmd_id
+  register (out)        sent on (re)connect and every 3 s until register_ack succeeds, and at
+                        once on register_ack require_register (adapter started later/restarted)
+  register_ack (in)     handshake; commands are accepted only after success
+  heartbeat (out)       pose from odometry/global, battery, status, current_cmd_id; sent even
+                        before registration (status "error") so a late adapter can ask for it
   command (in)          navigate / dock run as one Nav2 goal (py_trees task); stop cancels;
                         task (extension) runs a list of task_bt steps
   task_state (out)      extension: task progress (retained) on every change
@@ -16,6 +18,7 @@ Topics under rmf/<fleet>/robot/<robot>/ :
 import json
 import math
 import queue
+import time
 
 import paho.mqtt.client as mqtt
 import rclpy
@@ -30,7 +33,7 @@ import rmf_protocol as rmf
 from fleet_pose import yaw_from_quaternion
 from task_bt import NavigateToPose as NavigateStep, TaskRunner
 
-REGISTER_RETRY_S = 5.0
+REGISTER_RETRY_S = 3.0
 
 
 class FleetBridge(Node):
@@ -107,8 +110,8 @@ class FleetBridge(Node):
     def maybe_register(self):
         if self.registered or self.pose is None or not self.client.is_connected():
             return
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if abs(now - self.last_register) < REGISTER_RETRY_S:
+        now = time.monotonic()
+        if now - self.last_register < REGISTER_RETRY_S:
             return
         self.last_register = now
         self.publish("register", rmf.register_payload(
@@ -150,12 +153,14 @@ class FleetBridge(Node):
 
     def on_heartbeat(self):
         self.maybe_register()
-        if not self.registered or self.pose is None:
+        if self.pose is None:
             return
         active = self.runner.active
         cmd_id = self.cmd_ids.get(self.runner.task.goal_id) if active else None
+        # Not idle (nor accepting commands) until registered.
+        status = ("moving" if active else "idle") if self.registered else "error"
         self.publish("heartbeat", rmf.heartbeat_payload(
-            self.robot, self.pose, self.battery, "moving" if active else "idle", cmd_id), qos=0)
+            self.robot, self.pose, self.battery, status, cmd_id), qos=0)
 
     def on_tick(self):
         while True:
@@ -167,11 +172,16 @@ class FleetBridge(Node):
                 ack = rmf.parse_ack(payload, self.robot)
                 if ack is None:
                     continue
-                self.registered = ack[0]
-                if ack[0]:
-                    self.get_logger().info(f"registered with Open-RMF: {ack[1]}")
+                status, message = ack
+                self.registered = status == "success"
+                if self.registered:
+                    self.get_logger().info(f"registered with Open-RMF: {message}")
+                elif status == "require_register":
+                    self.get_logger().info(f"adapter asked to re-register: {message}")
+                    self.last_register = -REGISTER_RETRY_S
+                    self.maybe_register()
                 else:
-                    self.get_logger().warning(f"registration rejected: {ack[1]}; retrying")
+                    self.get_logger().warning(f"registration rejected: {message}; retrying")
             elif self.registered:
                 self.handle_command(payload)
             else:

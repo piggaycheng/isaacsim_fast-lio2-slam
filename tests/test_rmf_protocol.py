@@ -64,9 +64,12 @@ class RmfProtocolTest(unittest.TestCase):
 
     def test_ack(self):
         self.assertEqual(rmf.parse_ack('{"robot_id":"r1","status":"success","message":"ok"}', "r1"),
-                         (True, "ok"))
+                         ("success", "ok"))
         self.assertEqual(rmf.parse_ack('{"robot_id":"r1","status":"error","error_code":"X"}', "r1"),
-                         (False, "X"))
+                         ("error", "X"))
+        self.assertEqual(
+            rmf.parse_ack('{"robot_id":"r1","status":"require_register","message":"m"}', "r1"),
+            ("require_register", "m"))
         self.assertIsNone(rmf.parse_ack('{"robot_id":"r2","status":"success"}', "r1"))
 
 

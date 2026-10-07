@@ -85,7 +85,10 @@ def command_result_payload(robot, cmd_id, status, message="", location=None):
 
 
 def parse_ack(payload, robot):
-    """Return (accepted, message) for a register_ack addressed to `robot`, else None."""
+    """Return (status, message) for a register_ack addressed to `robot`, else None.
+
+    status is the ack's own: "success", "error" or "require_register".
+    """
     try:
         ack = json.loads(payload)
     except (ValueError, TypeError):
@@ -93,7 +96,7 @@ def parse_ack(payload, robot):
     if not isinstance(ack, dict) or ack.get("robot_id") != robot:
         return None
     message = ack.get("message") or ack.get("error_code") or ""
-    return ack.get("status") == "success", str(message)
+    return ack.get("status"), str(message)
 
 
 def _number(source, key, default=None):
