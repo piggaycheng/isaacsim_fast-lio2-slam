@@ -22,11 +22,14 @@ from pathlib import Path
 import yaml
 
 DEFAULT_ROBOT_TYPE = "nova_carter"
+# Open-RMF fleet of robots whose spec has no #FLEET.
+DEFAULT_FLEET = "default_fleet"
 PROFILE_DIRECTORY = Path(__file__).resolve().parent.parent / "config" / "robots"
 NAMESPACE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 TOPIC_KEY_PATTERN = re.compile(r"^(topic|.*_topic|(odom|imu|pose|twist)\d+)$")
 GLOBAL_TOPICS = frozenset(("/clock", "/parameter_events", "/rosout"))
-SPEC_PATTERN = re.compile(r"^(?P<name>[^:@\s]+)(:(?P<type>[^:@\s]+))?@(?P<pose>[^@\s]+)$")
+SPEC_PATTERN = re.compile(
+    r"^(?P<name>[^:@#\s]+)(:(?P<type>[^:@#\s]+))?(#(?P<fleet>[^:@#\s]+))?@(?P<pose>[^@\s]+)$")
 # FAST_LIO_LOCALIZATION2 hardcodes these absolute names; remap them per node.
 UPSTREAM_TOPICS = (
     "/cloud_registered", "/cloud_registered_body", "/cloud_effected", "/Laser_map",
@@ -92,6 +95,7 @@ class RobotSpec:
     x: float
     y: float
     yaw: float
+    fleet: str = DEFAULT_FLEET
 
 
 # Robot and spawn that recorded maps/office (its body frame is the map frame).
@@ -109,14 +113,17 @@ def normalize_namespace(namespace):
 
 
 def parse_robot_spec(text):
-    """Parse NAME[:TYPE]@X,Y[,YAW] (map/world metres and radians)."""
+    """Parse NAME[:TYPE][#FLEET]@X,Y[,YAW] (map/world metres and radians)."""
     match = SPEC_PATTERN.match(text.strip())
     if not match:
-        raise ValueError(f"Robot spec must be NAME[:TYPE]@X,Y[,YAW], got {text!r}")
+        raise ValueError(f"Robot spec must be NAME[:TYPE][#FLEET]@X,Y[,YAW], got {text!r}")
     name = normalize_namespace(match["name"])
     robot_type = match["type"] or DEFAULT_ROBOT_TYPE
     if not NAMESPACE_PATTERN.match(robot_type):
         raise ValueError(f"Invalid robot type {robot_type!r}")
+    fleet = match["fleet"] or DEFAULT_FLEET
+    if not NAMESPACE_PATTERN.match(fleet):
+        raise ValueError(f"Invalid fleet name {fleet!r}: use a letter followed by letters, digits or _")
     try:
         values = [float(value) for value in match["pose"].split(",")]
     except ValueError:
@@ -124,7 +131,7 @@ def parse_robot_spec(text):
     if len(values) not in (2, 3) or not all(math.isfinite(value) for value in values):
         raise ValueError(f"Robot pose must be X,Y[,YAW], got {match['pose']!r}")
     x, y, yaw = (values + [0.0])[:3]
-    return RobotSpec(name, robot_type, x, y, yaw)
+    return RobotSpec(name, robot_type, x, y, yaw, fleet)
 
 
 def parse_robot_specs(texts):
@@ -149,7 +156,7 @@ def parse_robot_specs(texts):
 
 
 def format_robot_specs(specs):
-    return ";".join(f"{s.name}:{s.robot_type}@{s.x:g},{s.y:g},{s.yaw:g}" for s in specs)
+    return ";".join(f"{s.name}:{s.robot_type}#{s.fleet}@{s.x:g},{s.y:g},{s.yaw:g}" for s in specs)
 
 
 def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):

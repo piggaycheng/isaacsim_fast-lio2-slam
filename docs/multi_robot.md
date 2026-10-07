@@ -11,10 +11,11 @@
 
 相機串流與 MQTT 等對外連線見[對外連線文件](online.md)（`run_multi_nav_online.sh`）。
 
-車輛規格：`NAME[:TYPE]@X,Y[,YAW]`
+車輛規格：`NAME[:TYPE][#FLEET]@X,Y[,YAW]`
 
 - `NAME`：namespace，英數字與底線，不分大小寫不可重複（同時作為 Compose project 名稱）。
 - `TYPE`：車種，對應 `config/robots/TYPE.yaml`，預設 `nova_carter`。
+- `FLEET`：Open-RMF 車隊名稱（規則同 `NAME`），只有 `run_multi_nav_online.sh` 會用到（見[對外連線文件](online.md)），省略為 `default_fleet`。放在 `TYPE` 之後、`@` 之前，例如 `carter2:carter_v1#fleet2@3.5,0`。
 - `X,Y,YAW`：Isaac world 位置（m）與 robot prim 航向（rad）；Office 地圖與 Isaac world 對齊，所以也是地圖座標。
 
 不指定 `--robot` 時，預設為 `carter1:nova_carter@0,0,0` 與 `carter2:carter_v1@3.5,0,0`。按 Ctrl+C 會停止 Isaac 並移除所有 container。
@@ -42,7 +43,7 @@ flowchart LR
   S1 & S2 --> Relay
 ```
 
-- **一車一 container**：`robot.launch.py robot:=NAME[:TYPE]@X,Y,YAW` 啟動單車完整堆疊，所有 topic、action、service 都在 `/NAME` 下。
+- **一車一 container**：`robot.launch.py robot:=NAME[:TYPE][#FLEET]@X,Y,YAW` 啟動單車完整堆疊，所有 topic、action、service 都在 `/NAME` 下。
 - **每車獨立 TF 樹**：TF 重映射到 `/NAME/tf`、`/NAME/tf_static`，frame 名稱不變（`map`、`odom`、`base_link`…），各車設定檔與單車版本相同。
 - **Fleet RViz**：`fleet_rviz.launch.py robots:="carter1;carter2"` 執行 `fleet_relay.py`，把各車 TF 與機體座標系 topic 轉發到 `/fleet/...` 並加上 `NAME/` 前綴；`map` 座標系的 topic（路徑、costmap、`odometry/global` 等）由 RViz 直接訂閱 `/NAME/...`。
 - **Isaac 端**：`scripts/standalone.py --robot ...` 為每台車建立 `/NAME/...` 的 LiDAR、IMU、`cmd_vel`、輪速與 ground truth topic；`/clock` 只由第一台車發佈。

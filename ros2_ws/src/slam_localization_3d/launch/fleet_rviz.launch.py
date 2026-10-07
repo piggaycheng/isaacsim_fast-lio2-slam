@@ -1,6 +1,6 @@
 """One RViz for the whole fleet, run in its own (operator) container.
 
-robots:="carter1;carter2" (names or NAME[:TYPE]@X,Y[,YAW] specs, ";"-separated). fleet_relay
+robots:="carter1;carter2" (names or NAME[:TYPE][#FLEET]@X,Y[,YAW] specs, ";"-separated). fleet_relay
 merges each /<ns>/tf into /fleet/tf as <ns>/<frame>; RViz reads that tree.
 Fleet Control panel selects the robot for the shared goal and initial-pose tools.
 """

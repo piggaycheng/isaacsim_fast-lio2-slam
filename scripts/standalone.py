@@ -67,7 +67,7 @@ parser.add_argument(
     help="Subscribe to ROS 2 cmd_vel instead of keyboard or auto-jog.",
 )
 parser.add_argument(
-    "--robot", action="append", default=[], metavar="NAME[:TYPE]@X,Y[,YAW]",
+    "--robot", action="append", default=[], metavar="NAME[:TYPE][#FLEET]@X,Y[,YAW]",
     help="Spawn a robot of TYPE (config/robots/TYPE.yaml, default "
     f"{DEFAULT_ROBOT_TYPE}) at world X,Y (m) and YAW (rad) whose ROS topics and TF live "
     "under /NAME. Repeat for more robots. Without --robot one robot uses root topics.",

@@ -15,7 +15,6 @@ mqtt_port="${MQTT_PORT:-1883}"
 mqtt_topic="${MQTT_TOPIC:-slam/cameras}"
 mqtt_username=""
 mqtt_password=""
-fleet_topic_prefix="${FLEET_TOPIC_PREFIX:-fleet}"
 ceiling_cameras=true
 
 usage() {
@@ -31,12 +30,12 @@ Same as run_multi_nav.sh, plus the outbound connections: the camera list is publ
 to MQTT, cameras are switched on/off over MQTT, and RTSP streams go to MediaMTX.
 
 Options:
-      --robot NAME[:TYPE]@X,Y[,YAW]
+      --robot NAME[:TYPE][#FLEET]@X,Y[,YAW]
                        Spawn a robot of TYPE (config/robots/TYPE.yaml, default
                        nova_carter) at Isaac world X,Y (m), YAW (rad) of the
                        robot prim (world is aligned with the Office map).
-                       Repeat per robot. Default: carter1:nova_carter@0,0 and
-                       carter2:carter_v1@3.5,0.
+                       Repeat per robot. Default: carter1:nova_carter#fleet1@0,0 and
+                       carter2:carter_v1#fleet2@3.5,0.
   -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
       --pcd FILE       PCD map (default: maps/office/map.pcd).
       --manual-initial-pose
@@ -60,10 +59,6 @@ Options:
                        topic (default $MQTT_TOPIC/slam/cameras). The camera list is a
                        retained JSON message on T, updated when a camera is switched;
                        {"online":false} on shutdown. The broker may start later.
-      --fleet-topic-prefix P
-                       Each robot publishes its map pose as JSON (x, y, yaw, stamp) to
-                       MQTT P/NAME/state (default $FLEET_TOPIC_PREFIX or fleet), plus
-                       retained P/NAME/online (false via last will) for a fleet adapter.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
   -h, --help           Show this help.
@@ -104,14 +99,13 @@ while (($# > 0)); do
     --mqtt-password) value "$@"; mqtt_password="$2"; shift 2 ;;
     --camera|--camera-resolution|--camera-fps)
       value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
-    --fleet-topic-prefix) value "$@"; fleet_topic_prefix="$2"; shift 2 ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-if ((${#robots[@]} == 0)); then robots=("carter1@0,0,0" "carter2:carter_v1@3.5,0,0"); fi
+if ((${#robots[@]} == 0)); then robots=("carter1#fleet1@0,0,0" "carter2:carter_v1#fleet2@3.5,0,0"); fi
 spec="$(IFS=';'; printf '%s' "${robots[*]}")"
 # Fail before starting anything; robot.launch.py and standalone.py check again.
 if ! python3 - "$project_dir" "$spec" <<'EOF'
@@ -152,13 +146,14 @@ fi
 require_ros_workspace
 set -u
 
-pose_mqtt_args=(mqtt_host:="$mqtt_host" mqtt_port:="$mqtt_port" mqtt_topic_prefix:="$fleet_topic_prefix")
+pose_mqtt_args=(mqtt_host:="$mqtt_host" mqtt_port:="$mqtt_port")
 if [[ -n "$mqtt_username" ]]; then
   pose_mqtt_args+=(mqtt_username:="$mqtt_username" mqtt_password:="$mqtt_password")
 fi
 names=()
 for robot in "${robots[@]}"; do
   name="${robot%%@*}"
+  name="${name%%#*}"
   name="${name%%:*}"
   names+=("$name")
   start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \

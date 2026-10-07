@@ -46,6 +46,16 @@ class RobotSpecTest(unittest.TestCase):
             [first, second],
         )
 
+    def test_fleet_precedes_pose_and_defaults(self):
+        first, second, third = robot_fleet.parse_robot_specs(
+            "a#fleet1@0,0;b:carter_v1#fleet2@5,0,1;c@10,0")
+        self.assertEqual((first.fleet, second.fleet, third.fleet),
+                         ("fleet1", "fleet2", robot_fleet.DEFAULT_FLEET))
+        self.assertEqual(second.robot_type, "carter_v1")
+        self.assertEqual(
+            robot_fleet.parse_robot_specs(robot_fleet.format_robot_specs([first, second, third])),
+            [first, second, third])
+
     def test_rejects_invalid_fleets(self):
         for text, message in (
             ("", "At least one"),
@@ -54,6 +64,8 @@ class RobotSpecTest(unittest.TestCase):
             ("carter1@0", "X,Y"),
             ("carter1@0,nan", "X,Y"),
             ("carter1:bad-type@0,0", "NAME|Invalid robot type"),
+            ("a#1fleet@0,0", "NAME|Invalid fleet"),
+            ("a@0,0#fleet", "X,Y|NAME"),
             ("a@0,0;a@5,0", "unique"),
             ("Carter1@0,0;carter1@5,0", "unique"),
             ("a@0,0;b@1,0", "closer"),

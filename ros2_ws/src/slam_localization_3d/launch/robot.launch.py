@@ -37,7 +37,7 @@ def robot_stack(context, package):
     )
     actions = [
         LogInfo(msg=f"Robot {spec.name}: type={spec.robot_type} "
-                    f"spawn=({spec.x}, {spec.y}, {spec.yaw}) initial_pose={pose}"),
+                    f"fleet={spec.fleet} spawn=({spec.x}, {spec.y}, {spec.yaw}) initial_pose={pose}"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(package, "launch", "global_fusion.launch.py")),
             launch_arguments=arguments.items(),
@@ -53,10 +53,9 @@ def robot_stack(context, package):
                 "use_sim_time": True,
                 "mqtt_host": mqtt_host,
                 "mqtt_port": int(LaunchConfiguration("mqtt_port").perform(context)),
-                "mqtt_topic_prefix": LaunchConfiguration("mqtt_topic_prefix").perform(context),
                 "mqtt_username": LaunchConfiguration("mqtt_username").perform(context),
                 "mqtt_password": LaunchConfiguration("mqtt_password").perform(context),
-                "task_bt": LaunchConfiguration("task_bt").perform(context).lower() == "true",
+                "fleet_name": spec.fleet,
             }],
         ))
     return actions
@@ -66,7 +65,8 @@ def generate_launch_description():
     package = get_package_share_directory("slam_localization_3d")
     return LaunchDescription([
         DeclareLaunchArgument(
-            "robot", description="NAME[:TYPE]@X,Y[,YAW] simulator spawn pose of this robot",
+            "robot", description="NAME[:TYPE][#FLEET]@X,Y[,YAW] simulator spawn pose of this robot "
+                                  "(FLEET is its Open-RMF fleet, default default_fleet)",
         ),
         DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
         DeclareLaunchArgument("map_pgm", description="Absolute Nav2 map YAML path"),
@@ -83,14 +83,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "mqtt_host", default_value="",
-            description="MQTT broker; when set, starts the fleet bridge (pose and tasks over MQTT)",
+            description="MQTT broker; when set, starts the fleet bridge (Open-RMF protocol over MQTT)",
         ),
         DeclareLaunchArgument("mqtt_port", default_value="1883"),
-        DeclareLaunchArgument(
-            "task_bt", default_value="true",
-            description="Accept py_trees task commands on fleet/NAME/command (needs mqtt_host)",
-        ),
-        DeclareLaunchArgument("mqtt_topic_prefix", default_value="fleet"),
         DeclareLaunchArgument("mqtt_username", default_value=""),
         DeclareLaunchArgument("mqtt_password", default_value=""),
         OpaqueFunction(function=robot_stack, args=[package]),

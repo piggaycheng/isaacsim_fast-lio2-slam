@@ -94,7 +94,7 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_multi_nav.sh --robot a@0,0 --robot b@3.5,-2,1.57 --robot c@1,2
 ```
 
-`--robot NAME[:TYPE]@X,Y[,YAW]` 可重複指定（位置單位為公尺、航向為弧度，省略 TYPE 為 `nova_carter`）；RViz 的 **Fleet Control** 選車後送目標。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。架構、車種設定與限制見[多車文件](docs/multi_robot.md)。
+`--robot NAME[:TYPE][#FLEET]@X,Y[,YAW]` 可重複指定（位置單位為公尺、航向為弧度，省略 TYPE 為 `nova_carter`；`FLEET` 為 Open-RMF 車隊，見[對外連線文件](docs/online.md)）；RViz 的 **Fleet Control** 選車後送目標。支援 `--map`、`--pcd`、`--headless`、`--no-rviz` 等參數。架構、車種設定與限制見[多車文件](docs/multi_robot.md)。
 
 各腳本完整參數可用 `--help` 查看；`scripts/run_slam.sh` 沒有參數介面。
 

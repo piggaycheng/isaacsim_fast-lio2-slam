@@ -1,6 +1,6 @@
 # 對外連線（MQTT／RTSP）
 
-`./scripts/run_multi_nav_online.sh` 與 `run_multi_nav.sh` 的導航、多車參數相同（見[多車文件](multi_robot.md)），另外預設啟動會對外的連線：MQTT client（相機列表與開關）與 RTSP 相機串流。`run_multi_nav.sh` 不含這些功能，也不需要 broker。
+`./scripts/run_multi_nav_online.sh` 與 `run_multi_nav.sh` 的導航、多車參數相同（見[多車文件](multi_robot.md)），另外預設啟動會對外的連線：MQTT client（相機列表與開關、車端 Open-RMF 介面）與 RTSP 相機串流。`run_multi_nav.sh` 不含這些功能，也不需要 broker。
 
 ```bash
 ./scripts/run_multi_nav_online.sh --help
@@ -28,33 +28,45 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - `--camera-resolution WxH`（預設 640x480）、`--camera-fps N`（預設 15，最高 60）。
 - RTSP server 是 MediaMTX（Docker image `bluenviron/mediamtx:latest-ffmpeg`，host network，埠 8554），第一次開啟相機時才啟動；編碼用同一 image 內的 ffmpeg（`libx264`）。首次使用會自動下載 image。瀏覽器不能直接播 RTSP，網頁需另行轉成 WebRTC／HLS（MediaMTX 也提供，埠 8889／8888，但此專案未設定）。
 
-## 車輛位置轉發（MQTT，給 fleet adapter）
+## 車端 MQTT 介面（Open-RMF fleet adapter）
 
-`run_multi_nav_online.sh` 會在每台車的容器內啟動 `slam_fleet_bridge` 套件的 `fleet_bridge_node.py`（namespace `/NAME`）。每台車只用**一條** MQTT 連線，同時負責位置轉發與下方的任務指令，讓外部 fleet adapter 不必使用 ROS。位置部分把 `/NAME/odometry/global`（`map` 座標）轉成 MQTT：
+`run_multi_nav_online.sh` 會在每台車的容器內啟動 `slam_fleet_bridge` 套件的 `fleet_bridge_node.py`（namespace `/NAME`）。每台車只用**一條** MQTT 連線，依 Open-RMF 介面規格（`open_rmf/docs/amr_mqtt_interface_spec.md`）的 `rmf/F/robot/NAME/*` topic 與 fleet adapter 溝通，adapter 不必使用 ROS。協定編解碼在 `rmf_protocol.py`，任務由 py_trees 執行（`task_bt.py`）。
 
-| Topic | 內容 |
-| :-- | :-- |
-| `fleet/NAME/state` | JSON `{"robot","frame_id","stamp","x","y","yaw"}`，QoS 0，每秒最多 2 次 |
-| `fleet/NAME/online` | retained，連線後為 `true`，離線或異常斷線（LWT）為 `false` |
+```bash
+./scripts/run_multi_nav_online.sh --robot carter1#tinyRobot@0,0 --robot carter2:carter_v1#otherFleet@3.5,0
+```
 
-- Topic 前綴用 `--fleet-topic-prefix P`（或 `$FLEET_TOPIC_PREFIX`）修改；broker 使用與相機相同的 `--mqtt-host/--mqtt-port/--mqtt-username/--mqtt-password`。
-- `stamp` 是模擬時間（秒），`yaw` 單位為 rad。
-- 容器 image 需含 `paho-mqtt`：更新後先 `docker compose build ros`，再 `docker compose run --rm ros build`。
-- 單獨使用：`ros2 launch slam_localization_3d robot.launch.py ... mqtt_host:=HOST`（`mqtt_host` 為空時不啟動）。
+`F` 為該車的車隊名稱，寫在 `--robot` 規格的 `#FLEET`（`NAME[:TYPE][#FLEET]@X,Y[,YAW]`，在座標之前），省略為 `default_fleet`；不指定 `--robot` 時預設 `carter1` 在 `fleet1`、`carter2` 在 `fleet2`。不同車隊的車各自使用自己的 `rmf/F/...` topic。broker 使用與相機相同的 `--mqtt-host/--mqtt-port/--mqtt-username/--mqtt-password`。單獨使用：`ros2 launch slam_localization_3d robot.launch.py robot:=NAME#F@X,Y ... mqtt_host:=HOST`（`mqtt_host` 為空時不啟動）。
 
-## 車端任務 Behavior Tree（py_trees）
-
-同一個 `fleet_bridge_node.py` 會把 fleet adapter 的指令交給 py_trees 依序執行（`robot.launch.py` 參數 `task_bt:=false` 可關閉任務功能，只保留位置轉發）。指令由 `task_bt.py` 解析並建出 `Sequence`，各步驟依序執行，任一步失敗就中止。
-
-| Topic | 方向 | 內容 |
+| Topic（`rmf/F/robot/NAME/`） | 方向 | 內容 |
 | :-- | :-- | :-- |
-| `fleet/NAME/command` | adapter → 車（QoS 1，不要 retained） | `{"goal_id":"42","steps":[{"type":"navigate","x":1.0,"y":2.0,"yaw":0.0}]}` |
-| `fleet/NAME/cancel` | adapter → 車（QoS 1） | `{"goal_id":"42"}`（`goal_id` 可省略，取消目前任務） |
-| `fleet/NAME/task_state` | 車 → adapter（QoS 1，retained） | `{"robot","goal_id","status","step","steps","message"}` |
+| `register` | 車 → adapter（QoS 1） | 初始位置與車體規格 |
+| `register_ack` | adapter → 車（QoS 1） | 註冊結果 |
+| `heartbeat` | 車 → adapter（QoS 0） | `x`、`y`、`yaw`、`battery`、`status`、`current_cmd_id` |
+| `command` | adapter → 車（QoS 1） | `navigate`、`dock`、`stop`、`task`（擴充） |
+| `command_result` | 車 → adapter（QoS 1） | `completed`／`failed`／`canceled` |
+| `deregister` | 車 → adapter（QoS 1） | 正常關機 |
+| `status` | broker → adapter（LWT） | 異常斷線時的 `offline` |
+| `task_state` | 車 → adapter（QoS 1，retained） | 擴充：任務進度 |
 
-- `status`：`running`、`succeeded`、`aborted`、`canceled`、`rejected`。狀態改變時立即發布，執行中每秒重發一次；完成後保留最後狀態直到下一個任務。
-- 步驟類型：目前只有 `navigate`（`x`、`y`、`yaw` 為 `map` 座標，`yaw` 預設 0，呼叫 `/NAME/navigate_to_pose`）。`rotate`、`take_photo` 已列入協定但尚未實作，含這些步驟的指令會被 `rejected`，不會執行任何步驟。
-- 同一個 `goal_id` 重複送出會被忽略；不同 `goal_id` 會先取消目前任務（含 Nav2 目標）再開始新任務。
-- `rejected`（格式錯誤或步驟尚未實作）只回報該指令，不影響執行中的任務，所以 adapter 要用 `goal_id` 對應狀態。
+- Client ID `amr_F_NAME`，clean session，keepalive 20 s。
+- 流程：連線並取得 `odometry/global` 後送 `register`（未收到成功的 `register_ack` 每 5 秒重送；重連會重新註冊）。收到 `status: success` 後才送 `heartbeat`（預設 2 Hz）並接受 `command`；之前收到的指令會被忽略。結束時送 `deregister`。
+- `heartbeat`：`x`、`y`、`yaw`（`map` 座標，rad）、`battery`、`status`（`moving` 任務執行中，否則 `idle`）、`current_cmd_id`（無任務為 `null`）。位置與電量為 node 屬性，`status` 與 `current_cmd_id` 每次從任務執行器現算。
+- `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）；`stop` 取消目前任務並回報其 `canceled`，`stop` 本身回 `completed`。新的 `cmd_id` 會取消執行中的任務，同一個 `cmd_id` 重複送出會被忽略。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
+- `command_result`：`completed`（到位）、`failed`（導航失敗或指令錯誤）、`canceled`（被新指令或 `stop` 中斷），並附 `final_location`。
+- `battery`：沒有電池模型，預設固定 `100.0`；有 `sensor_msgs/BatteryState` 發布到 `/NAME/battery_state` 時改用其 `percentage`。
+- 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（0.35）、`max_linear_velocity`（1.2）、`max_angular_velocity`（1.0）、`heartbeat_rate`、`battery`。
+- 容器 image 需含 `paho-mqtt` 與 `py_trees`（Dockerfile 已加入）；修改後需 `docker compose run --rm ros build`。
+
+## 擴充：多步任務（py_trees）
+
+規格之外的擴充：`command` 的 `action` 可為 `task`，帶 `steps` 列表，由 py_trees 建出 `Sequence` 依序執行，任一步失敗就中止。
+
+```json
+{"robot_id":"carter1","cmd_id":42,"action":"task","steps":[{"type":"navigate","x":1.0,"y":2.0,"yaw":0.0}]}
+```
+
+- 步驟類型：目前只有 `navigate`（`x`、`y`、`yaw` 為 `map` 座標，`yaw` 預設 0，呼叫 `/NAME/navigate_to_pose`）。`rotate`、`take_photo` 已列入協定但尚未實作，含這些步驟的指令會被拒絕，不會執行任何步驟。
+- `task_state`（retained）：`{"robot_id","cmd_id","goal_id","status","step","steps","message"}`，`status` 為 `running`、`succeeded`、`aborted`、`canceled`、`rejected`；狀態改變時立即發布，完成後保留最後狀態直到下一個任務。`navigate`、`dock` 也會發。
+- 結束時另發對應的 `command_result`（`succeeded`→`completed`、`aborted`／`rejected`→`failed`、`canceled`→`canceled`）。
 - 新增步驟類型：在 `task_bt.py` 的 `STEP_TYPES` 加驗證函式，並在 `fleet_bridge_node.py` 的 step factory 建立對應 behaviour（`update()` 不可阻塞）。
-- 容器 image 需含 `py_trees`（Dockerfile 已加入）。

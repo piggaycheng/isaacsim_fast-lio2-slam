@@ -112,6 +112,7 @@ set -u
 names=()
 for robot in "${robots[@]}"; do
   name="${robot%%@*}"
+  name="${name%%#*}"
   name="${name%%:*}"
   names+=("$name")
   start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
