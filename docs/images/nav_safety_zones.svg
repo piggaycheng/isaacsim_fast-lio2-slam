@@ -19,6 +19,7 @@
   <rect x="126.3" y="206.2" width="265.7" height="247.5" fill="#fae8ff" stroke="#a21caf" stroke-width="2.5" fill-opacity="0.5"/>
   <rect x="293.0" y="247.5" width="123.8" height="165.0" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" fill-opacity="0.8"/>
   <rect x="293.0" y="270.6" width="107.2" height="118.8" fill="#fee2e2" stroke="#dc2626" stroke-width="2.5" fill-opacity="0.8"/>
+  <circle cx="260.0" cy="330" r="133.7" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="8 4"/>
   <rect x="151.1" y="275.6" width="143.6" height="108.9" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
   <rect x="152.8" y="277.2" width="140.3" height="105.6" fill="#fde047" stroke="#a16207" stroke-width="2" />
   <rect x="163.0" y="288.8" width="120.1" height="82.3" fill="#cbd5e1" stroke="#334155" stroke-width="2" />
@@ -30,14 +31,15 @@
   <text x="428.0" y="350.0" class="small" text-anchor="end">+x</text>
   <rect x="460" y="95" width="400" height="420" fill="#f8fafc" stroke="#cbd5e1"/>
   <text x="474.0" y="122.0" class="heading" >reverse: linear.x &lt; 0</text>
-  <rect x="507.2" y="206.2" width="282.1" height="247.5" fill="#fae8ff" stroke="#a21caf" stroke-width="2.5" fill-opacity="0.5"/>
+  <rect x="596.4" y="206.2" width="193.1" height="247.5" fill="#fae8ff" stroke="#a21caf" stroke-width="2.5" fill-opacity="0.5"/>
+  <circle cx="730.0" cy="330" r="133.7" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="8 4"/>
   <rect x="621.1" y="275.6" width="143.6" height="108.9" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
   <rect x="622.8" y="277.2" width="140.3" height="105.6" fill="#fde047" stroke="#a16207" stroke-width="2" />
   <rect x="633.0" y="288.8" width="120.1" height="82.3" fill="#cbd5e1" stroke="#334155" stroke-width="2" />
   <circle cx="730.0" cy="330" r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
-  <text x="474.0" y="480.0" class="small" fill="#a21caf">SurroundReverse x [-1.35, 0.36], y ±0.75</text>
-  <text x="474.0" y="500.0" class="small" >Trimmed side keeps swing_margin 0.15 m</text>
-  <text x="474.0" y="520.0" class="small" >beyond the padded footprint</text>
+  <text x="474.0" y="480.0" class="small" fill="#a21caf">SurroundReverse x [-0.81, 0.36], y ±0.75</text>
+  <text x="474.0" y="500.0" class="small" >Trimmed side: padded footprint + 0.15 m swing</text>
+  <text x="474.0" y="520.0" class="small" fill="#6d28d9">Both clipped to the 0.81 m circle (dashed)</text>
   <line x1="468" y1="330" x2="852" y2="330" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
   <text x="848.0" y="350.0" class="small" text-anchor="end">+x</text>
   <rect x="880" y="95" width="400" height="420" fill="#f8fafc" stroke="#cbd5e1"/>
@@ -73,7 +75,7 @@
   <rect x="600" y="647" width="20" height="14" fill="#ede9fe" stroke="#6d28d9" />
   <text x="633" y="660">PolygonRotate: STOP, radius = global robot_radius 0.81 m</text>
   <text x="40" y="735" class="small">Panels show the default direction-zone mode. The global costmap plans with the same 0.81 m rotation circle (footprint '[]', no padding), so planned poses leave room to rotate.</text>
-  <text x="40" y="759" class="small">PolygonSurround x [-1.35, 0.80], y ±0.75 m is only the template for Forward/Reverse here; it is active in every direction with --static-zones, and with --adaptive-surround</text>
-  <text x="40" y="783" class="small">(which also adds the smaller Crawl zone). FootprintApproach (always on) projects the local footprint along the command for a 1.5 s time-to-collision check.</text>
+  <text x="40" y="759" class="small">PolygonSurround x [-1.35, 0.80], y ±0.75 m is only the template here; Forward/Reverse are clipped to robot_radius. The full template is active with --static-zones.</text>
+  <text x="40" y="783" class="small">FootprintApproach (always on) projects the local footprint along the command for a 1.5 s time-to-collision check.</text>
   <text x="40" y="807" class="small">Zones overlap and are independent settings. Inflation is a cost gradient around obstacles, not a robot-centered polygon.</text>
 </svg>

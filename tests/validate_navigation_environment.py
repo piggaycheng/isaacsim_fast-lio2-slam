@@ -12,7 +12,7 @@ import numpy as np
 import yaml
 import rclpy
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, Twist, TwistStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionClient
@@ -55,15 +55,11 @@ def planning_corridor_width(config_path=PLANNING_CONFIG):
     return float(np.ptp(footprint[:, 1]) + 2 * params["footprint_padding"])
 
 
-def configured_corridor_width(config_path=PLANNING_CONFIG, adaptive_surround=False):
+def configured_corridor_width(config_path=PLANNING_CONFIG):
     """Nominal aligned safety width, not a guarantee of traversability."""
-    if adaptive_surround:
-        profile = yaml.safe_load(Path(config_path).with_name("adaptive_surround.yaml").read_text())
-        points = np.asarray(profile["adaptive_surround"]["ros__parameters"]["crawl_points"])
-    else:
-        monitor_path = Path(config_path).with_name("collision_monitor.yaml")
-        monitor = yaml.safe_load(monitor_path.read_text())
-        points = np.asarray(monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"])
+    monitor_path = Path(config_path).with_name("collision_monitor.yaml")
+    monitor = yaml.safe_load(monitor_path.read_text())
+    points = np.asarray(monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"])
     return max(planning_corridor_width(config_path), float(np.ptp(points.reshape(-1, 2)[:, 1])))
 
 
@@ -237,7 +233,7 @@ def classify_clearance_event(samples, commands, obstacles, motion_started, bound
 
 
 class EnvironmentProbe(Node):
-    def __init__(self, directory, geometry, planning_config=PLANNING_CONFIG, adaptive_surround=False):
+    def __init__(self, directory, geometry, planning_config=PLANNING_CONFIG):
         super().__init__("navigation_environment_validation", parameter_overrides=[
             rclpy.parameter.Parameter("use_sim_time", value=True),
         ])
@@ -246,9 +242,7 @@ class EnvironmentProbe(Node):
         self.sequence = time.time_ns()
         self.planning_config = Path(planning_config)
         self.planning_width = planning_corridor_width(self.planning_config)
-        self.adaptive_surround = adaptive_surround
-        self.corridor_width = configured_corridor_width(self.planning_config, adaptive_surround)
-        self.adaptive_limits = []
+        self.corridor_width = configured_corridor_width(self.planning_config)
         minima = np.minimum(geometry["visible"]["min"], geometry["collision"]["min"])
         maxima = np.maximum(geometry["visible"]["max"], geometry["collision"]["max"])
         self.bounds = [minima[0], maxima[0], minima[1], maxima[1]]
@@ -269,7 +263,6 @@ class EnvironmentProbe(Node):
             ("/isaac/ground_truth/odom", Odometry, "truth"),
             ("/cmd_vel", Twist, "final"),
             ("/nav2/cmd_vel_nav", Twist, "raw"),
-            ("/navigation/adaptive_surround_limits", TwistStamped, "adaptive_limits"),
             ("/perception/obstacles", PointCloud2, "cloud"),
             ("/localization_3d/accepted_correction", Header, "correction"),
             ("/global_costmap/costmap", OccupancyGrid, "global_costmap"),
@@ -302,17 +295,6 @@ class EnvironmentProbe(Node):
                 raise AssertionError(f"Live {name} footprint does not match validation configuration")
             print(f"VERIFIED_GEOMETRY {name}: {values[0].string_value}, "
                   f"padding={values[1].double_value}, radius={values[2].double_value}", flush=True)
-        if self.adaptive_surround:
-            client = self.create_client(GetParameters, "/cmd_vel_safety/get_parameters")
-            if not client.wait_for_service(timeout_sec=30):
-                raise RuntimeError("Adaptive final gate parameter service unavailable")
-            future = client.call_async(GetParameters.Request(names=["require_adaptive_limits"]))
-            self.wait(future.done, 30)
-            values = future.result().values
-            if (len(values) != 1 or values[0].type != ParameterType.PARAMETER_BOOL
-                    or not values[0].bool_value):
-                raise AssertionError("Adaptive physical validation requires mandatory final-gate limits")
-            self.wait(lambda: "adaptive_limits" in self.latest, 30)
 
     def receive(self, key, message):
         self.latest[key] = message
@@ -330,11 +312,6 @@ class EnvironmentProbe(Node):
             self.commands.append({
                 "stamp": self.now(), "source": key,
                 "linear": message.linear.x, "angular": message.angular.z,
-            })
-        if self.samples is not None and key == "adaptive_limits":
-            self.adaptive_limits.append({
-                "stamp": message.header.stamp.sec + message.header.stamp.nanosec * 1e-9,
-                "linear": message.twist.linear.x, "angular": message.twist.angular.z,
             })
 
     def now(self):
@@ -428,7 +405,7 @@ class EnvironmentProbe(Node):
             start_map[1] + distance * math.sin(start_map[2]), start_map[2],
         ]
         self.hold(1.0)
-        self.samples, self.commands, self.adaptive_limits = [], [], []
+        self.samples, self.commands = [], []
         self.navigate(target)
         began, wall_began = self.now(), time.monotonic()
         motion_started = None
@@ -498,9 +475,6 @@ class EnvironmentProbe(Node):
         metrics = clearance_metrics(
             samples, obstacles, motion_started, self.bounds, self.footprint_bounds,
         )
-        if self.adaptive_surround:
-            if not any(row["linear"] == 0.1 and row["angular"] == 0.2 for row in self.adaptive_limits):
-                failure = failure or "Adaptive crawl profile was never confirmed during trial"
         classification = classify_clearance_event(
             samples, self.commands, obstacles, motion_started, self.bounds,
             metrics["between_samples_motion_allowance_m"],
@@ -589,11 +563,10 @@ class EnvironmentProbe(Node):
             ),
             **metrics, "anchor_world": anchor, "target_map": target, "obstacles": obstacles,
             "trajectory": samples, "commands": self.commands, "actor_samples": actor_samples,
-            "adaptive_limits": self.adaptive_limits,
         }
         print("ENVIRONMENT_RESULT " + json.dumps(
             {key: value for key, value in result.items()
-             if key not in ("trajectory", "commands", "actor_samples", "adaptive_limits")},
+             if key not in ("trajectory", "commands", "actor_samples")},
         ), flush=True)
         return result
 
@@ -604,7 +577,6 @@ def main():
     parser.add_argument("--geometry", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--planning-config", type=Path, default=PLANNING_CONFIG)
-    parser.add_argument("--adaptive-surround", action="store_true")
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--cases", nargs="+", choices=CASES, default=list(CASES))
     args = parser.parse_args()
@@ -619,7 +591,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     probe = EnvironmentProbe(args.control_dir, json.loads(args.geometry.read_text()),
-                             args.planning_config, args.adaptive_surround)
+                             args.planning_config)
     results = []
     try:
         probe.wait(lambda: all(
@@ -658,10 +630,6 @@ def main():
                         "sha256": hashlib.sha256(args.planning_config.read_bytes()).hexdigest(),
                         "minimum_corridor_width_m": probe.planning_width,
                         "configured_corridor_min_width_m": probe.corridor_width,
-                        "adaptive_surround": args.adaptive_surround,
-                        "adaptive_profile_sha256": hashlib.sha256(
-                            args.planning_config.with_name("adaptive_surround.yaml").read_bytes()
-                        ).hexdigest() if args.adaptive_surround else None,
                     },
                     "results": results,
                 }, indent=2) + "\n")

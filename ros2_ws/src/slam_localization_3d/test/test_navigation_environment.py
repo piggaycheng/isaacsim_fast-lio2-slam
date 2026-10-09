@@ -57,9 +57,6 @@ class NavigationEnvironmentTest(unittest.TestCase):
         self.assertTrue(scenario("corridor_1.4")[2])
         self.assertTrue(scenario("corridor_1.6")[2])
         self.assertFalse(scenario("corridor_1.8")[2])
-        self.assertAlmostEqual(configured_corridor_width(adaptive_surround=True), 1.62)
-        self.assertTrue(scenario("corridor_1.4", configured_corridor_width(adaptive_surround=True))[2])
-        self.assertFalse(scenario("corridor_1.8", configured_corridor_width(adaptive_surround=True))[2])
 
     def crossing_evidence(self):
         samples = [{"stamp": float(t), "position": [0, 0], "yaw": 0,

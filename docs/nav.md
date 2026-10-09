@@ -13,7 +13,6 @@
 ./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0   # 在 Isaac 場景放一個地圖上沒有的箱子
 ./scripts/run_nav.sh --mode 3d --navigate --filter-editor # RViz 動態標註禁行／限速區
 ./scripts/run_nav.sh --mode 3d --navigate --static-zones  # 全部保護區同時生效
-./scripts/run_nav.sh --mode 3d --navigate --adaptive-surround  # 實驗：速度自適應 Surround
 ```
 
 以預設 Office 地圖啟動時，`global_pose_adapter` 會自動送出初始位姿；log 出現 `navigator active` 後即可送目標。
@@ -174,7 +173,7 @@ BackUp 以 local costmap footprint 模擬 2 秒內的後退路徑，會撞到就
 → velocity_smoother → direction_zones → collision_monitor → cmd_vel_safety → /cmd_vel
 ```
 
-`direction_zones` 只在 `--navigate` 且未使用 `--static-zones`／`--adaptive-surround` 時啟動，否則 smoother 直接接 monitor。兩道安全關卡只會降速或停車，不會加速；smoother 放在最前，安全停車不會被平滑延遲。
+`direction_zones` 只在 `--navigate` 且未使用 `--static-zones` 時啟動，否則 smoother 直接接 monitor。兩道安全關卡只會降速或停車，不會加速；smoother 放在最前，安全停車不會被平滑延遲。
 
 ### velocity_smoother
 
@@ -216,23 +215,15 @@ Humble 的 `stop` 區域不分命令方向，車頭前有障礙時連 BackUp 與
 | rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | `PolygonRotate`：以 `base_link` 為圓心、半徑等於 global costmap `robot_radius` 的圓 | 線速度歸零，只轉發角速度 |
 
 - `FootprintApproach` 一直啟用，也會檢查轉彎時車角的掃掠。
-- Forward／Reverse 由 launch 依 profile 的 `PolygonSurround` 與 local footprint 自動產生；`swing_margin: 0.15` m（`direction_zones.yaml`）是被縮側車角的擺動裕度。Nova Carter：forward x −0.81–0.80 m，reverse x −1.35–0.36 m。
+- Forward／Reverse 由 launch 依 profile 的 `PolygonSurround` 與 local footprint 自動產生；`swing_margin: 0.15` m（`direction_zones.yaml`）是被縮側車角的擺動裕度。前、後、左右邊界再裁到 global costmap `robot_radius` 以內，planner 接受的位置不會被 Surround 擋下；矩形四角仍會超出圓。padded footprint 加 `swing_margin` 超出 `robot_radius` 時 launch 報錯。
+  - Nova Carter（半徑 0.81 m）：forward x −0.81–0.80 m，reverse x −0.81–0.36 m，y ±0.75 m。
+  - Carter v1（半徑 0.71 m）：forward x −0.66–0.71 m，reverse x −0.71–0.51 m，y ±0.71 m。
+  - 倒車時後方只比 padded footprint 多 0.15 m（Nova）／0.20 m（Carter v1）；倒車只用於低速 BackUp。
 - 要求不同方向時先輸出零速，等至少 0.2 秒，且收到 barrier 之後的 `/odometry/local` 證實 twist 與位姿差分都在 0.03 m/s、0.05 rad/s 內，才原子切換；monitor 回覆成功前一律輸出零速。命令或里程計過期（0.3 秒）時不切換；切換被拒絕、逾時或 selector 結束時命令不再流到 monitor，`cmd_vel_safety` 於 0.5 秒後停車，需重啟。RPP 在原地轉向與前進之間轉換時會多停約 0.2–0.4 秒。
 - 典型 deadlock：前方障礙進入 `PolygonStop` 而停車後，BackUp 切到 reverse 組後退；障礙若在旋轉圓內，旋轉仍會被擋下。planner 與旋轉圓同半徑，但網格離散、路徑追蹤誤差與 costmap 延遲仍可能讓障礙落在圓內。
-- 方向切換模式下 `PolygonSurround` 只作為產生 Forward／Reverse 的範本，本身保持停用。
+- 方向切換模式下 `PolygonSurround` 只作為產生 Forward／Reverse 的範本，本身保持停用；`--static-zones` 仍使用未裁切的完整範本。
 
-`--static-zones`（或 `direction_zones:=false`）恢復全部區域同時生效；此時及 `--adaptive-surround` 下停車區不分方向，BackUp 會被前方障礙擋下，只能等障礙離開或 recovery 用完後中止。
-
-#### 速度自適應 Surround（實驗）
-
-`--adaptive-surround`（`adaptive_surround.yaml`）取代方向切換保護區，在兩個預設 Surround 間切換：
-
-| 模式 | Surround（`base_link`） | 速度上限 |
-| :-- | :-- | :-- |
-| 一般 | x −1.35–0.80 m、y ±0.75 m | 0.75 m/s、0.5 rad/s |
-| Crawl | x −0.90–0.45 m、y ±0.55 m | 0.10 m/s、0.20 rad/s |
-
-啟用時 RPP 目標線速度改為 0.10 m/s、轉向 0.15 rad/s，smoother 角速度上限改為 ±0.20 rad/s。只有命令在 Crawl 上限內，且 `/odometry/local` 的 twist 與位姿差分在 0.12 m/s、0.22 rad/s 內持續 0.5 秒，才允許縮小；要求較快速度時先停車再擴大，monitor 確認後才轉發。切換期間一律輸出零速；`cmd_vel_safety` 要求帶時戳的限速心跳（超過 0.2 秒沒有就停車）。缺少命令／里程計、無效數值、時鐘倒退或切換失敗都不放行，selector 結束後需重啟。Crawl 仍不分行進方向、也會阻擋原地轉向，不是貼牆旋轉；不能因此提高限速或縮小區域，也不能取代保護區朝向／轉動掃掠的規劃，窄通道仍可能因 Crawl 區侵入側牆而停住。
+`--static-zones`（或 `direction_zones:=false`）恢復全部區域同時生效；此時停車區不分方向，BackUp 會被前方障礙擋下，只能等障礙離開或 recovery 用完後中止。
 
 ### cmd_vel_safety
 
@@ -243,7 +234,6 @@ Humble 的 `stop` 區域不分命令方向，車頭前有障礙時連 BackUp 與
 | `/scan` 與 `/perception/obstacles` 都沒有 1 秒內的新資料 | 零速；任一來源恢復後才允許新命令 |
 | `/navigation/emergency_stop` 為 `true` | 鎖定停車，需重啟 |
 | 0.5 秒未收到新命令 | 零速；下一個命令從零起步 |
-| adaptive 模式缺少有效限速心跳或正在等待切換確認 | 零速；否則套用目前區域上限 |
 | 其他 | 限速 `max_linear_speed` 0.75 m/s、`max_angular_speed` 0.5 rad/s，再限制加速；減速與停車立即轉發 |
 
 - 加速限制：`max_linear_accel: 0.8` m/s²、`max_angular_accel: 1.5` rad/s²（與 smoother 一致）；以 ROS 時間計算，每次最多計入 0.1 秒。monitor 零速、感測或校正過期、無效命令、emergency stop 都立即歸零並重設起步狀態；恢復後從零逐步加速，方向反轉先輸出零速。
@@ -258,13 +248,13 @@ bash tests/run_navigation_environment.sh --braking
 bash tests/run_navigation_environment.sh --repeats 1 --cases baseline
 ```
 
-`tests/run_navigation_environment.sh` 需先停止一般模擬，使用獨立的 Compose project 與 ROS domain 189（`VALIDATION_ROS_DOMAIN_ID` 可覆寫），不開 RViz 與 filter 區域。預設每案重複 2 次，涵蓋 baseline 導航、兩種橫穿速度、空地與 1.8 m 通道內的移動障礙，以及 1.8／1.6／1.4／0.6 m 通道；`--cases ... --repeats N` 可選子集，結果存於 `ros2_ws/log/navigation_environment/<時間>/`。通過條件是可通行情境到達目標、過窄通道安全停住，且保守車體包絡淨空至少 2 cm；不安全淨空會鎖定 emergency stop 並中止整組測試。淨空以 2D USD 車體包絡估計，不是 PhysX 接觸感測。`--adaptive-surround` 另有針對 Crawl 區域的通道與煞停測試案例。
+`tests/run_navigation_environment.sh` 需先停止一般模擬，使用獨立的 Compose project 與 ROS domain 189（`VALIDATION_ROS_DOMAIN_ID` 可覆寫），不開 RViz 與 filter 區域。預設每案重複 2 次，涵蓋 baseline 導航、兩種橫穿速度、空地與 1.8 m 通道內的移動障礙，以及 1.8／1.6／1.4／0.6 m 通道；`--cases ... --repeats N` 可選子集，結果存於 `ros2_ws/log/navigation_environment/<時間>/`。通過條件是可通行情境到達目標、過窄通道安全停住，且保守車體包絡淨空至少 2 cm；不安全淨空會鎖定 emergency stop 並中止整組測試。淨空以 2D USD 車體包絡估計，不是 PhysX 接觸感測。
 
 ## 目前限制
 
 - `collision_monitor` 區域只在 Office／Nova Carter 平地模擬驗證過；點數門檻、稀疏／低矮障礙及更差的感測延遲未驗證，不是認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物，也沒有移動物體軌跡預測；動態橫穿仍曾出現車體包絡與障礙重疊。
-- 規劃只保證原地旋轉圓，未檢查前進／後退保護區的朝向掃掠；`--static-zones` 與 `--adaptive-surround` 下旋轉仍由矩形 `PolygonSurround`／Crawl 判斷，可能與規劃半徑不一致而卡住。
+- 規劃只保證原地旋轉圓，未檢查前進／後退保護區的朝向掃掠；`--static-zones` 下旋轉仍由矩形 `PolygonSurround` 判斷，可能與規劃半徑不一致而卡住。
 - Speed 不涵蓋 recovery、原地旋轉或直接速度命令；Binary 開關區未實作。
 - 斜坡、複雜人流與完整動態清除未驗證。
 - 多車以 namespace 與獨立 `/NAME/tf` 支援，見 [multi_robot.md](multi_robot.md)，車輛之間無協調。

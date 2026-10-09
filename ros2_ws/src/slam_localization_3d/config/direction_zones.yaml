@@ -2,6 +2,7 @@
 # from the robot's PolygonSurround and local_costmap footprint:
 #   forward: PolygonStop, PolygonSlow, PolygonSurround trimmed behind the footprint
 #   reverse: PolygonSurround trimmed ahead of the footprint
+#   Forward/reverse edges are also clipped to the global costmap robot_radius.
 #   rotate:  PolygonRotate, a circle about base_link with the global costmap's
 #            robot_radius, so the planner keeps room for in-place rotation
 direction_zones:

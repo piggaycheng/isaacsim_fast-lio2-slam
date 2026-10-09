@@ -40,10 +40,9 @@ class TestCmdVelReceiver(unittest.TestCase):
         overrides = yaml.safe_load((config / "robots/nova_carter.yaml").read_text())[
             "parameter_overrides"
         ]
-        for name in ("cmd_vel_safety", "adaptive_surround"):
-            parameters = overrides[name]["ros__parameters"]
-            self.assertEqual(parameters["max_linear_speed"], self.receiver.max_linear)
-            self.assertEqual(parameters["max_angular_speed"], self.receiver.max_angular)
+        parameters = overrides["cmd_vel_safety"]["ros__parameters"]
+        self.assertEqual(parameters["max_linear_speed"], self.receiver.max_linear)
+        self.assertEqual(parameters["max_angular_speed"], self.receiver.max_angular)
         smoother = overrides["velocity_smoother"]["ros__parameters"]
         self.assertEqual(smoother["max_velocity"], [0.75, 0.0, 0.5])
         self.assertEqual(smoother["min_velocity"], [-0.75, 0.0, -0.5])
@@ -66,10 +65,9 @@ class TestCmdVelReceiver(unittest.TestCase):
             with self.subTest(robot_type=robot_type):
                 overrides = yaml.safe_load((profiles / f"{robot_type}.yaml").read_text())[
                     "parameter_overrides"]
-                for node in ("cmd_vel_safety", "adaptive_surround"):
-                    parameters = overrides[node]["ros__parameters"]
-                    self.assertEqual(parameters["max_linear_speed"], 0.75)
-                    self.assertEqual(parameters["max_angular_speed"], 0.5)
+                parameters = overrides["cmd_vel_safety"]["ros__parameters"]
+                self.assertEqual(parameters["max_linear_speed"], 0.75)
+                self.assertEqual(parameters["max_angular_speed"], 0.5)
                 smoother = overrides["velocity_smoother"]["ros__parameters"]
                 self.assertEqual(smoother["max_velocity"], [0.75, 0.0, 0.5])
                 self.assertEqual(smoother["min_velocity"], [-0.75, 0.0, -0.5])

@@ -156,22 +156,29 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
         raise ValueError("Direction zones require a clockwise axis-aligned PolygonSurround")
     if not (swing >= 0 and min(xs) < rear - swing and max(xs) > front + swing):
         raise ValueError("PolygonSurround must extend beyond the footprint plus swing_margin")
+    radius = rotation_radius(costmaps)
+    if rear - swing < -radius - 1e-9 or front + swing > radius + 1e-9:
+        raise ValueError("Footprint plus swing_margin must stay within the global robot_radius")
+    # Forward/Reverse never reach beyond the planning circle, so a pose the planner
+    # accepts is not stopped by the surround either.
+    x_max, x_min = min(max(xs), radius), max(min(xs), -radius)
+    y_max, y_min = min(max(ys), radius), max(min(ys), -radius)
     monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_direction"
     # All surround variants share one topic; Humble only publishes enabled polygons.
     monitor["PolygonSurroundForward"] = dict(
         monitor["PolygonSurround"], enabled=True,
-        points=rectangle(max(xs), rear - swing, max(ys), min(ys)),
+        points=rectangle(x_max, max(rear - swing, -radius), y_max, y_min),
     )
     monitor["PolygonSurroundReverse"] = dict(
         monitor["PolygonSurround"], enabled=False,
-        points=rectangle(front + swing, min(xs), max(ys), min(ys)),
+        points=rectangle(min(front + swing, radius), x_min, y_max, y_min),
     )
     # In-place rotation stops on the global costmap's planning circle, so any pose
     # the planner reaches can also be rotated in.
     monitor["PolygonRotate"] = {
         key: monitor["PolygonSurround"][key]
         for key in ("action_type", "max_points", "visualize", "polygon_pub_topic")
-    } | {"type": "circle", "radius": rotation_radius(costmaps), "enabled": False}
+    } | {"type": "circle", "radius": radius, "enabled": False}
     monitor["PolygonSurround"]["enabled"] = False
     monitor["polygons"] += ["PolygonSurroundForward", "PolygonSurroundReverse", "PolygonRotate"]
     for name in ("PolygonStop", "PolygonSlow"):
@@ -207,78 +214,13 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
     ]
 
 
-def configure_surround(context, collision_config, navigation_config, adaptive_config, direction_config):
-    enabled = LaunchConfiguration("adaptive_surround").perform(context).lower() == "true"
-    if not enabled:
-        if (LaunchConfiguration("direction_zones").perform(context).lower() == "true"
-                and LaunchConfiguration("navigate").perform(context).lower() == "true"):
-            return configure_direction_zones(context, collision_config, navigation_config, direction_config)
-        return [
-            SetLaunchConfiguration("collision_config", collision_config),
-            SetLaunchConfiguration("navigation_config", navigation_config),
-        ]
-    if any(LaunchConfiguration(name).perform(context).lower() != "true"
-           for name in ("navigate", "costmaps", "obstacle_cloud")):
-        raise ValueError("Adaptive surround requires navigation, costmaps and obstacle cloud")
-    kind = robot_type(context)
-    collision = load_parameters(collision_config, kind)
-    navigation = load_parameters(navigation_config, kind)
-    adaptive = load_parameters(adaptive_config, kind)["adaptive_surround"]["ros__parameters"]
-    local = load_parameters(
-        LaunchConfiguration("costmap_config").perform(context), kind,
-    )["local_costmap"]["local_costmap"]["ros__parameters"]
-    monitor = collision["collision_monitor"]["ros__parameters"]
-    monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_adaptive"
-    monitor["PolygonSurround"]["visualize"] = False
-    monitor["polygons"].append("PolygonSurroundCrawl")
-    monitor["PolygonSurroundCrawl"] = dict(
-        monitor["PolygonSurround"], points=adaptive["crawl_points"], enabled=False,
-        polygon_pub_topic="/collision_monitor/polygon_surround_crawl",
-    )
-    collision["cmd_vel_safety"]["ros__parameters"]["require_adaptive_limits"] = True
-    controller = navigation["controller_server"]["ros__parameters"]["FollowPath"]
-    controller["desired_linear_vel"] = adaptive["crawl_linear"]
-    controller["rotate_to_heading_angular_vel"] = 0.15
-    smoother = navigation["velocity_smoother"]["ros__parameters"]
-    smoother["max_velocity"][2] = adaptive["crawl_angular"]
-    smoother["min_velocity"][2] = -adaptive["crawl_angular"]
-    directory = tempfile.TemporaryDirectory(prefix="isaac_adaptive_surround_")
-    paths = {}
-    for name, config in (("collision", collision), ("navigation", navigation)):
-        filename = os.path.join(directory.name, name + ".yaml")
-        with open(filename, "w", encoding="utf-8") as stream:
-            yaml.safe_dump(config, stream)
-        paths[name] = filename
-
-    def cleanup(event, context):
-        directory.cleanup()
-        return []
-
-    selector = Node(
-        package="slam_localization_3d", executable="adaptive_surround.py",
-        name="adaptive_surround", output="screen",
-        parameters=[RobotParameterFile(
-            adaptive_config, LaunchConfiguration("namespace"), LaunchConfiguration("robot_type"),
-        ), {
-            "use_sim_time": True, "full_points": monitor["PolygonSurround"]["points"],
-            "physical_footprint": [
-                float(value) for point in json.loads(local["footprint"]) for value in point
-            ],
-            "footprint_padding": float(local["footprint_padding"]),
-        }],
-    )
+def configure_surround(context, collision_config, navigation_config, direction_config):
+    if (LaunchConfiguration("direction_zones").perform(context).lower() == "true"
+            and LaunchConfiguration("navigate").perform(context).lower() == "true"):
+        return configure_direction_zones(context, collision_config, navigation_config, direction_config)
     return [
-        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
-        SetLaunchConfiguration("collision_config", paths["collision"]),
-        SetLaunchConfiguration("navigation_config", paths["navigation"]),
-        selector,
-        RegisterEventHandler(OnProcessExit(
-            target_action=selector,
-            on_exit=lambda event, context: [] if context.is_shutdown else [
-                # Leave the safety watchdog alive to stop on the expired heartbeat.
-                LogInfo(msg="ERROR: Adaptive surround exited; safety gates remain active, restart required"),
-            ],
-        )),
+        SetLaunchConfiguration("collision_config", collision_config),
+        SetLaunchConfiguration("navigation_config", navigation_config),
     ]
 
 
@@ -608,12 +550,10 @@ def generate_launch_description():
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             DeclareLaunchArgument("costmaps", default_value="false"),
             DeclareLaunchArgument("navigate", default_value="false"),
-            DeclareLaunchArgument("adaptive_surround", default_value="false",
-                                  description="Experimental acknowledged low-speed surround profiles"),
             DeclareLaunchArgument(
                 "direction_zones", default_value="true",
                 description="Switch forward/reverse/rotate collision zones by command direction "
-                            "(navigate only; adaptive_surround takes precedence)",
+                            "(navigate only)",
             ),
             DeclareLaunchArgument("filter_editor", default_value="false",
                                   description="Enable live RViz polygon annotation"),
@@ -631,8 +571,7 @@ def generate_launch_description():
             OpaqueFunction(
                 function=configure_surround,
                 args=[os.path.join(package, "config", filename) for filename in (
-                    "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml",
-                    "direction_zones.yaml",
+                    "collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml",
                 )],
             ),
             OpaqueFunction(function=robot_nodes, args=[package, nav]),

@@ -113,12 +113,6 @@ parameter_overrides:
       # Rear margin includes the measured 1 m/s reverse stopping distance.
       PolygonSurround: {points: [0.80, 0.75, 0.80, -0.75, -1.35, -0.75, -1.35, 0.75]}
       PolygonSlow: {points: [0.95, 0.50, 0.95, -0.50, 0.20, -0.50, 0.20, 0.50]}
-  # config/adaptive_surround.yaml
-  adaptive_surround:
-    ros__parameters:
-      crawl_points: [0.45, 0.55, 0.45, -0.55, -0.90, -0.55, -0.90, 0.55]
-      max_linear_speed: 0.75
-      max_angular_speed: 0.5
 
   # --- Speed and acceleration (config/navigation.yaml, config/collision_monitor.yaml) ---
   controller_server:
@@ -126,7 +120,7 @@ parameter_overrides:
       FollowPath:
         desired_linear_vel: 0.75
         rotate_to_heading_angular_vel: 0.5
-  # Keep velocity_smoother and adaptive_surround within cmd_vel_safety's speed caps.
+  # Keep velocity_smoother within cmd_vel_safety's speed caps.
   velocity_smoother:
     ros__parameters:
       max_velocity: [0.75, 0.0, 0.5]

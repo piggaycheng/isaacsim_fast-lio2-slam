@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 import yaml
-from geometry_msgs.msg import PolygonStamped, Twist, TwistStamped
+from geometry_msgs.msg import PolygonStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -41,17 +41,13 @@ def separation(first, second):
 
 
 class BrakingProbe(Node):
-    def __init__(self, directory, bounds, footprint_bounds, adaptive_surround=False):
+    def __init__(self, directory, bounds, footprint_bounds):
         super().__init__("braking_validation", parameter_overrides=[
             rclpy.parameter.Parameter("use_sim_time", value=True),
         ])
         self.directory = directory
         self.bounds = bounds
         self.footprint_bounds = footprint_bounds
-        self.adaptive_surround = adaptive_surround
-        self.adaptive_profile = yaml.safe_load(
-            (CONFIG / "adaptive_surround.yaml").read_text()
-        )["adaptive_surround"]["ros__parameters"] if adaptive_surround else None
         self.directory.mkdir(parents=True, exist_ok=True)
         self.latest = {}
         self.history = []
@@ -68,7 +64,6 @@ class BrakingProbe(Node):
             ("/perception/obstacles", PointCloud2, "cloud"),
             ("/localization_3d/accepted_correction", Header, "correction"),
             ("/collision_monitor/polygon_surround", PolygonStamped, "surround"),
-            ("/navigation/adaptive_surround_limits", TwistStamped, "adaptive_limits"),
         ]:
             self.create_subscription(
                 kind, topic, lambda msg, key=key: self.receive(key, msg), qos_profile_sensor_data,
@@ -150,25 +145,8 @@ class BrakingProbe(Node):
                 steady_since = self.now()
             return self.now() - steady_since >= 0.2
 
-        def ready():
-            nonlocal steady_since
-            profile_ready = not self.adaptive_surround or (
-                "surround" in self.latest and "adaptive_limits" in self.latest
-                and self.latest["adaptive_limits"].twist.linear.x == 0.1
-                and self.latest["adaptive_limits"].twist.angular.z == 0.2
-                and np.allclose(
-                    [[point.x, point.y] for point in self.latest["surround"].polygon.points],
-                    np.array(self.adaptive_profile["crawl_points"]).reshape(-1, 2),
-                    atol=1e-6, rtol=0,
-                )
-            )
-            if not profile_ready:
-                steady_since = None
-                return False
-            return cruising()
-
         try:
-            self.wait(ready)
+            self.wait(cruising)
         except TimeoutError as error:
             velocities = [abs(message.twist.twist.angular.z) if angular else math.hypot(
                 message.twist.twist.linear.x, message.twist.twist.linear.y,
@@ -187,9 +165,9 @@ class BrakingProbe(Node):
         self.history.clear()
         trigger_time = self.now()
         response = None
-        if direction in ("watchdog", "selector_watchdog"):
+        if direction == "watchdog":
             matches = []
-            target = "adaptive_surround.py" if direction == "selector_watchdog" else "ground_obstacle_filter"
+            target = "ground_obstacle_filter"
             for path in Path("/proc").glob("[0-9]*/cmdline"):
                 try:
                     args = path.read_bytes().split(b"\0")
@@ -199,19 +177,14 @@ class BrakingProbe(Node):
                     matches.append(int(path.parent.name))
             if len(matches) != 1:
                 raise RuntimeError(f"Expected one {target}, got {matches}")
-            if direction == "selector_watchdog":
-                os.kill(matches[0], signal.SIGKILL)
-            else:
-                self.paused.add(matches[0])
-                os.kill(matches[0], signal.SIGSTOP)
+            self.paused.add(matches[0])
+            os.kill(matches[0], signal.SIGSTOP)
         else:
             monitor = yaml.safe_load((CONFIG / "collision_monitor.yaml").read_text())
             params = monitor["collision_monitor"]["ros__parameters"]
             polygon = np.array(params[
                 "PolygonStop" if direction == "front" else "PolygonSurround"
             ]["points"]).reshape(-1, 2)
-            if self.adaptive_surround and direction != "front":
-                polygon = np.array(self.adaptive_profile["crawl_points"]).reshape(-1, 2)
             if direction == "front":
                 offset, sizes = [float(polygon[:, 0].max()) + 0.09, 0.0], [0.2, 0.6, 1.2]
             elif direction == "rear":
@@ -274,7 +247,6 @@ class BrakingProbe(Node):
             ) for _, msg in truth)
         result = {
             "direction": direction, "requested_speed": requested, "repeat": repeat,
-            "adaptive_surround": self.adaptive_surround,
             "requested_twist": requested_twist,
             "measured_cruise_speed": cruise,
             "zero_command_delay_s": None if zero_time is None else zero_time - trigger_time,
@@ -304,16 +276,11 @@ def main():
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--linear-speeds", type=float, nargs="+", default=[0.25, 0.5, 0.75])
     parser.add_argument("--angular-speeds", type=float, nargs="+", default=[0.35, 0.5])
-    parser.add_argument("--adaptive-surround", action="store_true")
     args = parser.parse_args()
     if args.repeats < 1 or any(not 0 < v <= 0.75 for v in args.linear_speeds):
         parser.error("Use positive repeats and linear speeds in (0, 0.75]")
     if any(not 0 < v <= 0.5 for v in args.angular_speeds):
         parser.error("Use angular speeds in (0, 0.5]")
-    if args.adaptive_surround and (
-        max(args.linear_speeds) > 0.1 or max(args.angular_speeds) > 0.2
-    ):
-        parser.error("Adaptive crawl braking requires linear speeds <= 0.1 and angular speeds <= 0.2")
     rclpy.init()
     def interrupted(signum, frame):
         raise RuntimeError(f"Braking probe interrupted by signal {signum}")
@@ -328,7 +295,7 @@ def main():
     fmax = footprint.max(axis=0) + geometry["footprint_padding"]
     probe = BrakingProbe(
         args.control_dir, [minima[0], maxima[0], minima[1], maxima[1]],
-        [fmin[0], fmax[0], fmin[1], fmax[1]], args.adaptive_surround,
+        [fmin[0], fmax[0], fmin[1], fmax[1]],
     )
     results = []
     try:
@@ -355,13 +322,10 @@ def main():
                     args.output.write_text(json.dumps(results, indent=2) + "\n")
         results.append(probe.case("watchdog", max(args.linear_speeds), 0))
         args.output.write_text(json.dumps(results, indent=2) + "\n")
-        if args.adaptive_surround:
-            results.append(probe.case("selector_watchdog", max(args.linear_speeds), 0))
         args.output.write_text(json.dumps(results, indent=2) + "\n")
         if not all(result["pass"] for result in results):
             raise AssertionError("Insufficient physical clearance in braking results")
-        fault_cases = 2 if args.adaptive_surround else 1
-        print(f"PASS: {len(results) - fault_cases} physical obstacle cases and {fault_cases} fault-stop cases", flush=True)
+        print(f"PASS: {len(results) - 1} physical obstacle cases and 1 fault-stop case", flush=True)
     finally:
         probe.command = Twist()
         probe.publisher.publish(probe.command)

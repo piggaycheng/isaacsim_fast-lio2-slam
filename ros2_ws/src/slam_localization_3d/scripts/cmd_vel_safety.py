@@ -4,7 +4,7 @@
 import math
 
 import rclpy
-from geometry_msgs.msg import Twist, TwistStamped
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan, PointCloud2
@@ -22,7 +22,7 @@ class CmdVelSafety(Node):
         self.max_linear_accel = self.declare_parameter("max_linear_accel", 0.8).value
         self.max_angular_accel = self.declare_parameter("max_angular_accel", 1.5).value
         self.command_timeout = self.declare_parameter("command_timeout", 0.5).value
-        # Robot speed limits (profile parameter_overrides); adaptive limits may not exceed them.
+        # Robot speed limits (profile parameter_overrides).
         self.max_linear_speed = self.declare_parameter("max_linear_speed", 0.75).value
         self.max_angular_speed = self.declare_parameter("max_angular_speed", 0.5).value
         for name in ("sensor_timeout", "max_linear_accel", "max_angular_accel", "command_timeout",
@@ -31,16 +31,6 @@ class CmdVelSafety(Node):
             if not math.isfinite(value) or value <= 0:
                 self.destroy_node()
                 raise ValueError(f"{name} must be finite and positive")
-        self.require_adaptive_limits = self.declare_parameter("require_adaptive_limits", False).value
-        self.adaptive_timeout = self.declare_parameter("adaptive_timeout", 0.2).value
-        if (not math.isfinite(self.adaptive_timeout) or self.adaptive_timeout <= 0
-                or self.require_adaptive_limits and self.adaptive_timeout > 0.2):
-            self.destroy_node()
-            raise ValueError("adaptive_timeout must be positive and at most 0.2 s in adaptive mode")
-        self.adaptive_limits = None
-        self.last_adaptive_stamp = None
-        self.pending_adaptive_limits = None
-        self.adaptive_blocked = None
         self.sensor_stamps = {"scan": None, "obstacles": None}
         self.last_watchdog_time = None
         self.last_output = Twist()
@@ -48,9 +38,6 @@ class CmdVelSafety(Node):
         self.last_command_time = None
         self.sensors_stale = None
         self.publisher = self.create_publisher(Twist, "cmd_vel", 10)
-        self.adaptive_ack = self.create_publisher(
-            TwistStamped, "navigation/adaptive_surround_limits_ack", 10,
-        )
         self.create_subscription(
             LaserScan, "scan", lambda msg: self.on_sensor("scan", msg),
             qos_profile_sensor_data,
@@ -64,7 +51,6 @@ class CmdVelSafety(Node):
         )
         self.create_subscription(Bool, "navigation/emergency_stop", self.on_stop, 10)
         self.create_subscription(Twist, "nav2/cmd_vel", self.on_command, 10)
-        self.create_subscription(TwistStamped, "navigation/adaptive_surround_limits", self.on_adaptive_limits, 10)
         self.create_timer(0.1, self.on_watchdog)
 
     def on_sensor(self, source, message):
@@ -83,9 +69,6 @@ class CmdVelSafety(Node):
             self.last_output = Twist()
             self.last_output_time = None
             self.last_command_time = None
-            self.adaptive_limits = None
-            self.last_adaptive_stamp = None
-            self.pending_adaptive_limits = None
             self.get_logger().warning("Clock reset; clearing safety freshness state")
         self.last_watchdog_time = now
         return now
@@ -103,60 +86,9 @@ class CmdVelSafety(Node):
             self.sensors_stale = not fresh
         return fresh
 
-    def on_adaptive_limits(self, message):
-        now = self.watchdog_time()
-        self.apply_pending_limits(now)
-        stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
-        values = (message.twist.linear.x, message.twist.linear.y, message.twist.linear.z,
-                  message.twist.angular.x, message.twist.angular.y, message.twist.angular.z)
-        if (message.header.frame_id != "base_link" or not -0.05 <= now - stamp < self.adaptive_timeout
-                or not all(math.isfinite(value) for value in values)
-                or any(values[index] != 0 for index in (1, 2, 3, 4))
-                or (values[0] == 0) != (values[5] == 0)
-                or self.last_adaptive_stamp is not None and stamp < self.last_adaptive_stamp
-                or not 0 <= values[0] <= self.max_linear_speed
-                or not 0 <= values[5] <= self.max_angular_speed):
-            self.adaptive_limits = None
-            self.pending_adaptive_limits = None
-            self.get_logger().error("Invalid or stale adaptive limits; stopping Carter")
-            if self.require_adaptive_limits:
-                self.publish_output(Twist(), now)
-            return
-        if now < stamp:
-            self.pending_adaptive_limits = message
-            return
-        self.adaptive_limits = (stamp, values[0], values[5])
-        self.last_adaptive_stamp = stamp
-        if self.require_adaptive_limits:
-            # A limits message may stop motion, but must never replay an old command.
-            if (message.twist == Twist() or abs(self.last_output.linear.x) > values[0]
-                    or abs(self.last_output.angular.z) > values[5]):
-                self.publish_output(Twist(), now)
-            self.adaptive_ack.publish(message)
-
-    def apply_pending_limits(self, now):
-        if self.pending_adaptive_limits is not None:
-            message = self.pending_adaptive_limits
-            stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
-            if stamp <= now:
-                self.pending_adaptive_limits = None
-                self.on_adaptive_limits(message)
-
-    def adaptive_ready(self, now):
-        ready = not self.require_adaptive_limits or (
-            self.adaptive_limits is not None
-            and 0 <= now - self.adaptive_limits[0] < self.adaptive_timeout
-            and self.adaptive_limits[1] > 0 and self.adaptive_limits[2] > 0
-        )
-        if self.require_adaptive_limits and self.adaptive_blocked != (not ready):
-            self.get_logger().info("Adaptive limits ready" if ready else "Adaptive limits unavailable; stopping Carter")
-            self.adaptive_blocked = not ready
-        return ready
-
     def on_watchdog(self):
         now = self.watchdog_time()
-        self.apply_pending_limits(now)
-        if not self.sensors_fresh(now) or not self.adaptive_ready(now) or self.stop_latched or (
+        if not self.sensors_fresh(now) or self.stop_latched or (
             self.last_correction is None
             or not 0 <= now - self.last_correction < 4.0
         ) or (
@@ -225,8 +157,8 @@ class CmdVelSafety(Node):
             ):
                 self.get_logger().warning("3D localization correction stale; stopping Carter")
                 self.last_safety_warning = now
-        elif sensors_fresh and self.adaptive_ready(now):
-            linear_limit, angular_limit = (self.adaptive_limits[1:] if self.require_adaptive_limits else (self.max_linear_speed, self.max_angular_speed))
+        elif sensors_fresh:
+            linear_limit, angular_limit = self.max_linear_speed, self.max_angular_speed
             output.linear.x = max(-linear_limit, min(linear_limit, command.linear.x))
             output.angular.z = max(-angular_limit, min(angular_limit, command.angular.z))
             if (output.linear.x != command.linear.x or output.angular.z != command.angular.z) and (

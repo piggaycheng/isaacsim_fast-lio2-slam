@@ -87,7 +87,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 | `simulation.gimbal`（選用） | 在車上生成雲台與相機（無外觀，純 transform）：`translation`（pan/tilt 軸原點，相對 `chassis_link`，m）、`max_speed_deg_s`（預設 90）、`tilt_limits_deg`（預設 ±90）。pan（`gimbal_pan_joint`，繞 z）與 tilt（`gimbal_tilt_joint`，繞 y，正值向下）是位置驅動的 revolute joint，pan 無限位可 360° 旋轉。相機 prim 為 `<車 prim>/gimbal_tilt/camera`（朝車頭 +x）。ROS：目前姿態發布 `sensor_msgs/JointState` 到 `/[ROBOT/]gimbal/joint_states`（只含 pan／tilt，rad，pan 折回 (-π, π]，因 PhysX 無法驅動超過約一圈的無限位關節）；目標姿態發布 `sensor_msgs/JointState` 到 `/[ROBOT/]gimbal/joint_command`（`name` 為 `gimbal_pan_joint`／`gimbal_tilt_joint`，可只給其中一個，`position` 為 rad）。pan 以最短路徑、限速轉到目標，tilt 夾在限位內。指定 `--mqtt-host` 時相機自動加入 MQTT 列表（`camera/gimbal`，預設關閉、收到 enable 才串流） |
 | `local_odometry.inputs` | `local_ekf` 融合的來源（`wheel`、`imu`、`lio`），見 [`3d_localization.md`](3d_localization.md#local-ekf-輸入選擇)；非輪式機器人用 `[lio, imu]` |
 | `sensor_frames` | `base_link` 到 `lidar_link`、`imu_link` 的靜態 TF；`imu_link` 即 FAST-LIO body 的安裝位置 |
-| `parameter_overrides` | 深度合併到各參數檔：輪速里程計與 covariance、IMU／PCD covariance、costmap footprint、self filter、collision monitor 與 adaptive surround 區域、速度與加速度上限 |
+| `parameter_overrides` | 深度合併到各參數檔：輪速里程計與 covariance、IMU／PCD covariance、costmap footprint、self filter、collision monitor 區域、速度與加速度上限 |
 | `ground_obstacle_filter.ros__parameters.ground_z` | 地面相對 `base_link` 的高度（Nova Carter `0.0`、Carter v1 `-0.24` m），見 [nav.md](nav.md) |
 
 接著以 `--robot NAME:<type>@X,Y` 使用。車種相關值只寫在 profile，缺少必要項目會在載入時報錯；footprint、安全區域與速度的共用預設為 Nova Carter 的值，其他車種需逐項替換並自行驗證。covariance 校正流程見 [covariance_calibration.md](covariance_calibration.md)。
@@ -111,7 +111,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 - **網路**：外部程式與本專案使用相同的 `ROS_DOMAIN_ID`、`ROS_LOCALHOST_ONLY` 與 RMW；container 為 host network，主機上的程式可直接看到 topic。ROS 版本須與 Humble 的介面相容。
 - **座標**：`map` 與 Isaac world 對齊，nav graph 直接使用 Isaac 座標，不需換算。
 - **逐段下單**：Nav2 只追蹤單一目標，不會執行外部系統的時間預約。要讓外部系統的協調生效，fleet adapter 須照計畫把路徑點逐段送給 Nav2，需要等待時不送下一段或取消目前目標，並持續回報位姿。兩點之間由 Nav2 自行規劃，路徑點要夠密才不會偏離計畫車道。
-- **保護區比車體大**：collision monitor 的 Surround 是固定矩形（Nova Carter：x −1.35–0.80 m、y ±0.75 m；Carter v1：x −1.10–0.80 m、y ±0.81 m），遠大於車體寬度。`register` 的 `footprint_radius` 送的是旋轉圓半徑（Nova Carter 0.81 m、Carter v1 0.71 m），但前進／後退保護區超出這個圓，外部系統的車輛 profile（vicinity）與車道間距仍須配合保護區範圍，否則兩車在外部系統認為安全的間距下通過，仍會觸發對方的保護區而停車，與計畫不一致。
+- **保護區比車體大**：預設方向切換模式下，前進／倒車 Surround 的前、後、左右邊界都裁到旋轉圓半徑以內（Nova Carter 0.81 m、Carter v1 0.71 m，即 `register` 送出的 `footprint_radius`），但矩形四角仍超出這個圓（`--static-zones` 則用完整範本：Nova Carter x −1.35–0.80 m、y ±0.75 m；Carter v1 x −1.10–0.80 m、y ±0.81 m）。外部系統的車輛 profile（vicinity）與車道間距仍須留有餘量，否則兩車在外部系統認為安全的間距下通過，仍可能觸發對方的保護區而停車，與計畫不一致。
 - **到位與失敗**：到位容差為位置 0.15 m、航向 0.25 rad，到位後鎖定。導航失敗時 recovery 約 30 秒後才中止目標（`ABORTED`），adapter 須設逾時並回報重新規劃。
 - **電量**：沒有 `BatteryState`，需由 adapter 自行提供。
 - 車輛須已完成定位並出現 `navigator active` 後才能下單；生成位置與車種由 `run_multi_nav.sh --robot ...` 決定。

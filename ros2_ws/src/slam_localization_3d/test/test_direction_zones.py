@@ -37,7 +37,7 @@ fusion_launch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fusion_launch)
 
 CONFIGS = [str(PACKAGE / "config" / filename) for filename in (
-    "collision_monitor.yaml", "navigation.yaml", "adaptive_surround.yaml", "direction_zones.yaml",
+    "collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml",
 )]
 
 
@@ -51,7 +51,7 @@ class DirectionLaunchTest(unittest.TestCase):
     def configure(self, robot_type="nova_carter", **overrides):
         context = LaunchContext()
         context.launch_configurations.update(
-            namespace="", robot_type=robot_type, adaptive_surround="false", direction_zones="true",
+            namespace="", robot_type=robot_type, direction_zones="true",
             navigate="true", costmaps="true", obstacle_cloud="true",
             costmap_config=str(PACKAGE / "config/observation_costmaps.yaml"),
         )
@@ -83,7 +83,7 @@ class DirectionLaunchTest(unittest.TestCase):
         self.assertEqual(params["PolygonSurroundForward"]["points"],
                          [0.8, 0.75, 0.8, -0.75, -0.81, -0.75, -0.81, 0.75])
         self.assertEqual(params["PolygonSurroundReverse"]["points"],
-                         [0.36, 0.75, 0.36, -0.75, -1.35, -0.75, -1.35, 0.75])
+                         [0.36, 0.75, 0.36, -0.75, -0.81, -0.75, -0.81, 0.75])
         self.assertEqual(params["PolygonSurround"]["points"], [0.8, 0.75, 0.8, -0.75, -1.35, -0.75, -1.35, 0.75])
         enabled = {name for name in POLYGONS if params[name]["enabled"]}
         self.assertEqual(enabled, set(ZONE_SETS["forward"]))
@@ -103,10 +103,19 @@ class DirectionLaunchTest(unittest.TestCase):
         forward = params["PolygonSurroundForward"]["points"]
         reverse = params["PolygonSurroundReverse"]["points"]
         self.assertAlmostEqual(forward[4], -0.66)
-        self.assertEqual(forward[:2], [0.8, 0.81])
+        self.assertEqual(forward[:2], [0.71, 0.71])
         self.assertAlmostEqual(reverse[0], 0.51)
-        self.assertEqual(reverse[4:6], [-1.1, -0.81])
+        self.assertEqual(reverse[4:6], [-0.71, -0.71])
         self.assertEqual(params["PolygonRotate"]["radius"], 0.71)
+
+    def test_direction_surrounds_stay_within_planning_circle(self):
+        for kind in ("nova_carter", "carter_v1"):
+            context, _ = self.configure(kind)
+            params = self.monitor(context)
+            radius = params["PolygonRotate"]["radius"]
+            for name in ("PolygonSurroundForward", "PolygonSurroundReverse"):
+                with self.subTest(kind=kind, zone=name):
+                    self.assertLessEqual(max(abs(value) for value in params[name]["points"]), radius)
 
     def test_rotation_circle_must_cover_footprint_sweep_and_planning(self):
         for kind in ("nova_carter", "carter_v1"):
@@ -143,12 +152,6 @@ class DirectionLaunchTest(unittest.TestCase):
             context, actions = self.configure(**overrides)
             self.assertEqual(len(actions), 2)
             self.assertEqual(context.launch_configurations["collision_config"], CONFIGS[0])
-
-    def test_adaptive_surround_takes_precedence(self):
-        context, actions = self.configure(adaptive_surround="true")
-        params = self.monitor(context)
-        self.assertEqual(params["cmd_vel_in_topic"], "/nav2/cmd_vel_adaptive")
-        self.assertNotIn("PolygonSurroundForward", params)
 
 
 class DirectionZonesTest(unittest.TestCase):
@@ -391,11 +394,12 @@ class RealHumbleDirectionZonesTest(unittest.TestCase):
             state["obstacle"] = (math.pi / 2, 0.78)
             wait(lambda: gate.last_output == Twist())
             hold_zero()
-            # Behind the trimmed forward surround but inside the reverse surround.
-            state["obstacle"] = (math.pi, 1.0)
+            # Behind the robot inside the reverse surround, which stops at the rotation circle.
+            state["obstacle"] = (math.pi, 0.78)
             state["command"] = twist(-0.2)
             wait(lambda: selector.active == "reverse")
             hold_zero()
+            state["obstacle"] = None
             state["command"] = twist(0.3)
             wait(lambda: selector.active == "forward" and gate.last_output.linear.x > 0.1)
             executor.remove_node(selector)

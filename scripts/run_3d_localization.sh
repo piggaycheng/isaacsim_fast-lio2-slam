@@ -13,7 +13,6 @@ global_fusion=false
 obstacle_cloud=false
 costmaps=false
 navigate=false
-adaptive_surround=false
 direction_zones=true
 filter_editor=false
 filter_state="$project_dir/maps/costmap_filters/editor.json"
@@ -52,8 +51,6 @@ Options:
       --filter-state FILE
                       Persistent editor JSON inside the project (default:
                       maps/costmap_filters/editor.json).
-      --adaptive-surround
-                      Experimental low-speed Surround; requires --global-fusion --navigate.
       --static-zones  Keep all collision zones active in every direction instead
                       of switching forward/reverse/rotate zone sets.
       --local-inputs LIST
@@ -98,7 +95,6 @@ while (($# > 0)); do
     --obstacle-cloud) obstacle_cloud=true; shift ;;
     --costmaps) costmaps=true; obstacle_cloud=true; shift ;;
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
-    --adaptive-surround) adaptive_surround=true; shift ;;
     --static-zones) direction_zones=false; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
     --local-inputs)
@@ -121,11 +117,6 @@ while (($# > 0)); do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
-if [[ "$adaptive_surround" == true &&
-      ( "$global_fusion" != true || "$navigate" != true ) ]]; then
-  echo "--adaptive-surround requires --global-fusion --navigate" >&2
-  exit 2
-fi
 if [[ "$filter_editor" == true &&
       ( "$global_fusion" != true || "$costmaps" != true ) ]]; then
   echo "Costmap filters require --global-fusion and --costmaps or --navigate" >&2
@@ -193,7 +184,7 @@ launch_args=(map_pcd:="$container_pcd" map_pgm:="$container_pgm" rviz:="$rviz"
 if [[ "$global_fusion" == true ]]; then
   launch_file=global_fusion.launch.py
   launch_args+=(obstacle_cloud:="$obstacle_cloud" costmaps:="$costmaps"
-    navigate:="$navigate" adaptive_surround:="$adaptive_surround"
+    navigate:="$navigate"
     direction_zones:="$direction_zones" "${filter_args[@]}")
   if [[ -n "$local_inputs" ]]; then
     launch_args+=(local_odometry_inputs:="$local_inputs")

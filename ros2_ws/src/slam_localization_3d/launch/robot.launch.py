@@ -24,7 +24,7 @@ from robot_namespace import load_parameters  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
-    "adaptive_surround", "direction_zones", "local_odometry_inputs",
+    "direction_zones", "local_odometry_inputs",
 )
 
 
@@ -86,7 +86,6 @@ def generate_launch_description():
         DeclareLaunchArgument("obstacle_cloud", default_value="true"),
         DeclareLaunchArgument("costmaps", default_value="true"),
         DeclareLaunchArgument("navigate", default_value="true"),
-        DeclareLaunchArgument("adaptive_surround", default_value="false"),
         DeclareLaunchArgument("direction_zones", default_value="true"),
         DeclareLaunchArgument(
             "local_odometry_inputs", default_value="",

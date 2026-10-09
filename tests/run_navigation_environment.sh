@@ -8,15 +8,11 @@ export ROS_DOMAIN_ID="${VALIDATION_ROS_DOMAIN_ID:-189}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 sim_pid=""
-adaptive_surround=false
 probe=validate_navigation_environment.py
 if [[ "${1:-}" == --braking ]]; then
   probe=validate_braking.py
   shift
 fi
-for argument in "$@"; do
-  if [[ "$argument" == --adaptive-surround ]]; then adaptive_surround=true; fi
-done
 
 compose() {
   docker compose --project-directory "$project_dir" \
@@ -59,8 +55,7 @@ export ROS_LAUNCH_ARGS="$(printf '%s\n' \
   slam_localization_3d global_fusion.launch.py \
   map_pcd:=/workspace/maps/office/map.pcd \
   map_pgm:=/workspace/maps/office/map_2d.yaml \
-  rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true \
-  adaptive_surround:="$adaptive_surround")"
+  rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true)"
 compose up -d ros
 "$isaac_python" "$project_dir/scripts/standalone.py" --headless --ros-cmd-vel \
   --lidar-motion-compensation noncompensated --validation-control-dir "$directory" \
