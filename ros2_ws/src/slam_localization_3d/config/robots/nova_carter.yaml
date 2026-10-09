@@ -84,13 +84,16 @@ parameter_overrides:
       min_covariance_yaw: 1.4647e-06
 
   # --- Footprint in base_link (measure with scripts/usd_bbox.py) ---
-  # config/observation_costmaps.yaml
+  # config/observation_costmaps.yaml. The global costmap plans with the in-place
+  # rotation circle; robot_radius must cover the padded footprint's rotation sweep
+  # (0.738 m) plus one cell after Nav2's 16-gon (robot_fleet.rotation_radius).
   global_costmap:
     global_costmap:
       ros__parameters:
-        footprint: '[[0.20, 0.32], [0.20, -0.32], [-0.65, -0.32], [-0.65, 0.32]]'
-        footprint_padding: 0.01
-        inflation_layer: {inflation_radius: 0.9}
+        footprint: '[]'
+        robot_radius: 0.81
+        footprint_padding: 0.0
+        inflation_layer: {inflation_radius: 1.1}
   local_costmap:
     local_costmap:
       ros__parameters:

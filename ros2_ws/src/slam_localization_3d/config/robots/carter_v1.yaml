@@ -63,12 +63,15 @@ parameter_overrides:
       min_covariance_yaw: 1.24068e-06
 
   # Conservative USD visible + collision bounds, rounded outward with 6 cm margin.
+  # The global costmap plans with the in-place rotation circle; robot_radius covers
+  # the padded footprint's rotation sweep (0.642 m) plus one cell after Nav2's 16-gon.
   global_costmap:
     global_costmap:
       ros__parameters:
-        footprint: '[[0.35, 0.38], [0.35, -0.38], [-0.50, -0.38], [-0.50, 0.38]]'
-        footprint_padding: 0.01
-        inflation_layer: {inflation_radius: 0.9}
+        footprint: '[]'
+        robot_radius: 0.71
+        footprint_padding: 0.0
+        inflation_layer: {inflation_radius: 1.1}
   local_costmap:
     local_costmap:
       ros__parameters:

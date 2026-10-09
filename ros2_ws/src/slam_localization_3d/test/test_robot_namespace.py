@@ -141,9 +141,10 @@ class RobotProfileTest(unittest.TestCase):
         config = yaml.safe_load((CONFIG / "observation_costmaps.yaml").read_text())
         merged = robot_fleet.merge_overrides(config, overrides)
         self.assertNotEqual(merged, config)
-        footprint = merged["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"]
-        self.assertEqual(footprint,
-                         merged["global_costmap"]["global_costmap"]["ros__parameters"]["footprint"])
+        self.assertEqual(merged["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"],
+                         "[[0.35, 0.38], [0.35, -0.38], [-0.50, -0.38], [-0.50, 0.38]]")
+        self.assertEqual(merged["global_costmap"]["global_costmap"]["ros__parameters"]["footprint"], "[]")
+        self.assertEqual(robot_fleet.rotation_radius(merged), 0.71)
         self.assertEqual(overrides["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"],
                          [-0.50, 0.35, -0.38, 0.38])
         with tempfile.TemporaryDirectory() as directory:

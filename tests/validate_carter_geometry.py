@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from usd_bbox import box_corners, summarize, transform_points, yaw_rotation
 sys.path.insert(0, str(ROOT / "ros2_ws/src/slam_localization_3d/launch"))
-from robot_fleet import load_robot_profile, merge_overrides
+from robot_fleet import load_robot_profile, merge_overrides, rotation_radius
 
 
 def validate(stage, profile):
@@ -70,13 +70,10 @@ def validate(stage, profile):
         return merge_overrides(yaml.safe_load(path.read_text()), profile["parameter_overrides"])
 
     costmaps = parameters(config / "observation_costmaps.yaml")
-    footprints = [
-        ast.literal_eval(costmaps[name][name]["ros__parameters"]["footprint"])
-        for name in ("global_costmap", "local_costmap")
-    ]
-    if footprints[0] != footprints[1]:
-        raise AssertionError("Global and local physical footprints differ")
-    footprint = np.asarray(footprints[1])
+    physical = ast.literal_eval(costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"])
+    # Checks the global planning circle covers the footprint's rotation sweep.
+    planning_radius = rotation_radius(costmaps)
+    footprint = np.asarray(physical)
     fmin, fmax = footprint.min(axis=0), footprint.max(axis=0)
     filtering = parameters(
         ROOT / "ros2_ws/src/slam_nav/config/ground_obstacle_filter.yaml"
@@ -87,11 +84,9 @@ def validate(stage, profile):
         monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"]
     ).reshape(-1, 2)
     padding = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint_padding"]
-    if padding != costmaps["global_costmap"]["global_costmap"]["ros__parameters"]["footprint_padding"]:
-        raise AssertionError("Global and local footprint padding differs")
     report = {"robot_type": profile["robot_type"],
-              "collider_count": len(colliders), "footprint": footprints[1],
-              "planning_footprint": footprints[0],
+              "collider_count": len(colliders), "footprint": physical,
+              "planning_radius": planning_radius,
               "footprint_padding": padding,
               "self_filter": filtering, "surround": surround.tolist()}
     if profile["robot_type"] == "nova_carter":

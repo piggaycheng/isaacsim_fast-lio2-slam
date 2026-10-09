@@ -363,6 +363,37 @@ def merge_overrides(config, overrides):
     return result
 
 
+def rotation_radius(costmaps):
+    """Return the global costmap robot_radius after checking it covers in-place rotation.
+
+    The planner keeps cells within the global costmap's inscribed radius free, and
+    the direction-zone rotate stop circle uses the same radius, so planned poses
+    leave room to rotate in place. Nav2 builds a 16-gon from robot_radius, whose
+    inscribed radius must still cover the padded local footprint's rotation sweep
+    about base_link plus one costmap cell.
+    """
+    planning = costmaps["global_costmap"]["global_costmap"]["ros__parameters"]
+    local = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]
+    if str(planning.get("footprint", "[]")).strip() not in ("", "[]"):
+        raise ValueError("global_costmap must use robot_radius, not a footprint polygon")
+    if float(planning.get("footprint_padding", 0.0)) != 0.0:
+        raise ValueError("global_costmap footprint_padding must be 0; include margin in robot_radius")
+    if planning.get("obstacle_layer", {}).get("footprint_clearing_enabled", True):
+        raise ValueError("global_costmap obstacle_layer must not clear the rotation circle")
+    radius = float(planning["robot_radius"])
+    resolution = float(planning["resolution"])
+    padding = float(local["footprint_padding"])
+    sweep = max(math.hypot(abs(float(x)) + padding, abs(float(y)) + padding)
+                for x, y in yaml.safe_load(local["footprint"]))
+    if not math.isfinite(radius) or radius * math.cos(math.pi / 16) - resolution < sweep:
+        raise ValueError(
+            f"global_costmap robot_radius {radius} m does not cover the footprint rotation sweep "
+            f"{sweep:.3f} m plus one {resolution} m cell")
+    if float(planning["inflation_layer"]["inflation_radius"]) < radius + resolution:
+        raise ValueError("global_costmap inflation_radius must exceed robot_radius by one cell")
+    return radius
+
+
 def namespaced_topic(namespace, name):
     """Prefix an absolute topic with the robot namespace; leave others unchanged."""
     namespace = normalize_namespace(namespace)

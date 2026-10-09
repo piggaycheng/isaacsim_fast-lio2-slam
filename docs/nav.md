@@ -100,9 +100,9 @@ flowchart TD
 - **global 管走哪條路**：含 PGM 牆壁，並記得看過的障礙物直到被清除。
 - **local 管現在怎麼走**：放在 `odom`，不受 `map -> odom` 校正跳動影響；不載入 PGM，只看感測器，定位誤差時不會被對不準的地圖牆壁擋住。
 
-兩張 costmap 使用相同的 `base_link` footprint（Nova Carter：前 0.20 m、後 0.65 m、左右 0.32 m）與 `footprint_padding: 0.01`，不含 Surround；inflation 半徑 0.9 m，用於產生導航代價，不是安全煞停距離。NavFn 的 2D 搜尋不檢查朝向／轉動掃掠，不能保證路線都符合 Surround。
+local costmap 使用實體 `base_link` footprint（Nova Carter：前 0.20 m、後 0.65 m、左右 0.32 m）與 `footprint_padding: 0.01`，inflation 半徑 0.9 m。global costmap 改用以 `base_link` 為圓心的原地旋轉圓（`footprint: '[]'`、`robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，`footprint_padding: 0`，inflation 1.1 m），讓 inscribed 與 circumscribed 相同，NavFn 規劃出的每個位置都留有原地旋轉的空間；方向切換保護區的 rotate 組使用同一半徑。Nav2 以 16 邊形近似該圓，launch 會以 `robot_fleet.rotation_radius` 檢查其內切半徑不小於 padded footprint 的旋轉掃掠再加一格。代價是可規劃通道至少約 2 × `robot_radius`（Nova Carter 1.62 m），車子若已停在距障礙小於該半徑處，planner 可能找不到脫離路徑。global obstacle layer 關閉 `footprint_clearing_enabled`，避免把旋轉圓內的真實障礙清掉；車體點雲由上游 self-filter 移除，`/scan` raytrace 負責清除。inflation 只是導航代價，不是安全煞停距離；NavFn 仍不檢查前進／後退保護區的朝向掃掠。
 
-![車體包絡、footprint padding 與 collision monitor polygon 的等比例俯視圖](images/nav_safety_zones.svg)
+![Nova Carter 車體包絡、footprint 與 forward／reverse／rotate 三組方向保護區的等比例俯視圖](images/nav_safety_zones.svg)
 
 ### 障礙物標記與清除
 
@@ -213,12 +213,13 @@ Humble 的 `stop` 區域不分命令方向，車頭前有障礙時連 BackUp 與
 | :-- | :-- | :-- | :-- |
 | forward | `linear.x` > 0.01 m/s | `PolygonStop`、`PolygonSlow`、`PolygonSurroundForward`（後緣縮到 padded footprint 後方 0.15 m） | 只轉發 `linear.x` ≥ 0 |
 | reverse | `linear.x` < −0.01 m/s | `PolygonSurroundReverse`（前緣縮到 padded footprint 前方 0.15 m） | 只轉發 `linear.x` ≤ 0 |
-| rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | 完整 `PolygonSurround` | 線速度歸零，只轉發角速度 |
+| rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | `PolygonRotate`：以 `base_link` 為圓心、半徑等於 global costmap `robot_radius` 的圓 | 線速度歸零，只轉發角速度 |
 
 - `FootprintApproach` 一直啟用，也會檢查轉彎時車角的掃掠。
 - Forward／Reverse 由 launch 依 profile 的 `PolygonSurround` 與 local footprint 自動產生；`swing_margin: 0.15` m（`direction_zones.yaml`）是被縮側車角的擺動裕度。Nova Carter：forward x −0.81–0.80 m，reverse x −1.35–0.36 m。
 - 要求不同方向時先輸出零速，等至少 0.2 秒，且收到 barrier 之後的 `/odometry/local` 證實 twist 與位姿差分都在 0.03 m/s、0.05 rad/s 內，才原子切換；monitor 回覆成功前一律輸出零速。命令或里程計過期（0.3 秒）時不切換；切換被拒絕、逾時或 selector 結束時命令不再流到 monitor，`cmd_vel_safety` 於 0.5 秒後停車，需重啟。RPP 在原地轉向與前進之間轉換時會多停約 0.2–0.4 秒。
-- 典型 deadlock：前方障礙進入 `PolygonStop` 而停車後，BackUp 切到 reverse 組後退；障礙若在完整 Surround 內，旋轉仍會被擋下。
+- 典型 deadlock：前方障礙進入 `PolygonStop` 而停車後，BackUp 切到 reverse 組後退；障礙若在旋轉圓內，旋轉仍會被擋下。planner 與旋轉圓同半徑，但網格離散、路徑追蹤誤差與 costmap 延遲仍可能讓障礙落在圓內。
+- 方向切換模式下 `PolygonSurround` 只作為產生 Forward／Reverse 的範本，本身保持停用。
 
 `--static-zones`（或 `direction_zones:=false`）恢復全部區域同時生效；此時及 `--adaptive-surround` 下停車區不分方向，BackUp 會被前方障礙擋下，只能等障礙離開或 recovery 用完後中止。
 
@@ -263,7 +264,7 @@ bash tests/run_navigation_environment.sh --repeats 1 --cases baseline
 
 - `collision_monitor` 區域只在 Office／Nova Carter 平地模擬驗證過；點數門檻、稀疏／低矮障礙及更差的感測延遲未驗證，不是認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物，也沒有移動物體軌跡預測；動態橫穿仍曾出現車體包絡與障礙重疊。
-- 規劃與執行未實作完整的保護區朝向／轉動掃掠檢查；較寬通道仍可能因偏移或轉向讓牆面進入 `PolygonSurround` 而卡住。
+- 規劃只保證原地旋轉圓，未檢查前進／後退保護區的朝向掃掠；`--static-zones` 與 `--adaptive-surround` 下旋轉仍由矩形 `PolygonSurround`／Crawl 判斷，可能與規劃半徑不一致而卡住。
 - Speed 不涵蓋 recovery、原地旋轉或直接速度命令；Binary 開關區未實作。
 - 斜坡、複雜人流與完整動態清除未驗證。
 - 多車以 namespace 與獨立 `/NAME/tf` 支援，見 [multi_robot.md](multi_robot.md)，車輛之間無協調。

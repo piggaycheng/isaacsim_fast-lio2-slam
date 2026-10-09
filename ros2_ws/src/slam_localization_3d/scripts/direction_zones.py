@@ -22,7 +22,7 @@ from rclpy.qos import qos_profile_sensor_data
 ZONE_SETS = {
     "forward": ("PolygonStop", "PolygonSlow", "PolygonSurroundForward"),
     "reverse": ("PolygonSurroundReverse",),
-    "rotate": ("PolygonSurround",),
+    "rotate": ("PolygonRotate",),
 }
 POLYGONS = tuple(name for names in ZONE_SETS.values() for name in names)
 

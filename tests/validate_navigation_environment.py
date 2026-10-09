@@ -49,6 +49,8 @@ PLANNING_CONFIG = Path(__file__).resolve().parents[1] / (
 def planning_corridor_width(config_path=PLANNING_CONFIG):
     config = yaml.safe_load(Path(config_path).read_text())
     params = config["global_costmap"]["global_costmap"]["ros__parameters"]
+    if str(params.get("footprint", "[]")).strip() in ("", "[]"):
+        return 2 * float(params["robot_radius"])
     footprint = np.asarray(json.loads(params["footprint"]))
     return float(np.ptp(footprint[:, 1]) + 2 * params["footprint_padding"])
 
@@ -285,17 +287,21 @@ class EnvironmentProbe(Node):
             client = self.create_client(GetParameters, f"/{name}/{name}/get_parameters")
             if not client.wait_for_service(timeout_sec=30):
                 raise RuntimeError(f"{name} parameter service is unavailable")
-            future = client.call_async(GetParameters.Request(names=["footprint", "footprint_padding"]))
+            future = client.call_async(GetParameters.Request(
+                names=["footprint", "footprint_padding", "robot_radius"]))
             self.wait(future.done, 30)
             values = future.result().values
-            if (len(values) != 2 or values[0].type != ParameterType.PARAMETER_STRING
+            if (len(values) != 3 or values[0].type != ParameterType.PARAMETER_STRING
                     or values[1].type != ParameterType.PARAMETER_DOUBLE
-                    or not np.allclose(json.loads(values[0].string_value),
-                                       json.loads(expected["footprint"]), atol=1e-9, rtol=0)
-                    or abs(values[1].double_value - expected["footprint_padding"]) > 1e-9):
+                    or values[2].type != ParameterType.PARAMETER_DOUBLE
+                    or not np.allclose(np.asarray(json.loads(values[0].string_value)),
+                                       np.asarray(json.loads(expected["footprint"])), atol=1e-9, rtol=0)
+                    or abs(values[1].double_value - expected["footprint_padding"]) > 1e-9
+                    or ("robot_radius" in expected
+                        and abs(values[2].double_value - expected["robot_radius"]) > 1e-9)):
                 raise AssertionError(f"Live {name} footprint does not match validation configuration")
             print(f"VERIFIED_GEOMETRY {name}: {values[0].string_value}, "
-                  f"padding={values[1].double_value}", flush=True)
+                  f"padding={values[1].double_value}, radius={values[2].double_value}", flush=True)
         if self.adaptive_surround:
             client = self.create_client(GetParameters, "/cmd_vel_safety/get_parameters")
             if not client.wait_for_service(timeout_sec=30):

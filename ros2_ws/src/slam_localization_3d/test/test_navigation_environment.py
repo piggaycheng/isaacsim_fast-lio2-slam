@@ -28,6 +28,8 @@ from validate_navigation_environment import (
     classify_clearance_event, clearance_metrics, configured_corridor_width, local_position, obstacle_polygon,
     planning_corridor_width, scenario, walls,
 )
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "launch"))
+from robot_fleet import rotation_radius
 
 
 class NavigationEnvironmentTest(unittest.TestCase):
@@ -36,23 +38,28 @@ class NavigationEnvironmentTest(unittest.TestCase):
         config = yaml.safe_load((config_dir / "observation_costmaps.yaml").read_text())
         global_params = config["global_costmap"]["global_costmap"]["ros__parameters"]
         local_params = config["local_costmap"]["local_costmap"]["ros__parameters"]
+        self.assertEqual(json.loads(local_params["footprint"]),
+                         [[0.20, 0.32], [0.20, -0.32], [-0.65, -0.32], [-0.65, 0.32]])
+        self.assertEqual(local_params["footprint_padding"], 0.01)
+        self.assertEqual(local_params["inflation_layer"]["inflation_radius"], 0.9)
+        self.assertEqual(global_params["footprint"], "[]")
+        self.assertEqual(global_params["robot_radius"], 0.81)
+        self.assertEqual(global_params["footprint_padding"], 0.0)
+        self.assertEqual(global_params["inflation_layer"]["inflation_radius"], 1.1)
         for params in (global_params, local_params):
-            self.assertEqual(json.loads(params["footprint"]),
-                             [[0.65, 0.32], [0.65, -0.32], [-0.2, -0.32], [-0.2, 0.32]])
-            self.assertEqual(params["footprint_padding"], 0.01)
-            self.assertEqual(params["inflation_layer"]["inflation_radius"], 0.9)
             self.assertTrue(params["obstacle_layer"]["scan_clearing"]["clearing"])
             self.assertFalse(params["obstacle_layer"]["obstacles"]["clearing"])
-        self.assertTrue(global_params["obstacle_layer"].get("footprint_clearing_enabled", True))
+        self.assertFalse(global_params["obstacle_layer"]["footprint_clearing_enabled"])
         self.assertTrue(local_params["obstacle_layer"].get("footprint_clearing_enabled", True))
-        self.assertAlmostEqual(planning_corridor_width(), 0.66)
-        self.assertAlmostEqual(configured_corridor_width(), 1.5)
+        self.assertEqual(rotation_radius(config), 0.81)
+        self.assertAlmostEqual(planning_corridor_width(), 1.62)
+        self.assertAlmostEqual(configured_corridor_width(), 1.62)
         self.assertTrue(scenario("corridor_1.4")[2])
-        self.assertFalse(scenario("corridor_1.6")[2])
+        self.assertTrue(scenario("corridor_1.6")[2])
         self.assertFalse(scenario("corridor_1.8")[2])
-        self.assertAlmostEqual(configured_corridor_width(adaptive_surround=True), 1.1)
-        self.assertFalse(scenario("corridor_1.4", configured_corridor_width(adaptive_surround=True))[2])
-        self.assertTrue(scenario("corridor_0.6", configured_corridor_width(adaptive_surround=True))[2])
+        self.assertAlmostEqual(configured_corridor_width(adaptive_surround=True), 1.62)
+        self.assertTrue(scenario("corridor_1.4", configured_corridor_width(adaptive_surround=True))[2])
+        self.assertFalse(scenario("corridor_1.8", configured_corridor_width(adaptive_surround=True))[2])
 
     def crossing_evidence(self):
         samples = [{"stamp": float(t), "position": [0, 0], "yaw": 0,
@@ -213,7 +220,7 @@ class NavigationEnvironmentTest(unittest.TestCase):
 
 
 class GlobalObstacleClearingTest(unittest.TestCase):
-    def test_only_physical_footprint_is_cleared_and_scan_still_clears(self):
+    def test_rotation_circle_does_not_clear_returns_and_scan_still_clears(self):
         config_path = Path(__file__).resolve().parents[1] / "config/observation_costmaps.yaml"
         params = yaml.safe_load(config_path.read_text())["global_costmap"]["global_costmap"]["ros__parameters"]
         params.update(use_sim_time=False, global_frame="map", robot_base_frame="clearing_test_base",
@@ -294,13 +301,15 @@ class GlobalObstacleClearingTest(unittest.TestCase):
                 wait(parameter_client.service_is_ready)
                 future = parameter_client.call_async(GetParameters.Request(names=[
                     "footprint", "obstacle_layer.footprint_clearing_enabled", "robot_base_frame",
+                    "robot_radius",
                 ]))
                 wait(future.done)
                 values = future.result().values
-                self.assertEqual(json.loads(values[0].string_value), json.loads(params["footprint"]))
+                self.assertEqual(values[0].string_value, "[]")
                 self.assertEqual(values[1].type, ParameterType.PARAMETER_BOOL)
-                self.assertTrue(values[1].bool_value)
+                self.assertFalse(values[1].bool_value)
                 self.assertEqual(values[2].string_value, "clearing_test_base")
+                self.assertEqual(values[3].double_value, params["robot_radius"])
 
                 def subscribe():
                     topics = [name for name, types in node.get_topic_names_and_types()
@@ -321,8 +330,9 @@ class GlobalObstacleClearingTest(unittest.TestCase):
                     row = int((point[1] - message.info.origin.position.y) / message.info.resolution)
                     return message.data[row * message.info.width + col]
 
-                # The old planning envelope must not clear returns outside the physical footprint.
-                wait(lambda: maps and cost(points[0]) == 0 and cost(points[1]) == 100)
+                # Returns inside the planning rotation circle stay marked for the planner.
+                self.assertLess(np.hypot(*points[0][:2]), params["robot_radius"])
+                wait(lambda: maps and all(cost(point) == 100 for point in points))
                 state.update(points=[], clear=True)
                 wait(lambda: maps and all(cost(point) == 0 for point in points))
                 process.send_signal(signal.SIGINT)

@@ -19,7 +19,7 @@ from launch_ros.actions import Node, PushRosNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
     DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, local_odometry_inputs,
-    namespaced_topic, normalize_namespace, with_global_ekf_inputs,
+    namespaced_topic, normalize_namespace, rotation_radius, with_global_ekf_inputs,
 )
 from robot_namespace import (  # noqa: E402
     RobotParameterFile, load_parameters, local_odometry_file, namespaced_rviz_file,
@@ -144,9 +144,8 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
     kind = robot_type(context)
     collision = load_parameters(collision_config, kind)
     swing = float(load_parameters(direction_config, kind)["direction_zones"]["ros__parameters"]["swing_margin"])
-    local = load_parameters(
-        LaunchConfiguration("costmap_config").perform(context), kind,
-    )["local_costmap"]["local_costmap"]["ros__parameters"]
+    costmaps = load_parameters(LaunchConfiguration("costmap_config").perform(context), kind)
+    local = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]
     padding = float(local["footprint_padding"])
     footprint_x = [float(point[0]) for point in json.loads(local["footprint"])]
     front, rear = max(footprint_x) + padding, min(footprint_x) - padding
@@ -167,8 +166,14 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
         monitor["PolygonSurround"], enabled=False,
         points=rectangle(front + swing, min(xs), max(ys), min(ys)),
     )
+    # In-place rotation stops on the global costmap's planning circle, so any pose
+    # the planner reaches can also be rotated in.
+    monitor["PolygonRotate"] = {
+        key: monitor["PolygonSurround"][key]
+        for key in ("action_type", "max_points", "visualize", "polygon_pub_topic")
+    } | {"type": "circle", "radius": rotation_radius(costmaps), "enabled": False}
     monitor["PolygonSurround"]["enabled"] = False
-    monitor["polygons"] += ["PolygonSurroundForward", "PolygonSurroundReverse"]
+    monitor["polygons"] += ["PolygonSurroundForward", "PolygonSurroundReverse", "PolygonRotate"]
     for name in ("PolygonStop", "PolygonSlow"):
         monitor[name]["enabled"] = True
     directory = tempfile.TemporaryDirectory(prefix="isaac_direction_zones_")
@@ -299,6 +304,8 @@ def robot_nodes(context, package, nav):
     costmaps = enabled("costmaps")
     navigate = enabled("navigate")
     profile = load_robot_profile(kind)
+    if costmaps:
+        rotation_radius(load_parameters(value("costmap_config"), kind))
     inputs = local_odometry_inputs(profile, value("local_odometry_inputs"))
     nav_parameters = [local_odometry_file(
         os.path.join(nav, "config", "local_odometry.yaml"),

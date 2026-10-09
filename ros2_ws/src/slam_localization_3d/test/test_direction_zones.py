@@ -78,7 +78,8 @@ class DirectionLaunchTest(unittest.TestCase):
         context, actions = self.configure()
         params = self.monitor(context)
         self.assertEqual(params["cmd_vel_in_topic"], "/nav2/cmd_vel_direction")
-        self.assertEqual(set(POLYGONS) - {"FootprintApproach"}, set(params["polygons"]) - {"FootprintApproach"})
+        self.assertEqual(set(POLYGONS), set(params["polygons"]) - {"FootprintApproach", "PolygonSurround"})
+        self.assertFalse(params["PolygonSurround"]["enabled"])
         self.assertEqual(params["PolygonSurroundForward"]["points"],
                          [0.8, 0.75, 0.8, -0.75, -0.81, -0.75, -0.81, 0.75])
         self.assertEqual(params["PolygonSurroundReverse"]["points"],
@@ -87,8 +88,12 @@ class DirectionLaunchTest(unittest.TestCase):
         enabled = {name for name in POLYGONS if params[name]["enabled"]}
         self.assertEqual(enabled, set(ZONE_SETS["forward"]))
         self.assertTrue(params["FootprintApproach"]["enabled"])
-        for name in ("PolygonSurround", "PolygonSurroundForward", "PolygonSurroundReverse"):
+        for name in ("PolygonSurround", "PolygonSurroundForward", "PolygonSurroundReverse", "PolygonRotate"):
             self.assertEqual(params[name]["polygon_pub_topic"], "/collision_monitor/polygon_surround")
+        self.assertEqual(params["PolygonRotate"], {
+            "type": "circle", "radius": 0.81, "action_type": "stop", "max_points": 3,
+            "visualize": True, "polygon_pub_topic": "/collision_monitor/polygon_surround", "enabled": False,
+        })
         self.assertEqual(context.launch_configurations["navigation_config"], CONFIGS[1])
         self.assertTrue(any(isinstance(action, NodeAction) for action in actions))
 
@@ -101,6 +106,37 @@ class DirectionLaunchTest(unittest.TestCase):
         self.assertEqual(forward[:2], [0.8, 0.81])
         self.assertAlmostEqual(reverse[0], 0.51)
         self.assertEqual(reverse[4:6], [-1.1, -0.81])
+        self.assertEqual(params["PolygonRotate"]["radius"], 0.71)
+
+    def test_rotation_circle_must_cover_footprint_sweep_and_planning(self):
+        for kind in ("nova_carter", "carter_v1"):
+            for key, value, message in (
+                ("robot_radius", None, "rotation sweep"),
+                ("inflation_layer", "robot_radius", "inflation_radius"),
+                ("footprint", "[[0.2, 0.32], [0.2, -0.32], [-0.65, -0.32], [-0.65, 0.32]]", "robot_radius"),
+                ("footprint_padding", 0.01, "footprint_padding"),
+                ("obstacle_layer", {"footprint_clearing_enabled": True}, "rotation circle"),
+            ):
+                config = fusion_launch.load_parameters(str(PACKAGE / "config/observation_costmaps.yaml"), kind)
+                planning = config["global_costmap"]["global_costmap"]["ros__parameters"]
+                if value is None:
+                    planning[key] -= 0.02
+                elif value == "robot_radius":
+                    planning[key]["inflation_radius"] = planning[value]
+                elif isinstance(value, dict):
+                    planning[key].update(value)
+                else:
+                    planning[key] = value
+                with self.subTest(kind=kind, key=key), self.assertRaisesRegex(ValueError, message):
+                    fusion_launch.rotation_radius(config)
+        config = yaml.safe_load((PACKAGE / "config/observation_costmaps.yaml").read_text())
+        config["global_costmap"]["global_costmap"]["ros__parameters"]["obstacle_layer"][
+            "footprint_clearing_enabled"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "costmaps.yaml"
+            path.write_text(yaml.safe_dump(config))
+            with self.assertRaisesRegex(ValueError, "rotation circle"):
+                self.configure(costmap_config=str(path))
 
     def test_static_without_navigation_or_when_disabled(self):
         for overrides in ({"navigate": "false"}, {"direction_zones": "false"}):
@@ -244,7 +280,7 @@ class DirectionZonesTest(unittest.TestCase):
         self.assertEqual(self.node.active, "reverse")
         self.node.checked, self.node.active = False, None
         self.node.tick()
-        self.node.future = response({"PolygonStop", "PolygonSurround"})
+        self.node.future = response({"PolygonStop", "PolygonRotate"})
         self.node.setter.service_is_ready.return_value = True
         self.now += 0.05
         self.odometry()
@@ -342,7 +378,7 @@ class RealHumbleDirectionZonesTest(unittest.TestCase):
                 self.assertTrue(future.result().success)
             state["command"] = twist(0.3)
             wait(lambda: selector.active == "forward" and gate.last_output.linear.x > 0.1)
-            # Inside PolygonStop (front 0.85 m) but outside the 0.80 m rotation surround.
+            # Inside PolygonStop (front 0.85 m) but outside the 0.81 m rotation circle.
             state["obstacle"] = (0.0, 0.825)
             wait(lambda: gate.last_output == Twist())
             hold_zero()
@@ -351,6 +387,10 @@ class RealHumbleDirectionZonesTest(unittest.TestCase):
             state["command"] = twist(0.0, 0.4)
             wait(lambda: selector.active == "rotate" and gate.last_output.angular.z > 0.2)
             self.assertEqual(gate.last_output.linear.x, 0.0)
+            # Beside the robot outside the old 0.75 m surround but inside the rotation circle.
+            state["obstacle"] = (math.pi / 2, 0.78)
+            wait(lambda: gate.last_output == Twist())
+            hold_zero()
             # Behind the trimmed forward surround but inside the reverse surround.
             state["obstacle"] = (math.pi, 1.0)
             state["command"] = twist(-0.2)
