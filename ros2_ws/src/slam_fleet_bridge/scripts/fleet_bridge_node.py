@@ -49,11 +49,15 @@ class FleetBridge(Node):
         self.level = param("level_name", "L1")
         self.waypoint = param("waypoint_name", "")
         self.charger, self.parking = param("default_charger", ""), param("default_parking", "")
+        # robot.launch.py passes the global costmap robot_radius and cmd_vel_safety's speed caps;
+        # no generic default fits every robot.
         self.specs = {
-            "footprint_radius": param("footprint_radius", 0.35),
-            "max_linear_velocity": param("max_linear_velocity", 1.2),
-            "max_angular_velocity": param("max_angular_velocity", 1.0),
+            name: float(param(name, 0.0))
+            for name in ("footprint_radius", "max_linear_velocity", "max_angular_velocity")
         }
+        for name, value in self.specs.items():
+            if not value > 0.0:
+                raise ValueError(f"fleet_bridge needs a positive {name} parameter")
         self.battery = float(param("battery", 100.0))
         heartbeat_rate = param("heartbeat_rate", 2.0)
         tick_rate = param("tick_rate", 10.0)

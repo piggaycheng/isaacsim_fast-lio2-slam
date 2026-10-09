@@ -111,7 +111,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 - **網路**：外部程式與本專案使用相同的 `ROS_DOMAIN_ID`、`ROS_LOCALHOST_ONLY` 與 RMW；container 為 host network，主機上的程式可直接看到 topic。ROS 版本須與 Humble 的介面相容。
 - **座標**：`map` 與 Isaac world 對齊，nav graph 直接使用 Isaac 座標，不需換算。
 - **逐段下單**：Nav2 只追蹤單一目標，不會執行外部系統的時間預約。要讓外部系統的協調生效，fleet adapter 須照計畫把路徑點逐段送給 Nav2，需要等待時不送下一段或取消目前目標，並持續回報位姿。兩點之間由 Nav2 自行規劃，路徑點要夠密才不會偏離計畫車道。
-- **保護區比車體大**：collision monitor 的 Surround 是固定矩形（Nova Carter：x −1.35–0.80 m、y ±0.75 m；Carter v1：x −1.10–0.80 m、y ±0.81 m），遠大於車體寬度。外部系統的車輛 profile（vicinity）與車道間距須配合這個範圍，否則兩車在外部系統認為安全的間距下通過，仍會觸發對方的保護區而停車，與計畫不一致。
+- **保護區比車體大**：collision monitor 的 Surround 是固定矩形（Nova Carter：x −1.35–0.80 m、y ±0.75 m；Carter v1：x −1.10–0.80 m、y ±0.81 m），遠大於車體寬度。`register` 的 `footprint_radius` 送的是旋轉圓半徑（Nova Carter 0.81 m、Carter v1 0.71 m），但前進／後退保護區超出這個圓，外部系統的車輛 profile（vicinity）與車道間距仍須配合保護區範圍，否則兩車在外部系統認為安全的間距下通過，仍會觸發對方的保護區而停車，與計畫不一致。
 - **到位與失敗**：到位容差為位置 0.15 m、航向 0.25 rad，到位後鎖定。導航失敗時 recovery 約 30 秒後才中止目標（`ABORTED`），adapter 須設逾時並回報重新規劃。
 - **電量**：沒有 `BatteryState`，需由 adapter 自行提供。
 - 車輛須已完成定位並出現 `navigator active` 後才能下單；生成位置與車種由 `run_multi_nav.sh --robot ...` 決定。

@@ -19,7 +19,8 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec  # noqa: E402
+from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
+from robot_namespace import load_parameters  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
@@ -45,6 +46,13 @@ def robot_stack(context, package):
     ]
     mqtt_host = LaunchConfiguration("mqtt_host").perform(context)
     if mqtt_host:
+        # Open-RMF plans traffic with the same circle the planner and rotate zone use.
+        radius = rotation_radius(load_parameters(
+            os.path.join(package, "config", "observation_costmaps.yaml"), spec.robot_type))
+        # cmd_vel_safety's caps bound every command the robot can execute.
+        safety = load_parameters(
+            os.path.join(package, "config", "collision_monitor.yaml"), spec.robot_type,
+        )["cmd_vel_safety"]["ros__parameters"]
         actions.append(Node(
             package="slam_fleet_bridge", executable="fleet_bridge_node.py",
             # Absolute: global_fusion's pushed namespace would otherwise prefix it again.
@@ -56,6 +64,9 @@ def robot_stack(context, package):
                 "mqtt_username": LaunchConfiguration("mqtt_username").perform(context),
                 "mqtt_password": LaunchConfiguration("mqtt_password").perform(context),
                 "fleet_name": spec.fleet,
+                "footprint_radius": radius,
+                "max_linear_velocity": float(safety["max_linear_speed"]),
+                "max_angular_velocity": float(safety["max_angular_speed"]),
             }],
         ))
     return actions

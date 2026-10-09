@@ -56,7 +56,7 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）；`stop` 取消目前任務並回報其 `canceled`，`stop` 本身回 `completed`。新的 `cmd_id` 會取消執行中的任務，同一個 `cmd_id` 重複送出會被忽略。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
 - `command_result`：`completed`（到位）、`failed`（導航失敗或指令錯誤）、`canceled`（被新指令或 `stop` 中斷），並附 `final_location`。
 - `battery`：沒有電池模型，預設固定 `100.0`；有 `sensor_msgs/BatteryState` 發布到 `/NAME/battery_state` 時改用其 `percentage`。
-- 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（0.35）、`max_linear_velocity`（1.2）、`max_angular_velocity`（1.0）、`heartbeat_rate`、`battery`。
+- 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（必填；`robot.launch.py` 帶入該車 global costmap 的 `robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，與 planner、旋轉保護區同一半徑）、`max_linear_velocity`、`max_angular_velocity`（必填；`robot.launch.py` 帶入該車 `cmd_vel_safety` 的 `max_linear_speed`／`max_angular_speed`，目前兩車皆 0.75 m/s、0.5 rad/s）、`heartbeat_rate`、`battery`。
 - 容器 image 需含 `paho-mqtt` 與 `py_trees`（Dockerfile 已加入）；修改後需 `docker compose run --rm ros build`。
 
 ## 擴充：多步任務（py_trees）
