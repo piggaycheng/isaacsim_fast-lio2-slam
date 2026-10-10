@@ -75,7 +75,6 @@ class FleetBridge(Node):
             self.client.username_pw_set(username, password)
         self.client.will_set(self.topic["status"], rmf.offline_payload(self.robot), qos=1)
         self.client.on_connect = self.on_connect
-        self.client.on_disconnect = lambda *args: setattr(self, "registered", False)
         self.client.on_message = lambda c, u, m: self.inbox.put((m.topic, m.payload))
         self.client.reconnect_delay_set(1, 10)
         self.client.connect_async(host, port, keepalive=20)
@@ -96,7 +95,9 @@ class FleetBridge(Node):
         if reason_code != 0:
             self.get_logger().warning(f"MQTT connection refused: {reason_code}")
             return
-        self.registered = False
+        # A register starts a new session and makes the adapter abort in-flight work,
+        # so a mere MQTT reconnect keeps the session; heartbeats resume tracking.
+        # If the adapter lost us meanwhile it replies require_register.
         self.last_register = -REGISTER_RETRY_S
         client.subscribe([(self.topic["register_ack"], 1), (self.topic["command"], 1)])
 

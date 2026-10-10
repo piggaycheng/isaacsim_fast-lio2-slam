@@ -50,10 +50,10 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 | `task_state` | 車 → adapter（QoS 1，retained） | 擴充：任務進度 |
 
 - Client ID `amr_F_NAME`，clean session，keepalive 20 s。
-- 流程：連線並取得 `odometry/global` 後送 `register`，未收到成功的 `register_ack` 每 3 秒重送（fleet adapter 比車晚啟動也能註冊上）；重連會重新註冊。收到 `status: success` 後才接受 `command`，之前收到的指令會被忽略。結束時送 `deregister`。
+- 流程：連線並取得 `odometry/global` 後送 `register`，未收到成功的 `register_ack` 每 3 秒重送（fleet adapter 比車晚啟動也能註冊上）；MQTT 重連不會重新註冊（`register` 代表新 session，adapter 會中斷進行中的任務），只在 adapter 回 `require_register` 時才重新註冊。收到 `status: success` 後才接受 `command`，之前收到的指令會被忽略。結束時送 `deregister`。
 - 晚啟動／重啟自癒：註冊完成前也持續送 `heartbeat`（`status` 為 `error`，不是 `idle`），adapter 發現未知車輛會回 `register_ack` 的 `status: require_register`，車端收到後立即重送 `register` 並回到未註冊狀態（執行中的任務不中斷）。
 - `heartbeat`（預設 2 Hz）：`x`、`y`、`yaw`（`map` 座標，rad）、`battery`、`status`（已註冊：`moving` 任務執行中，否則 `idle`；未註冊：`error`）、`current_cmd_id`（無任務為 `null`）。位置與電量為 node 屬性，`status` 與 `current_cmd_id` 每次從任務執行器現算。
-- `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）；`stop` 取消目前任務並回報其 `canceled`，`stop` 本身回 `completed`。新的 `cmd_id` 會取消執行中的任務，同一個 `cmd_id` 重複送出會被忽略。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
+- `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）；`stop` 取消目前任務並回報其 `canceled`，`stop` 本身回 `completed`。新的 `cmd_id` 會取消執行中的任務，同一個 `cmd_id` 重複送出會被忽略（adapter 在心跳 5 秒未回報該 `cmd_id` 時會以相同 `cmd_id` 重送遺失的命令）。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
 - `command_result`：`completed`（到位）、`failed`（導航失敗或指令錯誤）、`canceled`（被新指令或 `stop` 中斷），並附 `final_location`。
 - `battery`：沒有電池模型，預設固定 `100.0`；有 `sensor_msgs/BatteryState` 發布到 `/NAME/battery_state` 時改用其 `percentage`。
 - 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（必填；`robot.launch.py` 帶入該車 global costmap 的 `robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，與 planner、旋轉保護區同一半徑）、`max_linear_velocity`、`max_angular_velocity`（必填；`robot.launch.py` 帶入該車 `cmd_vel_safety` 的 `max_linear_speed`／`max_angular_speed`，目前兩車皆 0.75 m/s、0.5 rad/s）、`heartbeat_rate`、`battery`。
