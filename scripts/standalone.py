@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from cmd_vel_control import receiver_for
-from gimbal_control import PAN_JOINT, TILT_JOINT, controller_for
+from gimbal_control import PAN_JOINT, TILT_JOINT, controller_for, wrap_to_pi
 from isaacsim import SimulationApp
 
 sys.path.insert(
@@ -48,6 +48,10 @@ CEILING_CAMERA_POSITIONS = [(-14.0, 10.0), (4.5, 10.0), (4.5, -10.0), (-14.0, -1
 CEILING_CAMERA_HEIGHT = 2.9
 CEILING_CAMERA_TARGET = (0.0, 0.0, 0.0)
 CEILING_CAMERA_ROOT = "/World/CeilingCameras"
+# Ceiling cameras sit on kinematic pan/tilt gimbals in ROS namespace /ceiling_cams/ceiling_cam_N.
+CEILING_CAMERA_NAMESPACE = "ceiling_cams"
+CEILING_GIMBAL_MAX_SPEED_DEG_S = 60.0
+CEILING_GIMBAL_TILT_LIMITS_DEG = (-90.0, 90.0)
 KIT_EXTRA_ARGS = [
     "--/rtx/post/dlss/execMode=0",
     "--/app/renderer/skipGpuRenderProducts=false",
@@ -96,7 +100,8 @@ parser.add_argument(
 parser.add_argument("--camera-fps", type=float, default=15.0, help="Camera publish rate (max 60).")
 parser.add_argument(
     "--ceiling-cameras", action="store_true",
-    help="Offer the fixed Office ceiling cameras as RTSP streams (off until enabled).",
+    help="Offer the Office ceiling cameras as RTSP streams (off until enabled); each sits on a "
+    "pan/tilt gimbal controlled over ROS /ceiling_cams/ceiling_cam_N/gimbal/joint_command.",
 )
 parser.add_argument(
     "--mqtt-host", default=None,
@@ -107,6 +112,10 @@ parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker por
 parser.add_argument("--mqtt-topic", default="slam/cameras", help="Topic of the retained camera list.")
 parser.add_argument("--mqtt-username", default=None, help="MQTT username.")
 parser.add_argument("--mqtt-password", default=None, help="MQTT password.")
+parser.add_argument(
+    "--gimbal-mqtt-topic", default="slam/gimbal",
+    help="Topic prefix of gimbal_mqtt_bridge.py, advertised as gimbal_topic in the camera list.",
+)
 args, _ = parser.parse_known_args()
 if (args.camera or args.ceiling_cameras) and not args.mqtt_host:
     parser.error("--camera and --ceiling-cameras are switched over MQTT and require --mqtt-host")
@@ -244,6 +253,7 @@ simulation_app.update()
 pressed_keys = set()
 input_interface = None
 camera_runtime = []
+ceiling_gimbals = []
 camera_catalog = None
 keyboard = None
 keyboard_subscription = None
@@ -439,13 +449,18 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
 class CameraStream:
     """A camera that renders and streams over RTSP only while enabled over MQTT."""
 
-    def __init__(self, camera_prim: str, rtsp_path: str, display_name: str):
+    def __init__(self, camera_prim: str, rtsp_path: str, display_name: str, gimbal: str | None = None):
         from rtsp_stream import RtspCamera
 
         self.display_name = display_name
         width, height = (int(value) for value in args.camera_resolution.lower().split("x"))
         self.rtsp = RtspCamera(camera_prim, rtsp_path, width, height, args.camera_fps)
         self.enable_topic = f"{args.mqtt_topic}/{rtsp_path}/enable"
+        # Command topic of gimbal_mqtt_bridge.py when the camera sits on a pan/tilt gimbal.
+        self.gimbal_topic = (
+            "/".join(p for p in (args.gimbal_mqtt_topic.strip("/"), gimbal, "command") if p)
+            if gimbal is not None else None
+        )
 
     def update(self) -> None:
         self.rtsp.set_enabled(camera_catalog.is_requested(self.rtsp.path))
@@ -453,10 +468,10 @@ class CameraStream:
 
 
 def create_camera_stream(
-    camera_prim: str, name: str, prefix: str = "", display_name: str = "",
+    camera_prim: str, name: str, prefix: str = "", display_name: str = "", gimbal: str | None = None,
 ) -> CameraStream:
     stream = CameraStream(
-        camera_prim, f"{prefix.strip('/')}/{name}".strip("/"), display_name or name,
+        camera_prim, f"{prefix.strip('/')}/{name}".strip("/"), display_name or name, gimbal,
     )
     print(
         f"Camera {camera_prim}: off; publish true to MQTT {stream.enable_topic} to stream "
@@ -465,20 +480,68 @@ def create_camera_stream(
     return stream
 
 
+class CeilingGimbal:
+    """Kinematic pan/tilt (no physics) holding a ceiling camera, driven like a robot gimbal.
+
+    Pan is about world z (0 = world +x, counterclockwise positive), tilt about the panned
+    y axis (positive looks down). ROS: <namespace>/gimbal/joint_command and joint_states.
+    """
+
+    def __init__(self, stage, name: str, eye, target):
+        self.namespace = f"{CEILING_CAMERA_NAMESPACE}/{name}"
+        self.graph_path = f"/World/Gimbal_ROS2_{CEILING_CAMERA_NAMESPACE}_{name}"
+        root = f"{CEILING_CAMERA_ROOT}/{name}"
+        UsdGeom.Xform.Define(stage, root).AddTranslateOp().Set(Gf.Vec3d(*eye))
+        self.pan_op = UsdGeom.Xform.Define(stage, f"{root}/gimbal_pan").AddRotateZOp()
+        tilt_path = f"{root}/gimbal_pan/gimbal_tilt"
+        self.tilt_op = UsdGeom.Xform.Define(stage, tilt_path).AddRotateYOp()
+        self.camera_path = f"{tilt_path}/camera"
+        # USD cameras look along -Z with +Y up; rotate so they look along +x with +z up.
+        UsdGeom.Xformable(UsdGeom.Camera.Define(stage, self.camera_path)).AddRotateXYZOp().Set(
+            Gf.Vec3f(90.0, 0.0, -90.0))
+        dx, dy, dz = (t - e for t, e in zip(target, eye))
+        self.controller = controller_for(self.namespace)
+        self.controller.max_speed = math.radians(CEILING_GIMBAL_MAX_SPEED_DEG_S)
+        self.controller.tilt_limits = tuple(math.radians(v) for v in CEILING_GIMBAL_TILT_LIMITS_DEG)
+        # Start looking at the target, as the former fixed cameras did.
+        self.pose = (math.atan2(dy, dx), math.atan2(-dz, math.hypot(dx, dy)))
+        self.controller.reset(*self.pose)
+        self.apply(self.pose)
+        self.time = None
+        create_gimbal_graph(self.graph_path, lambda name: f"/{self.namespace}{name}", self.namespace)
+
+    def apply(self, pose) -> None:
+        self.pan_op.Set(math.degrees(pose[0]))
+        self.tilt_op.Set(math.degrees(pose[1]))
+
+    def update(self, now: float) -> None:
+        dt = 0.0 if self.time is None else now - self.time
+        self.time = now
+        controller = self.controller
+        if abs(controller.pan_target) > math.pi:
+            controller.pan_target -= 2.0 * math.pi * round(controller.pan_target / (2.0 * math.pi))
+        pose = controller.step(dt)
+        velocities = [
+            wrap_to_pi(pose[0] - self.pose[0]) / dt if dt > 0.0 else 0.0,
+            (pose[1] - self.pose[1]) / dt if dt > 0.0 else 0.0,
+        ]
+        self.pose = pose
+        self.apply(pose)
+        set_gimbal_state(self.graph_path, [wrap_to_pi(pose[0]), pose[1]], velocities, now)
+
+
 def create_ceiling_cameras(stage) -> list[CameraStream]:
-    """Add the fixed ceiling cameras, all off until MQTT enables them."""
-    target = Gf.Vec3d(*CEILING_CAMERA_TARGET)
+    """Add the ceiling cameras on kinematic gimbals, all streams off until MQTT enables them."""
     streams = []
     for index, (x, y) in enumerate(CEILING_CAMERA_POSITIONS, start=1):
         name = f"ceiling_cam_{index}"
-        path = f"{CEILING_CAMERA_ROOT}/{name}"
-        camera = UsdGeom.Camera.Define(stage, path)
-        eye = Gf.Vec3d(x, y, CEILING_CAMERA_HEIGHT)
-        look_at = Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0.0, 0.0, 1.0))
-        UsdGeom.Xformable(camera).AddTransformOp().Set(look_at.GetInverse())
+        gimbal = CeilingGimbal(stage, name, (x, y, CEILING_CAMERA_HEIGHT), CEILING_CAMERA_TARGET)
+        ceiling_gimbals.append(gimbal)
         streams.append(create_camera_stream(
-            path, name, "ceiling_cams", f"Ceiling camera {index}",
+            gimbal.camera_path, name, CEILING_CAMERA_NAMESPACE, f"Ceiling camera {index}",
+            gimbal.namespace,
         ))
+        print(f"Ceiling camera {index} gimbal: ROS /{gimbal.namespace}/gimbal/joint_command")
     return streams
 
 
@@ -625,7 +688,11 @@ def publish_gimbal_state(sim_robot: SimRobot, now: float) -> None:
     dofs = sim_robot.gimbal_dofs
     positions = sim_robot.robot.get_dof_positions(dof_indices=dofs).numpy()[0]
     velocities = sim_robot.robot.get_dof_velocities(dof_indices=dofs).numpy()[0]
-    node = f"{sim_robot.graph_path('/World/Gimbal_ROS2')}/PublishGimbalState"
+    set_gimbal_state(sim_robot.graph_path("/World/Gimbal_ROS2"), positions, velocities, now)
+
+
+def set_gimbal_state(graph_path: str, positions, velocities, now: float) -> None:
+    node = f"{graph_path}/PublishGimbalState"
     for name, value in (
         ("jointNames", [PAN_JOINT, TILT_JOINT]),
         ("jointPositions", [float(v) for v in positions]),
@@ -642,11 +709,16 @@ def update_gimbals() -> None:
     now = SimulationManager.get_simulation_time()
     for sim_robot in robots:
         update_gimbal(sim_robot, now)
+    for ceiling_gimbal in ceiling_gimbals:
+        ceiling_gimbal.update(now)
 
 
 def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
-    """Subscribe to <robot>/gimbal/joint_command and publish <robot>/gimbal/joint_states (JointState, rad)."""
-    graph_path = sim_robot.graph_path("/World/Gimbal_ROS2")
+    create_gimbal_graph(sim_robot.graph_path("/World/Gimbal_ROS2"), sim_robot.topic, sim_robot.name)
+
+
+def create_gimbal_graph(graph_path: str, topic, controller_name: str) -> None:
+    """Subscribe to topic("/gimbal/joint_command") and publish topic("/gimbal/joint_states") (JointState, rad)."""
     keys = og.Controller.Keys
     _, nodes, _, _ = og.Controller.edit(
         {"graph_path": graph_path, "evaluator_name": "execution"},
@@ -663,9 +735,9 @@ def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
                 ("OnPlaybackTick.outputs:tick", "PublishGimbalState.inputs:execIn"),
             ],
             keys.SET_VALUES: [
-                ("SubscribeJointState.inputs:topicName", sim_robot.topic("/gimbal/joint_command")),
+                ("SubscribeJointState.inputs:topicName", topic("/gimbal/joint_command")),
                 ("SubscribeJointState.inputs:queueSize", 1),
-                ("PublishGimbalState.inputs:topicName", sim_robot.topic("/gimbal/joint_states")),
+                ("PublishGimbalState.inputs:topicName", topic("/gimbal/joint_states")),
             ],
         },
     )
@@ -683,7 +755,7 @@ def create_gimbal_subscriber(sim_robot: SimRobot) -> None:
         "def compute(db):\n"
         "    from gimbal_control import controller_for\n"
         "    try:\n"
-        f"        controller_for({sim_robot.name!r}).accept_joint_state(\n"
+        f"        controller_for({controller_name!r}).accept_joint_state(\n"
         "            [str(n) for n in db.inputs.jointNames], list(db.inputs.positionCommand))\n"
         "    except ValueError as error:\n"
         "        db.log_error(str(error))\n"
@@ -826,6 +898,7 @@ try:
         camera_runtime.append(create_camera_stream(
             camera_path, f"camera/{stream}", camera_robot.name or "",
             f"{camera_robot.label} {stream}",
+            camera_robot.name if camera_path == f"{camera_robot.prim_path}/gimbal_tilt/camera" else None,
         ))
     if args.mqtt_host:
         from mqtt_cameras import CameraCatalog
@@ -845,6 +918,7 @@ try:
                 "height": stream.rtsp.height,
                 "fps": stream.rtsp.fps,
                 "enabled": False,
+                **({"gimbal_topic": stream.gimbal_topic} if stream.gimbal_topic else {}),
             }
             for stream in camera_runtime
         ])

@@ -50,8 +50,9 @@ Options:
                        CAMERA is a prim path relative to the robot (e.g.
                        chassis_link/sensors/front_owl/camera). Repeatable.
       --no-ceiling-cameras
-                       Do not offer the 4 fixed ceiling cameras
-                       (rtsp://HOST:8554/ceiling_cams/ceiling_cam_N).
+                       Do not offer the 4 ceiling cameras
+                       (rtsp://HOST:8554/ceiling_cams/ceiling_cam_N). Each sits on a
+                       pan/tilt gimbal: MQTT slam/gimbal/ceiling_cams/ceiling_cam_N/command.
       --camera-resolution WxH, --camera-fps N
                        Camera image size (default 640x480) and rate (default 15).
       --mqtt-host HOST, --mqtt-port N, --mqtt-topic T, --mqtt-username U, --mqtt-password P
@@ -156,7 +157,7 @@ for robot in "${robots[@]}"; do
   name="${name%%#*}"
   name="${name%%:*}"
   names+=("$name")
-  start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
+  start_ros_container "$name" launch slam_bringup robot.launch.py "robot:=$robot" \
     map_pcd:="$(container_path "$map_pcd")" map_pgm:="$(container_path "$map_pgm")" \
     rviz:=false auto_initial_pose:="$auto_initial_pose" \
     "${pose_mqtt_args[@]}"
@@ -164,6 +165,11 @@ done
 if [[ "$rviz" == true ]]; then
   start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
     "robots:=$(IFS=';'; printf '%s' "${names[*]}")"
+fi
+if [[ "$ceiling_cameras" == true ]]; then
+  # One gimbal action server + MQTT bridge per ceiling camera.
+  start_ros_container ceiling-gimbals launch slam_bringup ceiling_cameras.launch.py \
+    "${pose_mqtt_args[@]}"
 fi
 
 isaac_args=(--ros-cmd-vel --lidar-motion-compensation noncompensated)

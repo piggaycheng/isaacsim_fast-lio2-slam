@@ -1,11 +1,15 @@
-"""Launch the namespaced global_fusion stack of ONE robot from its spawn spec.
+"""Bring up everything ONE robot runs, from its spawn spec.
 
 Each robot runs this in its own container (as it would on its own computer):
-  ros2 launch slam_localization_3d robot.launch.py robot:=carter2:nova_carter@3.5,0,1.57 ...
+  ros2 launch slam_bringup robot.launch.py robot:=carter2:nova_carter@3.5,0,1.57 ...
+It composes slam_localization_3d's global_fusion stack (localization and
+navigation), slam_sensor_control's gimbals.launch.py when the robot profile
+has a gimbal, and slam_fleet_bridge's MQTT fleet bridge when mqtt_host is set.
 The spec sets the namespace (/NAME, TF on /NAME/tf), the robot type profile
-(config/robots/TYPE.yaml) and the auto_initial_pose guess derived from the
-simulator spawn pose X,Y,YAW. A real robot without a spawn pose can launch
-global_fusion.launch.py directly with namespace:=, robot_type:= and initial_*:=.
+(slam_localization_3d config/robots/TYPE.yaml) and the auto_initial_pose guess
+derived from the simulator spawn pose X,Y,YAW. A real robot without a spawn
+pose can launch global_fusion.launch.py directly with namespace:=,
+robot_type:= and initial_*:=.
 """
 
 import os
@@ -18,7 +22,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+LOCALIZATION = get_package_share_directory("slam_localization_3d")
+sys.path.insert(0, os.path.join(LOCALIZATION, "launch"))
 from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
 from robot_namespace import load_parameters  # noqa: E402
 
@@ -30,7 +35,8 @@ FORWARDED = (
 
 def robot_stack(context, package):
     spec = parse_robot_spec(LaunchConfiguration("robot").perform(context))
-    pose = initial_pose(spec, load_robot_profile(spec.robot_type))
+    profile = load_robot_profile(spec.robot_type)
+    pose = initial_pose(spec, profile)
     arguments = {name: LaunchConfiguration(name) for name in FORWARDED}
     arguments.update(
         namespace=spec.name, robot_type=spec.robot_type,
@@ -45,6 +51,20 @@ def robot_stack(context, package):
         ),
     ]
     mqtt_host = LaunchConfiguration("mqtt_host").perform(context)
+    gimbal = profile["simulation"].get("gimbal")
+    if gimbal is not None:
+        # Action server, plus MQTT slam/gimbal/NAME/command when mqtt_host is set.
+        limits = gimbal.get("tilt_limits_deg", (-90.0, 90.0))
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(
+                get_package_share_directory("slam_sensor_control"), "launch", "gimbals.launch.py")),
+            launch_arguments={
+                "namespaces": spec.name,
+                "tilt_limits_deg": f"{float(limits[0])},{float(limits[1])}",
+                **{name: LaunchConfiguration(name) for name in (
+                    "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password")},
+            }.items(),
+        ))
     if mqtt_host:
         # Open-RMF plans traffic with the same circle the planner and rotate zone use.
         radius = rotation_radius(load_parameters(
@@ -73,7 +93,7 @@ def robot_stack(context, package):
 
 
 def generate_launch_description():
-    package = get_package_share_directory("slam_localization_3d")
+    package = LOCALIZATION
     return LaunchDescription([
         DeclareLaunchArgument(
             "robot", description="NAME[:TYPE][#FLEET]@X,Y[,YAW] simulator spawn pose of this robot "

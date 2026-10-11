@@ -43,7 +43,7 @@ for robot in "${robots[@]}"; do
   name="${robot%%@*}"
   name="${name%%:*}"
   names+=("$name")
-  start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
+  start_ros_container "$name" launch slam_bringup robot.launch.py "robot:=$robot" \
     map_pcd:=/workspace/maps/office/map.pcd map_pgm:=/workspace/maps/office/map_2d.yaml \
     rviz:=false > "$directory/ros_$name.log" 2>&1
 done

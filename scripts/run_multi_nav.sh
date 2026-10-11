@@ -115,7 +115,7 @@ for robot in "${robots[@]}"; do
   name="${name%%#*}"
   name="${name%%:*}"
   names+=("$name")
-  start_ros_container "$name" launch slam_localization_3d robot.launch.py "robot:=$robot" \
+  start_ros_container "$name" launch slam_bringup robot.launch.py "robot:=$robot" \
     map_pcd:="$(container_path "$map_pcd")" map_pgm:="$(container_path "$map_pgm")" \
     rviz:=false auto_initial_pose:="$auto_initial_pose"
 done

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>slam_bringup</name>
+  <version>0.1.0</version>
+  <description>Whole-robot and site bringup: composes localization/navigation, the Open-RMF fleet bridge and sensor control (gimbals) launches.</description>
+  <maintainer email="noreply@example.com">slam</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>slam_localization_3d</exec_depend>
+  <exec_depend>slam_fleet_bridge</exec_depend>
+  <exec_depend>slam_sensor_control</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

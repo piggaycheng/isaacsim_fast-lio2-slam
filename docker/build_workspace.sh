@@ -56,7 +56,7 @@ rm -rf \
 cd "$workspace_dir"
 colcon build \
   --packages-up-to fastlio2 pgo isaac_fastlio_adapter slam_nav \
-    slam_localization_2d fast_lio_localization slam_localization_3d \
+    slam_localization_2d fast_lio_localization slam_localization_3d slam_bringup \
   "$@" \
   --cmake-args \
   -DROS_EDITION=ROS2 \

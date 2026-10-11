@@ -11,6 +11,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES action_msgs
 )
 
-install(PROGRAMS scripts/gimbal_action_server.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/gimbal_action_server.py scripts/gimbal_mqtt_bridge.py
+  DESTINATION lib/${PROJECT_NAME})
+install(FILES scripts/gimbal_protocol.py DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_package()

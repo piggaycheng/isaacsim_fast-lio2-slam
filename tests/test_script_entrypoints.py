@@ -59,7 +59,7 @@ class ScriptEntrypointsTest(unittest.TestCase):
                 ("run_nav.sh", ("--mode", "3d", "--headless", "--no-rviz"),
                  ("ROOT", "global_fusion.launch.py", "SIMULATOR", "--headless")),
                 ("run_multi_nav.sh", ("--headless", "--no-rviz"),
-                 ("ROOT", "launch slam_localization_3d robot.launch.py",
+                 ("ROOT", "launch slam_bringup robot.launch.py",
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
                   "SIMULATOR", "--headless", "--robot carter1@0,0,0",
                   "--robot carter2:carter_v1@3.5,0,0")),
