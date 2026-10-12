@@ -53,8 +53,9 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - Client ID `amr_F_NAME`，clean session，keepalive 20 s。
 - 流程：連線並取得 `odometry/global` 後送 `register`，未收到成功的 `register_ack` 每 3 秒重送（fleet adapter 比車晚啟動也能註冊上）；MQTT 重連不會重新註冊（`register` 代表新 session，adapter 會中斷進行中的任務），只在 adapter 回 `require_register` 時才重新註冊。收到 `status: success` 後才接受 `command`，之前收到的指令會被忽略。結束時送 `deregister`。
 - 晚啟動／重啟自癒：註冊完成前也持續送 `heartbeat`（`status` 為 `error`，不是 `idle`），adapter 發現未知車輛會回 `register_ack` 的 `status: require_register`，車端收到後立即重送 `register` 並回到未註冊狀態（執行中的任務不中斷）。
-- `heartbeat`（預設 2 Hz）：`x`、`y`、`yaw`（`map` 座標，rad）、`battery`、`status`（已註冊：`moving` 任務執行中，否則 `idle`；未註冊：`error`）、`current_cmd_id`（無任務為 `null`）。位置與電量為 node 屬性，`status` 與 `current_cmd_id` 每次從任務執行器現算。
-- `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）；`stop` 取消目前任務並回報其 `canceled`，`stop` 本身回 `completed`。新的 `cmd_id` 會取消執行中的任務，同一個 `cmd_id` 重複送出會被忽略（adapter 在心跳 5 秒未回報該 `cmd_id` 時會以相同 `cmd_id` 重送遺失的命令）。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
+- `heartbeat`（預設 2 Hz）：`x`、`y`、`yaw`（`map` 座標，rad）、`battery`、`status`（已註冊：`moving` 任務執行中或取消中，否則 `idle`；未註冊：`error`）、`current_cmd_id`（無任務為 `null`；取消中仍為舊任務）。位置與電量為 node 屬性，`status` 與 `current_cmd_id` 每次從任務執行器現算。
+- `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）。新的 `cmd_id` 會非同步取消執行中的任務，等 Nav2 回傳舊導航的最終結果後才回報舊任務結果並開始新任務；即使取消發生在等待 Nav2 接受目標時，也會在取得 goal handle 後送出取消。取消期間不執行後續步驟，若收到更多新任務只保留最新一份，被取代的待執行任務回 `canceled`。執行中或待執行的相同 `cmd_id` 重送會被忽略；已結束的指令沒有去重紀錄。`stop` 也會清除待執行任務，確認舊導航結束後才回 `completed`，不是確認車已完全停穩。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
+- 取消確認：接受取消請求不等於導航已結束，必須等舊 goal 的最終結果。Nav2 回 `canceled` 才回報取消；若最後一步已成功則仍回 `completed`，導航失敗回 `failed`；若僅中間步驟成功，因剩餘步驟已停止，整體回 `canceled`。取消被拒絕、非同步請求失敗或超過 `cancel_timeout`（node 參數，預設 10 秒）仍未結束時，記錄錯誤，待執行的新任務及等待中的 `stop` 回 `failed`；舊任務保持 `canceling` 並持續追蹤最終結果，確認結束前不接受新導航，不假裝取消成功。
 - `command_result`：`completed`（到位）、`failed`（導航失敗或指令錯誤）、`canceled`（被新指令或 `stop` 中斷），並附 `final_location`。
 - `battery`：沒有電池模型，預設固定 `100.0`；有 `sensor_msgs/BatteryState` 發布到 `/NAME/battery_state` 時改用其 `percentage`。
 - 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（必填；`slam_bringup/robot.launch.py` 帶入該車 global costmap 的 `robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，與 planner、旋轉保護區同一半徑）、`max_linear_velocity`、`max_angular_velocity`（必填；`robot.launch.py` 帶入該車 `cmd_vel_safety` 的 `max_linear_speed`／`max_angular_speed`，目前兩車皆 0.75 m/s、0.5 rad/s）、`heartbeat_rate`、`battery`。
@@ -69,6 +70,6 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 ```
 
 - 步驟類型：目前只有 `navigate`（`x`、`y`、`yaw` 為 `map` 座標，`yaw` 預設 0，呼叫 `/NAME/navigate_to_pose`）。`rotate`、`take_photo` 已列入協定但尚未實作，含這些步驟的指令會被拒絕，不會執行任何步驟。
-- `task_state`（retained）：`{"robot_id","cmd_id","goal_id","status","step","steps","message"}`，`status` 為 `running`、`succeeded`、`aborted`、`canceled`、`rejected`；狀態改變時立即發布，完成後保留最後狀態直到下一個任務。`navigate`、`dock` 也會發。
+- `task_state`（retained）：`{"robot_id","cmd_id","goal_id","status","step","steps","message"}`，`status` 為 `running`、`canceling`、`succeeded`、`aborted`、`canceled`、`rejected`；`canceling` 不代表已停止，取消異常會附在 `message`。狀態改變時立即發布，完成後保留最後狀態直到下一個任務。`navigate`、`dock` 也會發。
 - 結束時另發對應的 `command_result`（`succeeded`→`completed`、`aborted`／`rejected`→`failed`、`canceled`→`canceled`）。
 - 新增步驟類型：在 `task_bt.py` 的 `STEP_TYPES` 加驗證函式，並在 `fleet_bridge_node.py` 的 step factory 建立對應 behaviour（`update()` 不可阻塞）。

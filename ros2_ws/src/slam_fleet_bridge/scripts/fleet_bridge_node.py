@@ -84,7 +84,8 @@ class FleetBridge(Node):
         self.create_subscription(BatteryState, "battery_state", self.on_battery, 10)
         navigate_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
         self.runner = TaskRunner(
-            lambda step: NavigateStep(self, navigate_client, step), self.on_task_state)
+            lambda step: NavigateStep(self, navigate_client, step), self.on_task_state,
+            cancel_timeout=param("cancel_timeout", 10.0))
         self.create_timer(1.0 / tick_rate, self.on_tick)
         self.create_timer(1.0 / heartbeat_rate, self.on_heartbeat)
         self.get_logger().info(
@@ -125,6 +126,8 @@ class FleetBridge(Node):
 
     def on_task_state(self, state):
         self.get_logger().info(f"task state: {state}")
+        if state["status"] == "canceling" and state.get("message"):
+            self.get_logger().error(state["message"])
         cmd_id = self.cmd_ids.get(state.get("goal_id"))
         self.client.publish(self.topic["task_state"], json.dumps(
             {"robot_id": self.robot, "cmd_id": cmd_id, **state}), qos=1, retain=True)
@@ -148,9 +151,9 @@ class FleetBridge(Node):
             return
         cmd_id, action, steps = parsed
         if action == "stop":
-            self.runner.cancel()
-            self.publish("command_result", rmf.command_result_payload(
-                self.robot, cmd_id, "completed", "Stopped", self.pose))
+            self.runner.cancel(on_done=lambda success, message: self.publish(
+                "command_result", rmf.command_result_payload(
+                    self.robot, cmd_id, "completed" if success else "failed", message, self.pose)))
             return
         goal_id = str(cmd_id)
         self.cmd_ids[goal_id] = cmd_id
