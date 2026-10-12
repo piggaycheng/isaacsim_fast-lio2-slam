@@ -7,7 +7,7 @@ import json
 import math
 import time
 
-COMMAND_ACTIONS = ("navigate", "dock", "stop", "task")
+COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed")
 RESULT_STATUS = {"succeeded": "completed", "aborted": "failed", "canceled": "canceled",
                  "rejected": "failed"}
 
@@ -119,8 +119,9 @@ def parse_command(payload, robot):
     """Return (cmd_id, action, steps) with steps a list of task_bt steps, None for stop.
 
     `task` is an extension to the spec: {"action": "task", "steps": [...]} runs several
-    task_bt steps in order (validated by task_bt). Returns None for a command addressed
-    to another robot.
+    task_bt steps in order (validated by task_bt), holding after each step until
+    {"action": "proceed", "cmd_id": <the task's cmd_id>} releases the next one. Returns
+    None for a command addressed to another robot.
     """
     try:
         command = json.loads(payload)
@@ -136,7 +137,7 @@ def parse_command(payload, robot):
     action = command.get("action")
     if action not in COMMAND_ACTIONS:
         raise CommandError(f"unknown action {action!r}")
-    if action == "stop":
+    if action in ("stop", "proceed"):
         return cmd_id, action, None
     if action == "task":
         steps = command.get("steps")

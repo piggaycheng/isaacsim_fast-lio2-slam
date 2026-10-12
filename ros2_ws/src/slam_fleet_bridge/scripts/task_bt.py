@@ -3,7 +3,9 @@
 A command is JSON:
   {"goal_id": "42", "steps": [{"type": "navigate", "x": 1.0, "y": 2.0, "yaw": 0.0}]}
 Steps run in order; the task succeeds when all of them succeed and aborts at the
-first failure. Step types are listed in STEP_TYPES; types in PLANNED_STEP_TYPES
+first failure. After each step except the last the task reports "waiting" and
+does not start the next step until TaskRunner.proceed() is called. Step types are listed in STEP_TYPES (navigate; gimbal_move and
+gimbal_rotate take pan_deg/tilt_deg in degrees); types in PLANNED_STEP_TYPES
 are accepted by the protocol but rejected until they are implemented.
 """
 
@@ -15,8 +17,8 @@ from dataclasses import dataclass
 import py_trees
 from py_trees.common import Status
 
-RUNNING, CANCELING, SUCCEEDED, ABORTED, CANCELED, REJECTED = (
-    "running", "canceling", "succeeded", "aborted", "canceled", "rejected")
+RUNNING, WAITING, CANCELING, SUCCEEDED, ABORTED, CANCELED, REJECTED = (
+    "running", "waiting", "canceling", "succeeded", "aborted", "canceled", "rejected")
 PLANNED_STEP_TYPES = ("rotate", "take_photo")
 
 
@@ -43,6 +45,21 @@ def _navigate(step, index):
 
 
 STEP_TYPES = {"navigate": _navigate}
+
+
+def _gimbal_move(step, index):
+    return {"type": "gimbal_move", "pan_deg": _number(step, "pan_deg", index),
+            "tilt_deg": _number(step, "tilt_deg", index)}
+
+
+def _gimbal_rotate(step, index):
+    pan = _number(step, "pan_deg", index, 0.0)
+    if abs(pan) > 180.0:
+        raise TaskError(f"step {index}: |'pan_deg'| must be <= 180 for gimbal_rotate")
+    return {"type": "gimbal_rotate", "pan_deg": pan, "tilt_deg": _number(step, "tilt_deg", index, 0.0)}
+
+
+STEP_TYPES.update({"gimbal_move": _gimbal_move, "gimbal_rotate": _gimbal_rotate})
 
 
 def goal_id_of(payload):
@@ -79,11 +96,19 @@ def parse_command(payload):
     return Task(str(goal_id), parsed)
 
 
-class NavigateToPose(py_trees.behaviour.Behaviour):
-    """Sends one Nav2 goal; RUNNING until its result arrives."""
+class ActionStep(py_trees.behaviour.Behaviour):
+    """Sends one ROS action goal; RUNNING until its result arrives.
 
-    def __init__(self, node, client, step):
-        super().__init__(f"navigate({step['x']:.2f}, {step['y']:.2f})")
+    Subclasses build the goal and may refine what counts as success.
+    """
+
+    unavailable = "action server is not available"
+    rejected = "goal rejected by the action server"
+    request_failed = "goal request failed"
+    not_succeeded = "action did not succeed"
+
+    def __init__(self, name, node, client, step):
+        super().__init__(name)
         self.node, self.client, self.step = node, client, step
         self.send_future = self.result_future = self.goal_handle = None
         self.cancel_requested = False
@@ -100,31 +125,32 @@ class NavigateToPose(py_trees.behaviour.Behaviour):
         self.feedback_message = ""
         if not self.client.server_is_ready():
             return
-        from geometry_msgs.msg import PoseStamped
-        from nav2_msgs.action import NavigateToPose as Action
-        goal = Action.Goal()
-        pose = goal.pose = PoseStamped()
-        pose.header.frame_id = "map"
-        pose.header.stamp = self.node.get_clock().now().to_msg()
-        pose.pose.position.x, pose.pose.position.y = self.step["x"], self.step["y"]
-        pose.pose.orientation.z = math.sin(self.step["yaw"] / 2)
-        pose.pose.orientation.w = math.cos(self.step["yaw"] / 2)
-        self.send_future = self.client.send_goal_async(goal)
+        self.send_future = self.client.send_goal_async(self.build_goal())
+
+    def build_goal(self):
+        raise NotImplementedError
+
+    def succeeded(self, result):
+        """Whether a result of a goal that ended SUCCEEDED really achieved the step."""
+        return True
+
+    def failure_message(self, result):
+        return self.not_succeeded
 
     def update(self):
         if self.send_future is None:
-            self.feedback_message = "navigate_to_pose action server is not available"
+            self.feedback_message = self.unavailable
             return Status.FAILURE
         if self.result_future is None:
             if not self.send_future.done():
                 return Status.RUNNING
             if self.send_future.exception() is not None:
-                self.feedback_message = f"navigation goal request failed: {self.send_future.exception()}"
+                self.feedback_message = f"{self.request_failed}: {self.send_future.exception()}"
                 self.cancel_error = self.feedback_message
                 return Status.RUNNING if self.cancel_requested else Status.FAILURE
             self.goal_handle = self.send_future.result()
             if not self.goal_handle.accepted:
-                self.feedback_message = "navigation goal rejected by Nav2"
+                self.feedback_message = self.rejected
                 return Status.FAILURE
             self.result_future = self.goal_handle.get_result_async()
         if self.cancel_requested and self.cancel_future is None and not self.result_future.done():
@@ -132,21 +158,22 @@ class NavigateToPose(py_trees.behaviour.Behaviour):
         if self.cancel_future is not None and self.cancel_future.done():
             error = self.cancel_future.exception()
             if error is not None:
-                self.cancel_error = f"navigation cancellation failed: {error}"
+                self.cancel_error = f"cancellation failed: {error}"
             elif not self.cancel_future.result().goals_canceling:
-                self.cancel_error = "Nav2 did not accept the cancellation request"
+                self.cancel_error = "the action server did not accept the cancellation request"
         if not self.result_future.done():
             return Status.RUNNING
         if self.result_future.exception() is not None:
-            self.cancel_error = f"navigation result unavailable: {self.result_future.exception()}"
+            self.cancel_error = f"result unavailable: {self.result_future.exception()}"
             self.feedback_message = self.cancel_error
             # A failed result request does not prove the remote goal has ended.
             return Status.RUNNING if self.cancel_requested else Status.FAILURE
         from action_msgs.msg import GoalStatus
-        self.nav_status = self.result_future.result().status
-        if self.nav_status == GoalStatus.STATUS_SUCCEEDED:
+        response = self.result_future.result()
+        self.nav_status = response.status
+        if self.nav_status == GoalStatus.STATUS_SUCCEEDED and self.succeeded(response.result):
             return Status.SUCCESS
-        self.feedback_message = "navigation did not succeed"
+        self.feedback_message = self.failure_message(response.result)
         return Status.FAILURE
 
     def terminate(self, new_status):
@@ -169,6 +196,94 @@ class NavigateToPose(py_trees.behaviour.Behaviour):
         return SUCCEEDED if outcome == Status.SUCCESS else ABORTED
 
 
+class NavigateToPose(ActionStep):
+    """Sends one Nav2 goal."""
+
+    unavailable = "navigate_to_pose action server is not available"
+    rejected = "navigation goal rejected by Nav2"
+    request_failed = "navigation goal request failed"
+    not_succeeded = "navigation did not succeed"
+
+    def __init__(self, node, client, step):
+        super().__init__(f"navigate({step['x']:.2f}, {step['y']:.2f})", node, client, step)
+
+    def build_goal(self):
+        from geometry_msgs.msg import PoseStamped
+        from nav2_msgs.action import NavigateToPose as Action
+        goal = Action.Goal()
+        pose = goal.pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = self.node.get_clock().now().to_msg()
+        pose.pose.position.x, pose.pose.position.y = self.step["x"], self.step["y"]
+        pose.pose.orientation.z = math.sin(self.step["yaw"] / 2)
+        pose.pose.orientation.w = math.cos(self.step["yaw"] / 2)
+        return goal
+
+
+class GimbalStep(ActionStep):
+    """Turns the robot's gimbal; done only when the gimbal reports it reached the pose."""
+
+    action_name = ""
+    action_type = ""
+
+    def __init__(self, node, client, step):
+        super().__init__(
+            f"{step['type']}(pan={step['pan_deg']:.1f}, tilt={step['tilt_deg']:.1f})",
+            node, client, step)
+        self.unavailable = f"{self.action_name} action server is not available (no gimbal?)"
+        self.rejected = f"{self.action_name} goal rejected by the gimbal"
+        self.request_failed = f"{self.action_name} goal request failed"
+        self.not_succeeded = f"{self.action_name} did not succeed"
+
+    def build_goal(self):
+        from slam_sensor_control import action
+        return getattr(action, self.action_type).Goal(
+            **dict(zip(self.goal_fields, (math.radians(self.step["pan_deg"]),
+                                          math.radians(self.step["tilt_deg"])))))
+
+    def succeeded(self, result):
+        return bool(result.success)
+
+    def failure_message(self, result):
+        return result.message or self.not_succeeded
+
+
+class GimbalMove(GimbalStep):
+    action_name, action_type, goal_fields = "gimbal/move", "GimbalMove", ("pan", "tilt")
+
+
+class GimbalRotate(GimbalStep):
+    action_name, action_type = "gimbal/rotate", "GimbalRotate"
+    goal_fields = ("delta_pan", "delta_tilt")
+
+
+# step type -> (behaviour class, ROS action name relative to the robot namespace)
+class ReleaseGate(py_trees.behaviour.Behaviour):
+    """Holds the task between two steps until the adapter releases it."""
+
+    def __init__(self, name):
+        super().__init__(name)
+        self.released = False
+
+    def update(self):
+        return Status.SUCCESS if self.released else Status.RUNNING
+
+    def request_cancel(self):
+        pass
+
+    def poll_cancel(self):
+        return CANCELED
+
+    cancel_error = ""
+
+
+STEP_BEHAVIOURS = {
+    "navigate": (NavigateToPose, "navigate_to_pose"),
+    "gimbal_move": (GimbalMove, GimbalMove.action_name),
+    "gimbal_rotate": (GimbalRotate, GimbalRotate.action_name),
+}
+
+
 class TaskRunner:
     """Owns the current task's tree; reports changes through on_state(dict)."""
 
@@ -185,7 +300,17 @@ class TaskRunner:
 
     @property
     def active(self):
-        return self.state is not None and self.state["status"] in (RUNNING, CANCELING)
+        return self.state is not None and self.state["status"] in (RUNNING, WAITING, CANCELING)
+
+    def proceed(self, goal_id):
+        """Release a task waiting after a step. Returns (ok, message)."""
+        if not self.active or str(goal_id) != self.task.goal_id:
+            return False, "No such active task"
+        if self.state["status"] != WAITING:
+            return False, "Task is not waiting for release"
+        self.tree.root.current_child.released = True
+        self._set(RUNNING, self.state["step"] + 1)
+        return True, "Released"
 
     def _set(self, status, step, message=""):
         state = {"goal_id": self.task.goal_id, "status": status, "step": step,
@@ -219,9 +344,12 @@ class TaskRunner:
     def _start(self, task):
         self.cancel_failed = False
         self.task = task
-        root = py_trees.composites.Sequence(
-            f"task {task.goal_id}", memory=True,
-            children=[self.step_factory(step) for step in task.steps])
+        children = []
+        for index, step in enumerate(task.steps):
+            if index:
+                children.append(ReleaseGate(f"release before step {index}"))
+            children.append(self.step_factory(step))
+        root = py_trees.composites.Sequence(f"task {task.goal_id}", memory=True, children=children)
         self.tree = py_trees.trees.BehaviourTree(root)
         self._set(RUNNING, 0)
 
@@ -295,8 +423,12 @@ class TaskRunner:
             self._set(SUCCEEDED, len(self.task.steps) - 1)
         elif root.status == Status.FAILURE:
             failed = next((child for child in root.children if child.status == Status.FAILURE), root)
-            self._set(ABORTED, root.children.index(failed) if failed is not root else 0,
+            self._set(ABORTED, root.children.index(failed) // 2 if failed is not root else 0,
                       failed.feedback_message or f"{failed.name} failed")
         else:
             current = root.current_child
-            self._set(RUNNING, root.children.index(current) if current in root.children else 0)
+            index = root.children.index(current) if current in root.children else 0
+            if isinstance(current, ReleaseGate):
+                self._set(WAITING, index // 2)  # step index // 2 just finished
+            else:
+                self._set(RUNNING, index // 2)

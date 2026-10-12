@@ -61,15 +61,6 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - 可調參數（`fleet_bridge` node 參數）：`level_name`（`L1`）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（必填；`slam_bringup/robot.launch.py` 帶入該車 global costmap 的 `robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，與 planner、旋轉保護區同一半徑）、`max_linear_velocity`、`max_angular_velocity`（必填；`robot.launch.py` 帶入該車 `cmd_vel_safety` 的 `max_linear_speed`／`max_angular_speed`，目前兩車皆 0.75 m/s、0.5 rad/s）、`heartbeat_rate`、`battery`。
 - 容器 image 需含 `paho-mqtt` 與 `py_trees`（Dockerfile 已加入）；修改後需 `docker compose run --rm ros build`。
 
-## 擴充：多步任務（py_trees）
+## 擴充：多步任務
 
-規格之外的擴充：`command` 的 `action` 可為 `task`，帶 `steps` 列表，由 py_trees 建出 `Sequence` 依序執行，任一步失敗就中止。
-
-```json
-{"robot_id":"carter1","cmd_id":42,"action":"task","steps":[{"type":"navigate","x":1.0,"y":2.0,"yaw":0.0}]}
-```
-
-- 步驟類型：目前只有 `navigate`（`x`、`y`、`yaw` 為 `map` 座標，`yaw` 預設 0，呼叫 `/NAME/navigate_to_pose`）。`rotate`、`take_photo` 已列入協定但尚未實作，含這些步驟的指令會被拒絕，不會執行任何步驟。
-- `task_state`（retained）：`{"robot_id","cmd_id","goal_id","status","step","steps","message"}`，`status` 為 `running`、`canceling`、`succeeded`、`aborted`、`canceled`、`rejected`；`canceling` 不代表已停止，取消異常會附在 `message`。狀態改變時立即發布，完成後保留最後狀態直到下一個任務。`navigate`、`dock` 也會發。
-- 結束時另發對應的 `command_result`（`succeeded`→`completed`、`aborted`／`rejected`→`failed`、`canceled`→`canceled`）。
-- 新增步驟類型：在 `task_bt.py` 的 `STEP_TYPES` 加驗證函式，並在 `fleet_bridge_node.py` 的 step factory 建立對應 behaviour（`update()` 不可阻塞）。
+規格之外的擴充：`command` 的 `action` 可為 `task`（多步 `navigate`／`gimbal_move`／`gimbal_rotate`），步驟之間由 adapter 以 `proceed` 放行，車端回報 `task_state`。詳見 [多步任務文件](multi_step_task.md)。

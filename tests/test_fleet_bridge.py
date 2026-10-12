@@ -47,6 +47,7 @@ class FleetBridgeCancellationTest(unittest.TestCase):
             "nav2_msgs.action": types.SimpleNamespace(NavigateToPose=object),
             "nav_msgs.msg": types.SimpleNamespace(Odometry=object),
             "sensor_msgs.msg": types.SimpleNamespace(BatteryState=object),
+            "slam_sensor_control.action": types.SimpleNamespace(GimbalMove=object, GimbalRotate=object),
         }
         with patch.dict(sys.modules, modules):
             cls.bridge_class = importlib.import_module("fleet_bridge_node").FleetBridge

@@ -13,7 +13,7 @@ sys.path.insert(0, str(
     Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_fleet_bridge/scripts"
 ))
 from task_bt import (  # noqa: E402
-    ABORTED, CANCELED, CANCELING, REJECTED, RUNNING, SUCCEEDED, NavigateToPose,
+    ABORTED, CANCELED, CANCELING, REJECTED, RUNNING, SUCCEEDED, WAITING, NavigateToPose,
     TaskError, TaskRunner, parse_command,
 )
 
@@ -62,6 +62,23 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((task.goal_id, task.steps), ("7", [
             {"type": "navigate", "x": 1.0, "y": 2.0, "yaw": 0.0}]))
 
+    def test_gimbal_steps_are_parsed_in_degrees(self):
+        task = parse_command(json.dumps({"goal_id": "1", "steps": [
+            {"type": "gimbal_move", "pan_deg": 90, "tilt_deg": -10},
+            {"type": "gimbal_rotate", "pan_deg": 15}]}))
+        self.assertEqual(task.steps, [
+            {"type": "gimbal_move", "pan_deg": 90.0, "tilt_deg": -10.0},
+            {"type": "gimbal_rotate", "pan_deg": 15.0, "tilt_deg": 0.0}])
+
+    def test_invalid_gimbal_steps_are_rejected(self):
+        for step in ({"type": "gimbal_move", "pan_deg": 1},
+                     {"type": "gimbal_move", "pan_deg": "1", "tilt_deg": 0},
+                     {"type": "gimbal_move", "pan_deg": float("inf"), "tilt_deg": 0},
+                     {"type": "gimbal_rotate", "pan_deg": 181},
+                     {"type": "gimbal_rotate", "tilt_deg": True}):
+            with self.assertRaises(TaskError, msg=step):
+                parse_command(json.dumps({"goal_id": "1", "steps": [step]}))
+
     def test_invalid_commands_are_rejected(self):
         bad = [
             "not json", "[]",
@@ -94,13 +111,43 @@ class RunnerTest(unittest.TestCase):
         self.runner.submit(json.dumps({"goal_id": "1", "steps": [
             {"type": "navigate", "x": 2, "y": 0}, {"type": "navigate", "x": 1, "y": 1}]}))
         self.run_ticks()
-        self.assertEqual(self.statuses(), [("1", RUNNING), ("1", SUCCEEDED)])
+        self.assertEqual(self.statuses(), [("1", RUNNING), ("1", WAITING)])
+        self.assertEqual(self.states[-1]["step"], 0)
+        self.assertEqual(self.runner.proceed("1"), (True, "Released"))
+        self.run_ticks()
+        self.assertEqual(self.statuses(), [("1", RUNNING), ("1", WAITING), ("1", RUNNING), ("1", SUCCEEDED)])
         self.assertEqual(self.states[-1]["steps"], 2)
+
+    def test_next_step_does_not_start_until_released(self):
+        self.runner.submit(json.dumps({"goal_id": "1", "steps": [
+            {"type": "navigate", "x": 2, "y": 0}, {"type": "navigate", "x": 1, "y": 1}]}))
+        self.run_ticks(50)
+        self.assertEqual(self.states[-1]["status"], WAITING)
+        self.assertFalse(self.runner.proceed("other")[0])
+        self.assertTrue(self.runner.active)
+
+    def test_proceed_requires_waiting_task(self):
+        self.runner.submit(command("1", ticks=100))
+        self.run_ticks(2)
+        self.assertEqual(self.runner.proceed("1"), (False, "Task is not waiting for release"))
+
+    def test_cancel_while_waiting_reports_canceled(self):
+        self.runner.submit(json.dumps({"goal_id": "1", "steps": [
+            {"type": "navigate", "x": 2, "y": 0}, {"type": "navigate", "x": 1, "y": 1}]}))
+        self.run_ticks()
+        done = []
+        self.runner.cancel(on_done=lambda ok, msg: done.append(ok))
+        self.run_ticks()
+        self.assertEqual(self.states[-1]["status"], CANCELED)
+        self.assertEqual(done, [True])
+        self.assertFalse(self.runner.active)
 
     def test_failure_aborts_with_message_and_step(self):
         self.runner.submit(json.dumps({"goal_id": "1", "steps": [
             {"type": "navigate", "x": 0, "y": 0},
             {"type": "navigate", "x": 1, "y": -1}]}))
+        self.run_ticks()
+        self.runner.proceed("1")
         self.run_ticks()
         self.assertEqual(self.states[-1]["status"], ABORTED)
         self.assertEqual((self.states[-1]["step"], self.states[-1]["message"]), (1, "boom"))
@@ -179,7 +226,7 @@ class CancellationTest(unittest.TestCase):
         self.runner.tick()
 
     def finish(self, status):
-        self.result.set_result(types.SimpleNamespace(status=status))
+        self.result.set_result(types.SimpleNamespace(status=status, result=types.SimpleNamespace()))
         self.runner.tick()
 
     def test_cancel_before_goal_accepted_waits_for_final_result(self):

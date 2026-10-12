@@ -9,6 +9,7 @@ Topics under rmf/<fleet>/robot/<robot>/ :
                         before registration (status "error") so a late adapter can ask for it
   command (in)          navigate / dock run as one Nav2 goal (py_trees task); stop cancels;
                         task (extension) runs a list of task_bt steps
+                        (navigate, gimbal_move, gimbal_rotate)
   task_state (out)      extension: task progress (retained) on every change
   command_result (out)  completed / failed / canceled for a cmd_id
   deregister (out)      on shutdown
@@ -28,10 +29,11 @@ from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
+from slam_sensor_control.action import GimbalMove, GimbalRotate
 
 import rmf_protocol as rmf
 from fleet_pose import yaw_from_quaternion
-from task_bt import NavigateToPose as NavigateStep, TaskRunner
+from task_bt import STEP_BEHAVIOURS, TaskRunner
 
 REGISTER_RETRY_S = 3.0
 
@@ -82,9 +84,13 @@ class FleetBridge(Node):
 
         self.create_subscription(Odometry, "odometry/global", self.on_odometry, 10)
         self.create_subscription(BatteryState, "battery_state", self.on_battery, 10)
-        navigate_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        action_types = {"navigate": NavigateToPose, "gimbal_move": GimbalMove,
+                        "gimbal_rotate": GimbalRotate}
+        clients = {kind: ActionClient(self, action_types[kind], name)
+                   for kind, (_, name) in STEP_BEHAVIOURS.items()}
         self.runner = TaskRunner(
-            lambda step: NavigateStep(self, navigate_client, step), self.on_task_state,
+            lambda step: STEP_BEHAVIOURS[step["type"]][0](self, clients[step["type"]], step),
+            self.on_task_state,
             cancel_timeout=param("cancel_timeout", 10.0))
         self.create_timer(1.0 / tick_rate, self.on_tick)
         self.create_timer(1.0 / heartbeat_rate, self.on_heartbeat)
@@ -154,6 +160,11 @@ class FleetBridge(Node):
             self.runner.cancel(on_done=lambda success, message: self.publish(
                 "command_result", rmf.command_result_payload(
                     self.robot, cmd_id, "completed" if success else "failed", message, self.pose)))
+            return
+        if action == "proceed":
+            ok, message = self.runner.proceed(str(cmd_id))
+            if not ok:
+                self.get_logger().warning(f"proceed {cmd_id} ignored: {message}")
             return
         goal_id = str(cmd_id)
         self.cmd_ids[goal_id] = cmd_id
