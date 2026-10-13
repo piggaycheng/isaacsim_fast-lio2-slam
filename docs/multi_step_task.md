@@ -131,6 +131,7 @@ POST /api/robots/carter1/proceed   {"cmd_id":42}
 - RMF 下新的導航／動作／停止時，舊的直派任務先脫離；其後續回報只轉發給 backend，不影響 RMF 新的 execution。
 - RMF 擁有的多步任務被急停中斷時，回報 `held`，解除急停後從中斷的步驟續行。
 - 任務失敗時記錄錯誤並把車設為 failed；rmf_adapter 沒有「execution 失敗」的 API，execution 保留到在 RMF 取消為止。
+- RMF 下發的 `navigate`／`dock` 失敗會自動重試 2 次；`gimbal_move`／`gimbal_rotate` 等動作失敗不重試，直接回報 RMF（限位、無雲台等錯誤重試無效，逾時也已在車端等滿 30 s）。
 
 ## 實作
 
