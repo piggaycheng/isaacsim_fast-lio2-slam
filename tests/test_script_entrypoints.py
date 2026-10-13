@@ -44,7 +44,8 @@ class ScriptEntrypointsTest(unittest.TestCase):
                 '}\n',
             )
             cases = (
-                ("run_slam.sh", (), ("ROOT", "ROS slam", "SIMULATOR")),
+                ("run_slam.sh", (), ("ROOT", "ROS slam",
+                 "SIMULATOR --dynamic-elevator-doors --elevator-door-mode manual\n")),
                 ("run_2d_localization.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "ROS launch slam_localization_2d",
                   "map:=/workspace/maps/office/map_2d.yaml",

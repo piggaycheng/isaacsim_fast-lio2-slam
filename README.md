@@ -47,7 +47,7 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_slam.sh
 ```
 
-啟動 FAST-LIO2、PGO 回環與 RViz。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車。
+啟動 FAST-LIO2、PGO 回環與 RViz，並自動啟用 Office 動態電梯門的手動模式（初始關門）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關電梯門。
 
 建圖期間保持上述程式運行，另開終端存圖：
 

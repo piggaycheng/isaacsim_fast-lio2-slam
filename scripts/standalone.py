@@ -62,6 +62,14 @@ parser = argparse.ArgumentParser(description="Launch Isaac Sim with the Office e
 parser.add_argument("--headless", action="store_true", help="Run without the Isaac Sim GUI.")
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument(
+    "--dynamic-elevator-doors", action="store_true",
+    help="Animate Office elevator doors with kinematic collisions (original USD is unchanged).",
+)
+parser.add_argument(
+    "--elevator-door-mode", choices=("cycle", "manual"), default="cycle",
+    help="Dynamic door control: cycle every 14 simulated seconds, or press E in the GUI.",
+)
+parser.add_argument(
     "--validation-control-dir",
     help="Opt-in file-controlled physical obstacles for braking/navigation validation.",
 )
@@ -125,6 +133,10 @@ if args.validation_control_dir and not args.ros_cmd_vel:
     parser.error("--validation-control-dir requires --ros-cmd-vel")
 if args.validation_control_dir and args.robot:
     parser.error("--validation-control-dir supports only the single default robot")
+if args.elevator_door_mode == "manual" and not args.dynamic_elevator_doors:
+    parser.error("--elevator-door-mode manual requires --dynamic-elevator-doors")
+if args.dynamic_elevator_doors and args.elevator_door_mode == "manual" and args.headless:
+    parser.error("Manual elevator doors require the GUI; use cycle mode with --headless")
 
 
 class SimRobot:
@@ -257,6 +269,7 @@ ceiling_gimbals = []
 camera_catalog = None
 keyboard = None
 keyboard_subscription = None
+elevator_doors = None
 if args.ros_cmd_vel:
     for sim_robot in robots:
         sim_robot.receiver = receiver_for(sim_robot.name)
@@ -265,6 +278,8 @@ if args.ros_cmd_vel:
 def on_keyboard_event(event, *_) -> bool:
     key = event.input.name
     if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+        if key == "E" and key not in pressed_keys and elevator_doors is not None:
+            elevator_doors.toggle()
         pressed_keys.add(key)
     elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
         pressed_keys.discard(key)
@@ -847,6 +862,7 @@ def verify_spawn_poses(sim_robots) -> None:
 
 
 lead = robots[0]
+simulation_exit_code = 0
 try:
     assets_root_path = get_assets_root_path()
     if assets_root_path is None:
@@ -872,6 +888,15 @@ try:
             f"Surrounding buildings prim was not found: {SURROUNDING_BUILDINGS_PRIM_PATH}"
         )
     UsdGeom.Imageable(buildings_prim).MakeInvisible()
+    if args.dynamic_elevator_doors:
+        from elevator_doors import ElevatorDoors
+
+        try:
+            elevator_doors = ElevatorDoors(stage, cycle=args.elevator_door_mode == "cycle")
+        except (RuntimeError, TypeError, ValueError) as error:
+            simulation_exit_code = 1
+            carb.log_error(f"Could not initialize dynamic elevator doors: {error}")
+            raise
 
     # Static (collision-only, no rigid body) boxes that Carter's LiDAR sees but cannot push.
     for index, (x, y, size_x, size_y, size_z) in enumerate(boxes):
@@ -937,7 +962,7 @@ try:
         raise RuntimeError("Isaac Sim did not create a physics scene")
     physics_scenes[0].set_enabled_gpu_dynamics(False)
 
-    if not args.headless and command_receiver is None:
+    if not args.headless and (command_receiver is None or elevator_doors is not None):
         app_window = omni.appwindow.get_default_app_window()
         input_interface = carb.input.acquire_input_interface()
         keyboard = app_window.get_keyboard()
@@ -955,9 +980,11 @@ try:
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
     print(f"ROS 2 simulator ground truth: {lead.topic(GROUND_TRUTH_TOPIC)} [nav_msgs/msg/Odometry]")
     if command_receiver is not None:
-        print("Command source: native ROS 2 cmd_vel per robot (0.5 s watchdog; keyboard disabled)")
+        print("Command source: native ROS 2 cmd_vel per robot (0.5 s watchdog; keyboard driving disabled)")
     if not args.headless and command_receiver is None:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
+    if not args.headless and elevator_doors is not None:
+        print("Elevator controls: E = toggle all doors and switch to manual mode")
 
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()
@@ -983,6 +1010,8 @@ try:
         start_position = lead.robot.get_world_poses()[0].numpy()[0]
         for _ in range(60):
             lead.drive(0.2, 0.0)
+            if elevator_doors is not None:
+                elevator_doors.update(SimulationManager.get_simulation_time())
             update_gimbals()
             if follow_camera_path is not None:
                 update_follow_camera(lead, follow_camera_path)
@@ -1013,6 +1042,8 @@ try:
         )
     else:
         while simulation_app.is_running():
+            if elevator_doors is not None:
+                elevator_doors.update(SimulationManager.get_simulation_time())
             if validation_scene is not None:
                 validation_scene.update(SimulationManager.get_simulation_time())
             for sim_robot in robots:
@@ -1055,4 +1086,4 @@ finally:
         input_interface.unsubscribe_to_keyboard_events(keyboard, keyboard_subscription)
     timeline = omni.timeline.get_timeline_interface()
     timeline.stop()
-    simulation_app.close()
+    simulation_app.close(exit_code=simulation_exit_code)

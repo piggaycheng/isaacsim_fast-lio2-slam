@@ -8,4 +8,4 @@ set -u
 require_ros_workspace
 start_ros slam
 
-"$project_dir/scripts/standalone.py"
+"$project_dir/scripts/standalone.py" --dynamic-elevator-doors --elevator-door-mode manual
