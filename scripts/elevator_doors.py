@@ -5,7 +5,36 @@ import math
 
 MOVE_SECONDS = 2.0
 HOLD_SECONDS = 5.0
+LIFT_SECONDS = 6.0
+LOWER_LEVEL = -3.3
+CABIN_SOURCE = "/Root/BP_Elevator_162/SM_Elevator"
 DOOR_ROOT = "/World/DynamicElevatorDoors"
+GROUND_PLANE = "/Root/GroundPlane/CollisionPlane"
+# Office 6.1's two shafts extend behind the ground-floor doors at x=-15.
+SHAFT_HOLES = ((-17.0, -2.5, -15.0, -0.5), (-17.0, -5.5, -15.0, -3.5))
+
+
+def ground_mesh(bounds, holes):
+    """Triangulate a rectangular floor, excluding rectangular shaft openings."""
+    xmin, ymin, xmax, ymax = bounds
+    if not all(math.isfinite(v) for v in bounds) or not (xmin < xmax and ymin < ymax):
+        raise ValueError("Ground bounds must have positive area")
+    if not all(xmin <= x0 < x1 <= xmax and ymin <= y0 < y1 <= ymax
+               for x0, y0, x1, y1 in holes):
+        raise ValueError("Shaft openings must lie inside ground bounds")
+    xs = sorted({xmin, xmax, *(x for hole in holes for x in (hole[0], hole[2]))})
+    ys = sorted({ymin, ymax, *(y for hole in holes for y in (hole[1], hole[3]))})
+    points = [(x, y, 0.0) for y in ys for x in xs]
+    indices = []
+    for row, (y0, y1) in enumerate(zip(ys, ys[1:])):
+        for column, (x0, x1) in enumerate(zip(xs, xs[1:])):
+            x, y = (x0 + x1) / 2, (y0 + y1) / 2
+            if any(hx0 < x < hx1 and hy0 < y < hy1 for hx0, hy0, hx1, hy1 in holes):
+                continue
+            lower = row * len(xs) + column
+            upper = lower + len(xs)
+            indices.extend((lower, lower + 1, upper + 1, lower, upper + 1, upper))
+    return points, indices
 
 
 class ElevatorDoors:
@@ -19,6 +48,13 @@ class ElevatorDoors:
         self.started = None
         self.last_time = None
         self.doors = []
+        self.door_levels = []
+        self.cabins = []
+        self.lift_height = 0.0
+        self.lift_target = 0.0
+        self.lift_start = 0.0
+        self.lift_elapsed = 0.0
+        self.lift_pending = False
         roots = [
             UsdSkel.Root(prim) for prim in stage.Traverse()
             if prim.IsA(UsdSkel.Root) and prim.GetName().startswith("SK_Elevator_doors_")
@@ -28,11 +64,92 @@ class ElevatorDoors:
         if stage.GetPrimAtPath(DOOR_ROOT):
             raise RuntimeError(f"Dynamic door prim already exists: {DOOR_ROOT}")
         with Usd.EditContext(stage, stage.GetSessionLayer()):
+            self._create_cabins()
+            roots = [
+                UsdSkel.Root(prim) for prim in stage.Traverse()
+                if prim.IsA(UsdSkel.Root) and prim.GetName().startswith("SK_Elevator_doors_")
+            ]
             for root in roots:
                 self.doors.append(self._create_door(root, len(self.doors)))
+            self._open_shafts()
         self._apply()
         print(f"Dynamic elevator doors: {len(self.doors)} door sets, "
               f"mode={'cycle' if cycle else 'manual'}", flush=True)
+
+    def _create_cabins(self):
+        from pxr import Gf, UsdGeom, UsdPhysics
+
+        source = self.stage.GetPrimAtPath(CABIN_SOURCE)
+        if not source:
+            raise RuntimeError(f"Office elevator cabin not found: {CABIN_SOURCE}")
+        cache = UsdGeom.XformCache()
+        world = cache.GetLocalToWorldTransform(source)
+        ground = Gf.Matrix4d(world)
+        ground.SetTranslateOnly(world.ExtractTranslation() + Gf.Vec3d(0, 0, -LOWER_LEVEL))
+        clone = UsdGeom.Xform.Define(self.stage, f"{DOOR_ROOT}/Cabin")
+        clone.GetPrim().GetReferences().AddInternalReference(CABIN_SOURCE)
+        first = Gf.Matrix4d(ground)
+        first.SetTranslateOnly(ground.ExtractTranslation() + Gf.Vec3d(0, 3, 0))
+        for prim, matrix in ((clone.GetPrim(), first), (source, ground)):
+            parent_inverse = cache.GetLocalToWorldTransform(prim.GetParent()).GetInverse()
+            op = UsdGeom.Xformable(prim).MakeMatrixXform()
+            op.Set(matrix * parent_inverse)
+            body = UsdPhysics.RigidBodyAPI.Apply(prim)
+            body.CreateKinematicEnabledAttr(True)
+            self.cabins.append((op, matrix, parent_inverse))
+        print("Elevator cabins ready at ground level; L switches between z=0 and z=-3.3 m", flush=True)
+
+    def _open_shafts(self):
+        from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+        plane = self.stage.GetPrimAtPath(GROUND_PLANE)
+        mesh_prim = self.stage.GetPrimAtPath("/Root/GroundPlane/CollisionMesh")
+        if not plane or not plane.HasAPI(UsdPhysics.CollisionAPI) or not mesh_prim:
+            raise RuntimeError("Expected Office ground plane and collision mesh")
+        world = UsdGeom.XformCache().GetLocalToWorldTransform(plane)
+        if (abs(world.ExtractTranslation()[2]) > 1e-5
+                or world.TransformDir(Gf.Vec3d(0, 0, 1)).GetNormalized()[2] < 0.999):
+            raise RuntimeError("Expected the Office ground plane at world z=0")
+        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render"])
+        bounds = cache.ComputeWorldBound(mesh_prim).ComputeAlignedRange()
+        lower_points, lower_counts, lower_indices = [], [], []
+        transforms = UsdGeom.XformCache()
+        # Cover the authored floor tiles as well as the original 50 m ground mesh.
+        for prim in Usd.PrimRange.Stage(self.stage, Usd.TraverseInstanceProxies()):
+            if prim.IsA(UsdGeom.Mesh) and prim.GetName().startswith("SM_Floor_"):
+                floor_bounds = cache.ComputeWorldBound(prim).ComputeAlignedRange()
+                bounds.UnionWith(floor_bounds)
+                if (abs(floor_bounds.GetMin()[2] - LOWER_LEVEL) < 0.01
+                        and abs(floor_bounds.GetMax()[2] - LOWER_LEVEL) < 0.01):
+                    floor = UsdGeom.Mesh(prim)
+                    matrix = transforms.GetLocalToWorldTransform(prim)
+                    offset = len(lower_points)
+                    lower_points.extend(matrix.Transform(Gf.Vec3d(p)) for p in floor.GetPointsAttr().Get())
+                    lower_counts.extend(floor.GetFaceVertexCountsAttr().Get())
+                    lower_indices.extend(offset + i for i in floor.GetFaceVertexIndicesAttr().Get())
+        if not lower_points:
+            raise RuntimeError("Office lower-floor geometry was not found")
+        low, high = bounds.GetMin(), bounds.GetMax()
+        points, indices = ground_mesh((low[0], low[1], high[0], high[1]), SHAFT_HOLES)
+        mesh = UsdGeom.Mesh.Define(self.stage, f"{DOOR_ROOT}/GroundCollision")
+        mesh.CreatePointsAttr(points)
+        mesh.CreateFaceVertexCountsAttr([3] * (len(indices) // 3))
+        mesh.CreateFaceVertexIndicesAttr(indices)
+        mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+        mesh.CreateExtentAttr([Gf.Vec3f(low[0], low[1], 0), Gf.Vec3f(high[0], high[1], 0)])
+        mesh.MakeInvisible()
+        UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+        UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr("none")
+        UsdPhysics.CollisionAPI(plane).CreateCollisionEnabledAttr(False)
+        lower = UsdGeom.Mesh.Define(self.stage, f"{DOOR_ROOT}/LowerFloorCollision")
+        lower.CreatePointsAttr(lower_points)
+        lower.CreateFaceVertexCountsAttr(lower_counts)
+        lower.CreateFaceVertexIndicesAttr(lower_indices)
+        lower.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+        lower.MakeInvisible()
+        UsdPhysics.CollisionAPI.Apply(lower.GetPrim())
+        UsdPhysics.MeshCollisionAPI.Apply(lower.GetPrim()).CreateApproximationAttr("none")
+        print("Removed infinite ground support inside the two Office elevator shafts", flush=True)
 
     def _create_door(self, root, index):
         from pxr import Gf, Usd, UsdGeom, UsdPhysics, UsdSkel, Vt
@@ -132,40 +249,76 @@ class ElevatorDoors:
             [animation.GetPath()],
         )
         print(f"  Elevator door: {root.GetPath()}", flush=True)
+        self.door_levels.append(("inside" in root.GetPrim().GetName(), minimum[2]))
         return animation.GetTranslationsAttr(), translations, offsets, panels
 
     def _apply(self):
         from pxr import Gf, Usd, Vt
 
         with Usd.EditContext(self.stage, self.stage.GetSessionLayer()):
-            for attribute, closed, offsets, panels in self.doors:
+            for op, ground, parent_inverse in self.cabins:
+                matrix = Gf.Matrix4d(ground)
+                matrix.SetTranslateOnly(ground.ExtractTranslation() + Gf.Vec3d(0, 0, self.lift_height))
+                op.Set(matrix * parent_inverse)
+            for (attribute, closed, offsets, panels), (inside, height) in zip(self.doors, self.door_levels):
+                fraction = self.fraction if inside or abs(height - self.lift_height) < 0.05 else 0.0
                 attribute.Set(Vt.Vec3fArray([
-                    Gf.Vec3f(Gf.Vec3d(position) + offset * self.fraction)
+                    Gf.Vec3f(Gf.Vec3d(position) + offset * fraction)
                     for position, offset in zip(closed, offsets)
                 ]))
                 for position, center, travel in panels:
-                    position.Set(center + travel * self.fraction)
+                    position.Set(center + travel * fraction
+                                 + Gf.Vec3d(0, 0, self.lift_height if inside else 0))
 
     def toggle(self):
+        if self.lift_pending or self.lift_height != self.lift_target:
+            print("Elevator doors: opening blocked until the lift reaches a landing", flush=True)
+            return
         self.cycle = False
         self.target_open = not self.target_open
         print(f"Elevator doors: {'opening' if self.target_open else 'closing'} "
               "(manual mode)", flush=True)
 
+    def toggle_lift(self):
+        if self.lift_pending or self.lift_height != self.lift_target:
+            print("Elevator lift: already moving or closing doors; L ignored", flush=True)
+            return
+        self.cycle = False
+        self.target_open = False
+        self.lift_target = LOWER_LEVEL if self.lift_height == 0.0 else 0.0
+        self.lift_start = self.lift_height
+        self.lift_elapsed = 0.0
+        self.lift_pending = True
+        print(f"Elevator lift requested: z={self.lift_target:.1f} m; closing doors first", flush=True)
+
     def update(self, sim_time):
         if not math.isfinite(sim_time):
             raise ValueError("Door simulation time must be finite")
+        previous = (self.fraction, self.lift_height)
         if self.started is None or sim_time < self.last_time:
             if self.started is not None:
                 self.target_open = False
+                self.lift_height = self.lift_target = self.lift_start = 0.0
+                self.lift_elapsed = 0.0
+                self.lift_pending = False
             self.started = sim_time
             self.last_time = sim_time
-            if self.fraction != 0.0:
-                self.fraction = 0.0
-                self._apply()
+            self.fraction = 0.0
         dt = sim_time - self.last_time
         self.last_time = sim_time
-        if self.cycle:
+        if self.lift_pending:
+            fraction = max(0.0, self.fraction - dt / MOVE_SECONDS)
+            if fraction == 0.0:
+                self.lift_pending = False
+        elif self.lift_height != self.lift_target:
+            fraction = 0.0
+            self.lift_elapsed = min(LIFT_SECONDS, self.lift_elapsed + dt)
+            progress = (1.0 - math.cos(math.pi * self.lift_elapsed / LIFT_SECONDS)) / 2.0
+            self.lift_height = self.lift_start + (self.lift_target - self.lift_start) * progress
+            if self.lift_elapsed == LIFT_SECONDS:
+                self.lift_height = self.lift_target
+                print(f"Elevator lift arrived: z={self.lift_height:.1f} m; E opens doors", flush=True)
+        elif self.cycle:
             phase = (sim_time - self.started) % (2 * (HOLD_SECONDS + MOVE_SECONDS))
             if phase < HOLD_SECONDS:
                 fraction = 0.0
@@ -184,6 +337,6 @@ class ElevatorDoors:
             fraction = min(1.0, self.fraction + delta) if self.target_open else max(
                 0.0, self.fraction - delta,
             )
-        if fraction != self.fraction:
-            self.fraction = fraction
+        self.fraction = fraction
+        if previous != (self.fraction, self.lift_height):
             self._apply()

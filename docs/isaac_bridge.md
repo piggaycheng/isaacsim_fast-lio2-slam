@@ -33,26 +33,32 @@ docker compose exec ros /workspace/docker/entrypoint.sh ros2 topic list   # run 
 
 這些轉接針對模擬；目前 launch 與預設設定不能直接套用到實機。
 
-## 動態電梯門
+## 動態電梯門與升降
 
-直接啟動模擬器時，可選擇在執行期間啟用 Office 的電梯門：
+直接啟動模擬器時，可選擇在執行期間啟用 Office 的電梯門與車廂：
 
 ```bash
 /home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py --dynamic-elevator-doors
-# 手動模式：初始關門，點選模擬視窗後按 E 開／關
+# 手動模式：初始關門、車廂在地面樓層，E 開／關門，L 升／降
 /home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py \
   --dynamic-elevator-doors --elevator-door-mode manual
 # 無 GUI 的自動循環
 /home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py --headless --dynamic-elevator-doors
 ```
 
-直接執行 `standalone.py` 時預設不啟用，維持原場景；`./scripts/run_slam.sh` 則自動帶上 `--dynamic-elevator-doors --elevator-door-mode manual`，以初始關門的手動模式啟動。啟用後沿用原門片的骨架、網格與材質，四片伸縮門同步向兩側滑動，另建立隱藏的運動學碰撞盒與門片同步。修改僅存在 USD session layer，不儲存或改寫 NVIDIA 資產。控制所有找到的內／外門（包含地下樓層），**只開關門，不移動電梯車廂或建立跨樓層運送功能**。
+直接執行 `standalone.py` 時預設不啟用，維持原場景；`./scripts/run_slam.sh` 則自動帶上 `--dynamic-elevator-doors --elevator-door-mode manual`，以初始關門的手動模式啟動。啟用後沿用原門片的骨架、網格與材質，四片伸縮門同步向兩側滑動，另建立隱藏的運動學碰撞盒與門片同步。沿用原有車廂並以內部引用複製到另一個井口，兩個車廂都從地面樓層起始，車廂、內門與碰撞一起升降。修改僅存在 USD session layer，不儲存或改寫 NVIDIA 資產。
 
-自動模式使用模擬時間：關門停留 5 秒、開門 2 秒、開門停留 5 秒、關門 2 秒；暫停模擬時也暫停動畫。GUI 按 **E** 可中途反向並切換為手動模式，即使車輛使用 `--ros-cmd-vel` 也能操作；手動模式不支援 `--headless`。目前不提供門的 ROS／MQTT 指令，也沒有防夾偵測，自動關門時應避免讓車輛停在門口。未找到預期的 Office 骨架門結構時會報錯，不會默默以替代模型取代。
+Office 原本的 `/Root/GroundPlane/CollisionPlane` 是 z=0 的無限碰撞平面，也會支撐看似空的電梯井。啟用動態門時，改用涵蓋原地面網格與場景地板範圍的有限三角網格碰撞地面，僅在 Office 6.1 的兩個電梯井挖出 2×2 m 開口（x=-17～-15；y=-2.5～-0.5、-5.5～-3.5），保留辦公室及門外地面的支撐；地下樓層使用原有可見地板網格建立碰撞，供車輛出入車廂。未啟用時維持原本無限地面。**空井沒有透明地板或額外井底，未停靠樓層的外門保持關閉**。
+
+自動模式只循環停靠樓層的門，使用模擬時間：關門停留 5 秒、開門 2 秒、開門停留 5 秒、關門 2 秒；暫停模擬時也暫停動畫。GUI 按 **E** 可中途反向並切換為手動模式，即使車輛使用 `--ros-cmd-vel` 也能操作；手動模式不支援 `--headless`。
+
+按 **L** 同步切換兩個車廂的停靠樓層：地面 `z=0` 與地下 `z=-3.3 m`。進入車廂後先停車再按 L；它會切換到手動模式，先用約 2 秒關門，再以平滑加減速用 6 秒升降。移動中 E 不開門、重複 L 不反向；抵達後門保持關閉，按 E 才開啟車廂內門與停靠樓層的外門。未停靠樓層的門不會打開，內門碰撞隨車廂移動；機器人靠物理接觸隨車廂升降，不直接改寫機器人位置。重設模擬時間會恢復地面停靠、關門狀態。
+
+目前兩個電梯同步控制，沒有獨立選梯、ROS／MQTT 指令、防夾偵測或多樓層 Nav2 地圖切換；請避免停在門口，升降時不要繼續駕駛車輛。未找到預期的 Office 車廂／骨架門結構時會報錯，不會默默以替代模型取代。
 
 `run_slam.sh` 固定啟用手動電梯門，不提供模式切換參數；其他 `run_*.sh` 尚未提供電梯門參數的轉傳介面。單獨執行模擬器不會自動啟動 ROS container；要同時建圖／導航，需另行啟動相應 ROS 流程。
 
-驗證：`python3 -m unittest discover -s tests -p 'test_elevator_doors.py'` 測試控制時序與按鍵；`/home/yu/isaacsim-6.1.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、兩個地面門口關門／開門／再關門的 PhysX 射線阻擋，以及 RTX LiDAR 量測距離隨門開關改變。
+驗證：`python3 -m unittest discover -s tests -p 'test_elevator_doors.py'` 測試控制時序、E／L 按鍵、升降互鎖及地面開口網格；`/home/yu/isaacsim-6.1.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、PhysX 門口阻擋、RTX LiDAR 量測，以及兩個車廂以物理接觸載送 Nova Carter 下樓再上樓、停靠樓層門互鎖與地下地板支撐。
 
 ## 套件分工
 

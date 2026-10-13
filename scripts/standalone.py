@@ -63,7 +63,7 @@ parser.add_argument("--headless", action="store_true", help="Run without the Isa
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
 parser.add_argument(
     "--dynamic-elevator-doors", action="store_true",
-    help="Animate Office elevator doors with kinematic collisions (original USD is unchanged).",
+    help="Enable Office elevator doors and moving cabins (original USD is unchanged).",
 )
 parser.add_argument(
     "--elevator-door-mode", choices=("cycle", "manual"), default="cycle",
@@ -256,7 +256,7 @@ from isaacsim.sensors.experimental.physics import IMU
 from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from omni.kit.viewport.utility import get_active_viewport
-from pxr import Gf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Tf, Usd, UsdGeom, UsdPhysics
 
 app_utils.enable_extension("isaacsim.ros2.bridge")
 simulation_app.update()
@@ -276,10 +276,12 @@ if args.ros_cmd_vel:
 
 
 def on_keyboard_event(event, *_) -> bool:
-    key = event.input.name
+    key = (event.input if isinstance(event.input, str) else event.input.name).upper()
     if event.type == carb.input.KeyboardEventType.KEY_PRESS:
         if key == "E" and key not in pressed_keys and elevator_doors is not None:
             elevator_doors.toggle()
+        if key == "L" and key not in pressed_keys and elevator_doors is not None:
+            elevator_doors.toggle_lift()
         pressed_keys.add(key)
     elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
         pressed_keys.discard(key)
@@ -893,7 +895,7 @@ try:
 
         try:
             elevator_doors = ElevatorDoors(stage, cycle=args.elevator_door_mode == "cycle")
-        except (RuntimeError, TypeError, ValueError) as error:
+        except (RuntimeError, TypeError, ValueError, Tf.ErrorException) as error:
             simulation_exit_code = 1
             carb.log_error(f"Could not initialize dynamic elevator doors: {error}")
             raise
@@ -984,7 +986,8 @@ try:
     if not args.headless and command_receiver is None:
         print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
     if not args.headless and elevator_doors is not None:
-        print("Elevator controls: E = toggle all doors and switch to manual mode")
+        print("Elevator controls: E = toggle doors at the current landing; L = change floor "
+              "(closes doors first; both cabins move together)")
 
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()

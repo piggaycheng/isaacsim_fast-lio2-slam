@@ -47,7 +47,9 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_slam.sh
 ```
 
-啟動 FAST-LIO2、PGO 回環與 RViz，並自動啟用 Office 動態電梯門的手動模式（初始關門）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關電梯門。
+啟動 FAST-LIO2、PGO 回環與 RViz，並自動啟用 Office 電梯的手動模式（初始關門，車廂停在地面樓層）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關停靠樓層的電梯門，按 **L** 同步切換兩個車廂的上下樓層。
+
+進入車廂後先按 **Space** 停車，再按 **L**；電梯會先關門、用約 6 秒升降，抵達後按 **E** 開門。井口不再有透明碰撞地板，未停靠樓層的門保持關閉；目前不含防夾偵測或多樓層 Nav2 導航。
 
 建圖期間保持上述程式運行，另開終端存圖：
 
