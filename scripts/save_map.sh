@@ -12,6 +12,8 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Save the current optimized PGO map as a binary PCD.
+Start mapping first: ./scripts/slam_session.sh start FLOOR
+For a saved floor boundary, use ./scripts/slam_session.sh save-stop instead.
 
 Options:
   -o, --output-dir PATH       Output directory (default: maps/office)
@@ -92,7 +94,7 @@ if [[ -z "$(ros_compose ps --status running --quiet ros 2>/dev/null)" ]]; then
   exit 1
 fi
 if [[ "$(ros_exec ros2 service type /pgo/save_maps 2>/dev/null || true)" != "interface/srv/SaveMaps" ]]; then
-  echo "/pgo/save_maps is unavailable. Start ./scripts/run_slam.sh before saving." >&2
+  echo "/pgo/save_maps is unavailable. Start ./scripts/run_slam.sh, then ./scripts/slam_session.sh start FLOOR before saving." >&2
   exit 1
 fi
 

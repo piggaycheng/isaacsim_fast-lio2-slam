@@ -47,21 +47,34 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ./scripts/run_slam.sh
 ```
 
-啟動 FAST-LIO2、PGO 回環與 RViz，並自動啟用 Office 電梯的手動模式（初始關門，車廂停在地面樓層）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關停靠樓層的電梯門，按 **L** 同步切換兩個車廂的上下樓層。
+啟動 Isaac Sim、RViz 與建圖管理器；**初始為閒置，尚未啟動 FAST-LIO2／PGO**。自動啟用 Office 電梯的手動模式（初始關門，車廂停在地面樓層）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關停靠樓層的電梯門，按 **L** 同步切換兩個車廂的上下樓層。
 
 進入車廂後先按 **Space** 停車，再按 **L**；電梯會先關門、用約 6 秒升降，抵達後按 **E** 開門。井口不再有透明碰撞地板，未停靠樓層的門保持關閉；目前不含防夾偵測或多樓層 Nav2 導航。
 
-建圖期間保持上述程式運行，另開終端存圖：
+等模擬載入完成、保持播放並停穩車輛，另開終端控制每層的獨立建圖：
+
+```bash
+./scripts/slam_session.sh start floor_ground  # 全新的 FAST-LIO2／PGO；等回覆 mapping 再行駛
+./scripts/slam_session.sh status
+./scripts/slam_session.sh save-stop          # 存圖成功後停止建圖；模擬與 RViz 不關閉
+# 搭電梯換樓層，出電梯後停穩，再開始下一層
+./scripts/slam_session.sh start floor_lower
+./scripts/slam_session.sh save-stop
+```
+
+地圖分別存到 `maps/floor_ground`、`maps/floor_lower`，包含 `map.pcd`、`poses.txt`、`patches/`、`session.json` 與 `slam.log`。每個 `start` 都重建估計器與地圖，**不支援接續舊地圖**；已存在的樓層目錄會拒絕使用，可改用 `floor_ground_run2` 等新名稱。存圖失敗時建圖繼續運行，可檢查狀態及 log 後重試 `save-stop`。退出 `run_slam.sh` 前先 `save-stop`，Ctrl+C 不會自動存圖。完整操作、座標注意事項與故障排除見[建圖管理器使用指南](docs/mapping_manager.md)。
+
+若只要額外快照、不停止目前建圖，原有存圖工具仍可使用：
 
 ```bash
 ./scripts/save_map.sh
 ./scripts/save_map.sh --output-dir maps/office --voxel-size 0.05 --save-patches true
 ```
 
-預設輸出到 `maps/office`，包含 `map.pcd`、`poses.txt` 與 keyframe `patches/`。導航所需的 2D 地圖可再由 PCD 轉換：
+`save_map.sh` 預設輸出到 `maps/office`（與管理器的樓層目錄不同），可能覆寫該目錄中的快照。導航所需的 2D 地圖可再由各層 PCD 轉換，例如：
 
 ```bash
-./scripts/pcd2pgm.py
+./scripts/pcd2pgm.py maps/floor_ground/map.pcd maps/floor_ground/map_2d
 ```
 
 ### 單車定位與導航

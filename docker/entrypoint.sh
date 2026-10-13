@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Container entrypoint: sources ROS 2 and the workspace, then runs a command.
 #   build        Build ros2_ws (extra arguments are passed to colcon build).
-#   slam         Start FASTLIO2/PGO and RViz.
+#   slam         Start the idle mapping session manager and RViz.
 #   launch       Run `ros2 launch` with newline-separated $ROS_LAUNCH_ARGS.
 #   idle         Keep the container running for `docker compose exec`.
 #   <other>      Execute the command in the sourced environment.
@@ -44,15 +44,17 @@ case "$command" in
     ;;
   slam)
     require_workspace
-    ros2 launch isaac_fastlio_adapter fastlio.launch.py &
+    python3 /workspace/scripts/mapping_manager.py serve &
     ros_pid=$!
     rviz2 -d "$workspace_dir/src/isaac_fastlio_adapter/config/fastlio.rviz" &
     rviz_pid=$!
     # Background jobs of a non-interactive shell ignore SIGINT, so forward TERM.
     trap 'kill -TERM "$ros_pid" "$rviz_pid" 2>/dev/null || true' INT TERM
-    wait "$ros_pid" || true
+    ros_status=0
+    wait "$ros_pid" || ros_status=$?
     kill -TERM "$ros_pid" "$rviz_pid" 2>/dev/null || true
     wait || true
+    exit "$ros_status"
     ;;
   *)
     exec "$command" "$@"

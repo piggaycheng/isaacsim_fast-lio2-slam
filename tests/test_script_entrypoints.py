@@ -9,6 +9,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScriptEntrypointsTest(unittest.TestCase):
+    def test_session_cli_rejects_invalid_usage_and_missing_container(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "docker").mkdir()
+            script = root / "scripts/slam_session.sh"
+            shutil.copy2(ROOT / "scripts/slam_session.sh", script)
+            (root / "docker/ros_compose.sh").write_text("ros_compose() { return 0; }\n")
+            for args in ((), ("start",), ("stop",), ("start", "floor", "extra")):
+                with self.subTest(args=args):
+                    result = subprocess.run([str(script), *args], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("Usage:", result.stderr)
+            result = subprocess.run([str(script), "status"], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("container is not running", result.stderr)
+
     def test_launchers_use_repository_resources_and_moved_simulator(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -46,6 +63,12 @@ class ScriptEntrypointsTest(unittest.TestCase):
             cases = (
                 ("run_slam.sh", (), ("ROOT", "ROS slam",
                  "SIMULATOR --dynamic-elevator-doors --elevator-door-mode manual\n")),
+                ("slam_session.sh", ("start", "floor_ground"),
+                 ("python3 /workspace/scripts/mapping_manager.py start floor_ground",)),
+                ("slam_session.sh", ("save-stop",),
+                 ("python3 /workspace/scripts/mapping_manager.py save-stop",)),
+                ("slam_session.sh", ("status",),
+                 ("python3 /workspace/scripts/mapping_manager.py status",)),
                 ("run_2d_localization.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "ROS launch slam_localization_2d",
                   "map:=/workspace/maps/office/map_2d.yaml",

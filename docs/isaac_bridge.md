@@ -31,6 +31,8 @@ docker compose exec ros /workspace/docker/entrypoint.sh ros2 topic list   # run 
 - **時間戳與去畸變**：啟用 Motion BVH；LiDAR publisher 輸出原生逐點時間戳、intensity、emitter ID 與 channel ID，原始輸出設為 `NONCOMPENSATED`，保留運動畸變讓 FAST-LIO 以模擬 IMU 去除。adapter 直接使用原生時間戳做 deskew，不再人為在掃描內均分，並把 XT-32 的 channel ID 折疊成 FAST-LIO 接受的四個 Livox line ID（保留點的順序與時間）。
 - **IMU**：`imu_scale_adapter` 補償上游 FASTLIO2 把標準 IMU 加速度乘以 10 的行為，輸出到 `/livox/imu`。IMU 與 RTX LiDAR 在 `standalone.py` 中同位置，所以 `isaac_lio.yaml` 使用單位矩陣外參。
 
+`run_slam.sh` 現在以閒置的建圖管理器啟動；使用 `./scripts/slam_session.sh start FLOOR` 才啟動轉接、FAST-LIO2 與 PGO 節點，`save-stop` 存圖成功後只停止這些節點，感測器、電梯與模擬時鐘不停止。流程及限制見[分樓層建圖管理器](mapping_flow.md#分樓層建圖管理器)。
+
 這些轉接針對模擬；目前 launch 與預設設定不能直接套用到實機。
 
 ## 動態電梯門與升降
