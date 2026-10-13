@@ -63,4 +63,4 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 
 ## 擴充：多步任務
 
-規格之外的擴充：`command` 的 `action` 可為 `task`（多步 `navigate`／`gimbal_move`／`gimbal_rotate`），步驟之間由 adapter 以 `proceed` 放行，車端回報 `task_state`。詳見 [多步任務文件](multi_step_task.md)。
+規格之外的擴充：`command` 的 `action` 可為 `task`（多步 `navigate`／`gimbal_move`／`gimbal_rotate`），步驟之間由 adapter 以 `proceed` 放行，車端回報 `task_state`；也可直接為 `gimbal_move`／`gimbal_rotate`（單一雲台動作，用法同 `navigate`）。詳見 [多步任務文件](multi_step_task.md)。

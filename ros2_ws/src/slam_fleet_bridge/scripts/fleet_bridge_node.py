@@ -9,7 +9,8 @@ Topics under rmf/<fleet>/robot/<robot>/ :
                         before registration (status "error") so a late adapter can ask for it
   command (in)          navigate / dock run as one Nav2 goal (py_trees task); stop cancels;
                         task (extension) runs a list of task_bt steps
-                        (navigate, gimbal_move, gimbal_rotate)
+                        (navigate, gimbal_move, gimbal_rotate); gimbal_move / gimbal_rotate
+                        (extension) run one gimbal step
   task_state (out)      extension: task progress (retained) on every change
   command_result (out)  completed / failed / canceled for a cmd_id
   deregister (out)      on shutdown

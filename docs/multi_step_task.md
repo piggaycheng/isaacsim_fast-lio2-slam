@@ -4,9 +4,10 @@
 
 ## 設計原則
 
-- Open-RMF 要靠「每段導航何時開始、何時結束」估計多車排程。車端若整包自動連跑（導航→雲台→導航），RMF 看不到中間進度，無法可靠規劃。
-- 因此車端只負責執行與回報；**下一步何時開始由 adapter（RMF）決定**。車端完成一步後停在 `waiting`，收到 `proceed` 才繼續，不會自行往下跑。
-- 精細的馬達控制（雲台轉動到位判定）留在車端，RMF 只看到「步驟完成」。
+- 車端若整包自動連跑（導航→雲台→導航），上位系統看不到中間進度，也無法在步驟之間介入。
+- 因此車端只負責執行與回報；**下一步何時開始由 adapter 決定**。車端完成一步後停在 `waiting`，收到 `proceed` 才繼續，不會自行往下跑。
+- 精細的馬達控制（雲台轉動到位判定）留在車端，上位只看到「步驟完成」。
+- `task` 內的 `navigate` 由車端 Nav2 直接規劃，**Open-RMF 不會規劃也無法決定是否放行**（RMF 沒有「詢問某段路能否走」的 API，只協調自己規劃的路徑）。需要 RMF 交通排程的多步任務要改用 RMF compose task，見[上位系統用法](#上位系統用法)。
 
 ## 指令
 
@@ -29,6 +30,14 @@
 ```
 
 `cmd_id` 為該 `task` 的 `cmd_id`，放行等待中的任務。只在任務為 `waiting` 時有效，否則忽略並記錄警告（不回 `command_result`，避免 adapter 誤判任務失敗）。
+
+### `gimbal_move`／`gimbal_rotate`（單一雲台動作）
+
+```json
+{"robot_id":"carter1","cmd_id":43,"action":"gimbal_move","pan_deg":30,"tilt_deg":-10}
+```
+
+與 `navigate` 同樣是獨立的 action type，不需包成 `task`：欄位同下方[步驟類型](#步驟類型)，車端以單步任務執行（不進入 `waiting`），完成回 `command_result`（`completed`／`failed`／`canceled`）。角度不合法回 `failed`。
 
 ### `stop` 與新的 `cmd_id`
 
@@ -70,11 +79,58 @@ task 收到 → running(step0) → waiting(step0) ──proceed──→ running
 - 終態另發 `command_result`（`succeeded`→`completed`、`aborted`／`rejected`→`failed`、`canceled`→`canceled`）。`waiting` 只出現在 `task_state`，不發 `command_result`。
 - `waiting` 時 heartbeat 仍視為任務進行中：`status` 為 `moving`，`current_cmd_id` 保持該任務。
 
-## adapter 對應建議
+## 上位系統用法
 
-- 整段任務（導航→雲台→導航）：adapter 下發完整 `task`，收到 `waiting`（`step`=k）就把第 k 步標為完成並更新 RMF 進度；準備好開始下一步（例如 RMF 允許出發）時發 `proceed`。
-- 單獨的雲台動作可作為 RMF `PerformAction`（custom action）：下發單步 `task`，收到 `succeeded` 即完成。
-- 目前 `proceed` 沒有逾時，adapter 不放行則車端一直停在 `waiting`（可用 `stop` 結束）。
+上位系統（`rmf_isaacsim` 的 backend 與 MQTT fleet adapter）提供兩種派送方式，依是否需要 RMF 交通排程選用：
+
+| | RMF compose task（建議） | 直派多步任務 |
+|---|---|---|
+| backend 入口 | `POST /api/tasks/compose` | `POST /api/tasks/multi-step` |
+| 導航由誰規劃 | Open-RMF（`go_to_place`，與其他車協調） | 車端 Nav2，RMF 看不到 |
+| 下發到車端 | RMF 逐段下 `navigate`；雲台為 `gimbal_move`／`gimbal_rotate` 指令 | 一包完整 `task` |
+| 步驟放行 | RMF 決定每段導航何時出發 | adapter 收到操作員 `proceed` 才放行 |
+| 指派車輛 | 可指定，或省略由 RMF 競標 | 必須指定 |
+| 適用 | 多車共用路網的正式任務 | 人工操作、測試、不需交通管制的場合 |
+
+### RMF compose task
+
+```json
+POST /api/tasks/compose
+{"robot_id":"carter1","steps":[
+  {"type":"navigate","place":"wp_5"},
+  {"type":"gimbal_move","pan_deg":30,"tilt_deg":-10},
+  {"type":"navigate","x":-0.2,"y":5.6,"yaw":1.57}
+]}
+```
+
+backend 把每個步驟轉成一個 compose phase：
+
+- `navigate` → `go_to_place`。須為路網站點：`place` 為站點名稱；只給 `x`/`y` 時對應到 0.5 m 內最近站點，超過即拒絕。`yaw`（rad）帶成到站朝向。
+- `gimbal_move`／`gimbal_rotate` → `perform_action`（category 同步驟類型，description 為 `pan_deg`/`tilt_deg`）。fleet adapter 的 action executor 收到後下發同名的 `gimbal_move`／`gimbal_rotate` 指令給車端，`command_result` 為 `completed` 即完成該 phase。fleet 設定的 `actions` 須包含這兩個類型。
+- RMF 的 `perform_action` 內不可含 `navigate` 步驟：RMF 會把 action 當作原地執行，車子移動不在交通排程內。adapter 收到這類 action 會拒絕並回報 RMF 失敗。
+- 取消走 RMF 的任務取消；RMF 再對車端發 `stop`。
+
+### 直派多步任務
+
+```json
+POST /api/tasks/multi-step
+{"robot_id":"carter1","steps":[...],"auto_proceed":false}
+POST /api/robots/carter1/proceed   {"cmd_id":42}
+```
+
+- adapter 下發完整 `task`，依 `task_state` 轉發進度給 backend（`/rmf/task_status`，`step` 為整個任務中的絕對步數）。
+- 預設 `auto_proceed=false`：收到 `waiting` 後等操作員 `proceed`，adapter 只在任務為 `waiting` 且 `cmd_id` 相符時才送出。`auto_proceed=true`（可配 `step_delay` 秒）由 adapter 自動放行。
+- 車隊暫停或急停時放行先保留，恢復後才補送。
+- 車上有 RMF 任務時直派任務會被拒絕（`rejected`），避免搶走 RMF 排定的工作。
+- backend 取消會先顯示 `canceling`，等車端回報 `canceled` 才結束。
+- 目前 `proceed` 沒有逾時，未放行則車端一直停在 `waiting`（可用 `stop` 結束）。
+
+### adapter 端行為
+
+- `task_state` 與 `command_result` 都帶終態，adapter 以先到者為準，只處理一次。
+- RMF 下新的導航／動作／停止時，舊的直派任務先脫離；其後續回報只轉發給 backend，不影響 RMF 新的 execution。
+- RMF 擁有的多步任務被急停中斷時，回報 `held`，解除急停後從中斷的步驟續行。
+- 任務失敗時記錄錯誤並把車設為 failed；rmf_adapter 沒有「execution 失敗」的 API，execution 保留到在 RMF 取消為止。
 
 ## 實作
 
@@ -82,7 +138,7 @@ task 收到 → running(step0) → waiting(step0) ──proceed──→ running
 |---|---|
 | `ros2_ws/src/slam_fleet_bridge/scripts/task_bt.py` | 步驟驗證（`STEP_TYPES`）、`ActionStep` 基底與 `NavigateToPose`／`GimbalMove`／`GimbalRotate`、`ReleaseGate`、`TaskRunner` |
 | `.../scripts/fleet_bridge_node.py` | 依步驟類型建立 ROS action client，處理 `task`／`proceed`／`stop`，發布 `task_state` 與 `command_result` |
-| `.../scripts/rmf_protocol.py` | `COMMAND_ACTIONS` 與指令解析（含 `proceed`） |
+| `.../scripts/rmf_protocol.py` | `COMMAND_ACTIONS` 與指令解析（含 `proceed`、`gimbal_move`／`gimbal_rotate`） |
 
 - `TaskRunner` 以 `Sequence(memory=True)` 組樹：非第一個步驟前插入 `ReleaseGate`，步驟 i 在子節點索引 `2i`；gate 在 `proceed()` 設定 `released` 前回傳 `RUNNING`，`TaskRunner` 以目前子節點是否為 gate 判斷 `waiting`。
 - 取消：`ActionStep` 提供 `request_cancel()`／`poll_cancel()`，非同步送出 action 取消並輪詢最終結果；`ReleaseGate` 的取消立即完成。

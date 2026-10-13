@@ -7,7 +7,8 @@ import json
 import math
 import time
 
-COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed")
+GIMBAL_ACTIONS = ("gimbal_move", "gimbal_rotate")
+COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed") + GIMBAL_ACTIONS
 RESULT_STATUS = {"succeeded": "completed", "aborted": "failed", "canceled": "canceled",
                  "rejected": "failed"}
 
@@ -122,6 +123,9 @@ def parse_command(payload, robot):
     task_bt steps in order (validated by task_bt), holding after each step until
     {"action": "proceed", "cmd_id": <the task's cmd_id>} releases the next one. Returns
     None for a command addressed to another robot.
+
+    `gimbal_move` / `gimbal_rotate` are extensions too: {"action": "gimbal_move", "pan_deg": ..,
+    "tilt_deg": ..} runs as a single gimbal step (no proceed needed); task_bt validates the angles.
     """
     try:
         command = json.loads(payload)
@@ -144,6 +148,10 @@ def parse_command(payload, robot):
         if not isinstance(steps, list) or not steps:
             raise CommandError("'steps' must be a non-empty list")
         return cmd_id, action, steps
+    if action in GIMBAL_ACTIONS:
+        step = {"type": action}
+        step.update({key: command[key] for key in ("pan_deg", "tilt_deg") if key in command})
+        return cmd_id, action, [step]
     target = command.get("target")
     if not isinstance(target, dict):
         raise CommandError("'target' must be an object")

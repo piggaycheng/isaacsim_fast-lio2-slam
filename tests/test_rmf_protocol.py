@@ -46,6 +46,15 @@ class RmfProtocolTest(unittest.TestCase):
         self.assertEqual(rmf.parse_command(command(action="task", steps=steps), "r1"),
                          (7, "task", steps))
 
+    def test_gimbal_actions_become_one_gimbal_step(self):
+        for action in ("gimbal_move", "gimbal_rotate"):
+            cmd_id, parsed, steps = rmf.parse_command(
+                command(action=action, pan_deg=30, tilt_deg=-10), "r1")
+            self.assertEqual((cmd_id, parsed), (7, action))
+            self.assertEqual(steps, [{"type": action, "pan_deg": 30, "tilt_deg": -10}])
+        self.assertEqual(rmf.parse_command(command(action="gimbal_rotate", pan_deg=5), "r1")[2],
+                         [{"type": "gimbal_rotate", "pan_deg": 5}])
+
     def test_other_robot_is_ignored(self):
         payload = json.dumps({"robot_id": "r2", "cmd_id": 1, "action": "stop"})
         self.assertIsNone(rmf.parse_command(payload, "r1"))
