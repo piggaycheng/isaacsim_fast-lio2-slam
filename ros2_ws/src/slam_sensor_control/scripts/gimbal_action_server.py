@@ -139,6 +139,13 @@ class GimbalActionServer(Node):
                 if self.active_goal is not handle:
                     return self.finish(handle, "abort", False, "Superseded by a newer goal", action)
             if handle.is_cancel_requested:
+                pose = self.current_pose()
+                if pose is not None:
+                    stop_cmd = JointState()
+                    stop_cmd.header.stamp = self.get_clock().now().to_msg()
+                    stop_cmd.name = [PAN_JOINT, TILT_JOINT]
+                    stop_cmd.position = [float(pose[0]), float(pose[1])]
+                    self.command_pub.publish(stop_cmd)
                 return self.finish(handle, "canceled", False, "Canceled", action)
             elapsed = time.monotonic() - started
             # Command is repeated so a lost message or late-starting simulator cannot stall it.
