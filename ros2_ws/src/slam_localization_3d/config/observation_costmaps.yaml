@@ -4,12 +4,9 @@ global_costmap:
       use_sim_time: true
       global_frame: map
       robot_base_frame: base_link
-      # Planning uses the in-place rotation circle about base_link, so every planned
-      # pose leaves room to rotate. Direction zones stop rotation with the same
-      # radius (robot_fleet.rotation_radius checks it against the local footprint).
-      footprint: '[]'
-      robot_radius: 0.81
-      footprint_padding: 0.0
+      # USD visible/collision envelope rounded outward to 1 mm, plus 1 cm padding.
+      footprint: '[[0.141, 0.250], [0.141, -0.250], [-0.588, -0.250], [-0.588, 0.250]]'
+      footprint_padding: 0.01
       resolution: 0.05
       update_frequency: 2.0
       publish_frequency: 1.0
@@ -22,8 +19,7 @@ global_costmap:
       # Obstacles missing from the saved map, so the planner can route around them.
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
-        # Footprint clearing would erase real returns inside the rotation circle;
-        # the body is removed upstream and /scan raytracing clears.
+        # Body returns are removed upstream; scan raytracing clears obstacles.
         footprint_clearing_enabled: false
         observation_sources: obstacles scan_clearing
         obstacles:
@@ -47,7 +43,6 @@ global_costmap:
           expected_update_rate: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Keeps a cost gradient beyond robot_radius.
         inflation_radius: 1.1
         cost_scaling_factor: 3.0
       always_send_full_costmap: true
@@ -58,7 +53,7 @@ local_costmap:
       use_sim_time: true
       global_frame: odom
       robot_base_frame: base_link
-      footprint: '[[0.20, 0.32], [0.20, -0.32], [-0.65, -0.32], [-0.65, 0.32]]'
+      footprint: '[[0.141, 0.250], [0.141, -0.250], [-0.588, -0.250], [-0.588, 0.250]]'
       footprint_padding: 0.01
       rolling_window: true
       width: 8

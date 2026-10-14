@@ -1,4 +1,5 @@
 import math
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,8 @@ import rclpy
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from geometry_msgs.msg import Twist
 from lifecycle_msgs.srv import ChangeState
+from launch import LaunchContext
+from launch.actions import SetLaunchConfiguration
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan, PointCloud2
@@ -54,8 +57,24 @@ class NearObstacleTest(unittest.TestCase):
             "-p", "angle_increment:=0.008726646", "-p", "use_inf:=true",
         ])
         config = Path(get_package_share_directory("slam_localization_3d")) / "config"
+        spec = importlib.util.spec_from_file_location(
+            "near_fusion", config.parent / "launch/global_fusion.launch.py")
+        fusion = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fusion)
+        context = LaunchContext()
+        context.launch_configurations.update(
+            namespace="", robot_type="nova_carter", direction_zones="false", navigate="true",
+            costmap_config=str(config / "observation_costmaps.yaml"),
+        )
+        self.geometry_actions = fusion.configure_surround(
+            context, *(str(config / name) for name in
+                       ("collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml")),
+        )
+        for action in self.geometry_actions:
+            if isinstance(action, SetLaunchConfiguration):
+                action.execute(context)
         self.start("nav2_collision_monitor", "collision_monitor", [
-            "--params-file", str(config / "collision_monitor.yaml"),
+            "--params-file", context.launch_configurations["collision_config"],
             "-p", "use_sim_time:=false", "-p", "base_shift_correction:=false",
             "-p", "FootprintApproach.enabled:=false",
             "-r", "/perception/obstacles:=/test/obstacles", "-r", "/scan:=/test/scan",
@@ -121,7 +140,7 @@ class NearObstacleTest(unittest.TestCase):
     def test_body_filter_and_side_rear_stop(self):
         ground = [(x, y, 0.0) for x in np.linspace(-2, 2, 15)
                   for y in np.linspace(-2, 2, 15)]
-        body = [(0, 0, 0.3), (0.6, 0.3, 0.8), (-0.2, -0.32, 0.6)]
+        body = [(0, 0, 0.3), (0.12, 0.23, 0.8), (-0.588, -0.25, 0.6)]
         distant = [(2, 2, 0.3)]
         clear_cloud = ground + body + distant
 
@@ -130,8 +149,8 @@ class NearObstacleTest(unittest.TestCase):
 
         self.wait(filtered_and_scan_ready, publish=lambda: self.send(clear_cloud))
         xyz = self.xyz(self.messages["self"])
-        inside = ((xyz[:, 0] >= -0.20) & (xyz[:, 0] <= 0.65) &
-                  (xyz[:, 1] >= -0.32) & (xyz[:, 1] <= 0.32))
+        inside = ((xyz[:, 0] >= -0.588) & (xyz[:, 0] <= 0.141) &
+                  (xyz[:, 1] >= -0.250) & (xyz[:, 1] <= 0.250))
         self.assertFalse(inside.any(), "Body returns leaked into scan input")
 
         command = Twist()
@@ -147,7 +166,7 @@ class NearObstacleTest(unittest.TestCase):
         for location in ("left", "right", "rear"):
             with self.subTest(location=location):
                 near = [
-                    ((-0.25, offset, height) if location == "rear"
+                    ((-0.64, offset, height) if location == "rear"
                      else (offset, 0.40 if location == "left" else -0.40, height))
                     for offset, height in zip(np.linspace(-0.04, 0.04, 5),
                                               np.linspace(0.2, 0.6, 5))
@@ -164,11 +183,11 @@ class NearObstacleTest(unittest.TestCase):
                     publish=lambda: self.send(points),
                 )
                 obstacles = self.xyz(self.messages["obstacles"])
-                near_returns = obstacles[np.hypot(obstacles[:, 0], obstacles[:, 1]) < 0.5]
+                near_returns = obstacles[np.hypot(obstacles[:, 0], obstacles[:, 1]) < 0.7]
                 self.assertGreaterEqual(len(near_returns), 4)
                 scan = self.messages["scan"]
                 finite_ranges = [r for r in scan.ranges if math.isfinite(r)]
-                self.assertTrue(any(r < 0.5 for r in finite_ranges))
+                self.assertTrue(any(r < 0.7 for r in finite_ranges))
 
                 for linear, angular in ((0.2, 0.0), (-0.1, 0.0), (0.0, 0.35)):
                     command.linear.x = linear

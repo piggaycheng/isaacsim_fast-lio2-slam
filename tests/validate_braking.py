@@ -63,7 +63,9 @@ class BrakingProbe(Node):
             ("/scan", LaserScan, "scan"),
             ("/perception/obstacles", PointCloud2, "cloud"),
             ("/localization_3d/accepted_correction", Header, "correction"),
-            ("/collision_monitor/polygon_surround", PolygonStamped, "surround"),
+            ("/collision_monitor/polygon_surround_forward", PolygonStamped, "forward"),
+            ("/collision_monitor/polygon_surround_reverse", PolygonStamped, "reverse"),
+            ("/collision_monitor/polygon_rotate", PolygonStamped, "rotate"),
         ]:
             self.create_subscription(
                 kind, topic, lambda msg, key=key: self.receive(key, msg), qos_profile_sensor_data,
@@ -180,11 +182,9 @@ class BrakingProbe(Node):
             self.paused.add(matches[0])
             os.kill(matches[0], signal.SIGSTOP)
         else:
-            monitor = yaml.safe_load((CONFIG / "collision_monitor.yaml").read_text())
-            params = monitor["collision_monitor"]["ros__parameters"]
-            polygon = np.array(params[
-                "PolygonStop" if direction == "front" else "PolygonSurround"
-            ]["points"]).reshape(-1, 2)
+            key = {"front": "forward", "rear": "reverse", "left": "rotate", "right": "rotate"}[direction]
+            self.wait(lambda: key in self.latest)
+            polygon = np.array([[p.x, p.y] for p in self.latest[key].polygon.points])
             if direction == "front":
                 offset, sizes = [float(polygon[:, 0].max()) + 0.09, 0.0], [0.2, 0.6, 1.2]
             elif direction == "rear":

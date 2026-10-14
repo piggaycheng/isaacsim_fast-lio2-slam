@@ -21,8 +21,12 @@ import json
 import math
 import sys
 import traceback
+from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/launch"))
+from nav_geometry import convex_hull_2d, pad_polygon
 
 
 def yaw_rotation(yaw_deg):
@@ -48,27 +52,6 @@ def box_corners(minimum, maximum):
         for y in (minimum[1], maximum[1])
         for z in (minimum[2], maximum[2])
     ], dtype=float)
-
-
-def convex_hull_2d(points):
-    """Counter-clockwise convex hull (Andrew's monotone chain) of Nx2 points."""
-    unique = sorted(set(map(tuple, np.round(np.asarray(points, dtype=float)[:, :2], 9))))
-    if len(unique) <= 2:
-        return [list(p) for p in unique]
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower, upper = [], []
-    for p in unique:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(unique):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return [list(p) for p in lower[:-1] + upper[:-1]]
 
 
 def outside_distance(polygon, points):
@@ -102,24 +85,6 @@ def simplify_convex(polygon, tolerance):
             break
         pts.pop(best[1])
     return pts
-
-
-def pad_polygon(polygon, padding):
-    """Offset a convex CCW polygon outward by padding (vertex moved along its bisector)."""
-    if padding == 0 or len(polygon) < 3:
-        return [list(p) for p in polygon]
-    pts = np.asarray(polygon, dtype=float)
-    padded = []
-    for i, p in enumerate(pts):
-        prev_edge = p - pts[i - 1]
-        next_edge = pts[(i + 1) % len(pts)] - p
-        # Outward normals of a CCW polygon point to the right of each edge.
-        n1 = np.array([prev_edge[1], -prev_edge[0]]) / np.linalg.norm(prev_edge)
-        n2 = np.array([next_edge[1], -next_edge[0]]) / np.linalg.norm(next_edge)
-        bisector = n1 + n2
-        scale = padding / max(np.dot(bisector / np.linalg.norm(bisector), n1), 1e-6)
-        padded.append(list(p + bisector / np.linalg.norm(bisector) * scale))
-    return padded
 
 
 def summarize(points, padding=0.0, shape="rect", hull_tolerance=0.02, decimals=3):

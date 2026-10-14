@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import tempfile
@@ -19,8 +18,9 @@ from launch_ros.actions import Node, PushRosNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
     DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, local_odometry_inputs,
-    namespaced_topic, normalize_namespace, rotation_radius, with_global_ekf_inputs,
+    namespaced_topic, normalize_namespace, with_global_ekf_inputs,
 )
+from nav_geometry import rotation_radius, safety_geometry
 from robot_namespace import (  # noqa: E402
     RobotParameterFile, load_parameters, local_odometry_file, namespaced_rviz_file,
     robot_parameter_file,
@@ -134,55 +134,27 @@ def configure_filters(context, observation_config):
     ]
 
 
-def rectangle(x_max, x_min, y_max, y_min):
-    """Clockwise axis-aligned rectangle in collision_monitor's points layout."""
-    return [x_max, y_max, x_max, y_min, x_min, y_min, x_min, y_max]
-
-
 def configure_direction_zones(context, collision_config, navigation_config, direction_config):
-    """Add forward/reverse surround variants that direction_zones.py switches between."""
+    """Generate body-derived zones for both direction switching and static mode."""
     kind = robot_type(context)
     collision = load_parameters(collision_config, kind)
-    swing = float(load_parameters(direction_config, kind)["direction_zones"]["ros__parameters"]["swing_margin"])
+    settings = load_parameters(direction_config, kind)["direction_zones"]["ros__parameters"]
     costmaps = load_parameters(LaunchConfiguration("costmap_config").perform(context), kind)
-    local = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]
-    padding = float(local["footprint_padding"])
-    footprint_x = [float(point[0]) for point in json.loads(local["footprint"])]
-    front, rear = max(footprint_x) + padding, min(footprint_x) - padding
+    navigation = load_parameters(navigation_config, kind)
+    smoother = navigation["velocity_smoother"]["ros__parameters"]
+    speed = max(abs(float(smoother[key][0])) for key in ("max_velocity", "min_velocity"))
     monitor = collision["collision_monitor"]["ros__parameters"]
-    surround = [float(value) for value in monitor["PolygonSurround"]["points"]]
-    xs, ys = surround[::2], surround[1::2]
-    if surround != rectangle(max(xs), min(xs), max(ys), min(ys)):
-        raise ValueError("Direction zones require a clockwise axis-aligned PolygonSurround")
-    if not (swing >= 0 and min(xs) < rear - swing and max(xs) > front + swing):
-        raise ValueError("PolygonSurround must extend beyond the footprint plus swing_margin")
-    radius = rotation_radius(costmaps)
-    if rear - swing < -radius - 1e-9 or front + swing > radius + 1e-9:
-        raise ValueError("Footprint plus swing_margin must stay within the global robot_radius")
-    # Forward/Reverse never reach beyond the planning circle, so a pose the planner
-    # accepts is not stopped by the surround either.
-    x_max, x_min = min(max(xs), radius), max(min(xs), -radius)
-    y_max, y_min = min(max(ys), radius), max(min(ys), -radius)
-    monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_direction"
-    # All surround variants share one topic; Humble only publishes enabled polygons.
-    monitor["PolygonSurroundForward"] = dict(
-        monitor["PolygonSurround"], enabled=True,
-        points=rectangle(x_max, max(rear - swing, -radius), y_max, y_min),
-    )
-    monitor["PolygonSurroundReverse"] = dict(
-        monitor["PolygonSurround"], enabled=False,
-        points=rectangle(min(front + swing, radius), x_min, y_max, y_min),
-    )
-    # In-place rotation stops on the global costmap's planning circle, so any pose
-    # the planner reaches can also be rotated in.
-    monitor["PolygonRotate"] = {
-        key: monitor["PolygonSurround"][key]
-        for key in ("action_type", "max_points", "visualize", "polygon_pub_topic")
-    } | {"type": "circle", "radius": radius, "enabled": False}
-    monitor["PolygonSurround"]["enabled"] = False
-    monitor["polygons"] += ["PolygonSurroundForward", "PolygonSurroundReverse", "PolygonRotate"]
-    for name in ("PolygonStop", "PolygonSlow"):
-        monitor[name]["enabled"] = True
+    geometry = safety_geometry(costmaps, speed, settings, float(monitor["PolygonSlow"]["slowdown_ratio"]))
+    switching = (LaunchConfiguration("direction_zones").perform(context).lower() == "true"
+                 and LaunchConfiguration("navigate").perform(context).lower() == "true")
+    if switching:
+        monitor["cmd_vel_in_topic"] = "/nav2/cmd_vel_direction"
+    for name, key in (("PolygonSurroundForward", "forward"), ("PolygonSurroundReverse", "reverse"),
+                      ("PolygonSlow", "slow")):
+        monitor[name]["points"] = geometry[key]
+    monitor["PolygonRotate"]["radius"] = geometry["radius"]
+    monitor["PolygonSurroundReverse"]["enabled"] = not switching
+    monitor["PolygonRotate"]["enabled"] = not switching
     directory = tempfile.TemporaryDirectory(prefix="isaac_direction_zones_")
     path = os.path.join(directory.name, "collision.yaml")
     with open(path, "w", encoding="utf-8") as stream:
@@ -192,17 +164,30 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
         directory.cleanup()
         return []
 
+    actions = [
+        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
+        SetLaunchConfiguration("collision_config", path),
+        SetLaunchConfiguration("navigation_config", navigation_config),
+        LogInfo(msg=(f"[{kind}] stop extension {geometry['stop_distance']:.2f} m; "
+                     f"slow expansion {geometry['slow_padding']:.2f} m; "
+                     f"rotation radius {geometry['radius']:.3f} m (base_link)")),
+    ]
+    if not switching:
+        return actions
     selector = Node(
         package="slam_localization_3d", executable="direction_zones.py",
         name="direction_zones", output="screen",
         parameters=[RobotParameterFile(
             direction_config, LaunchConfiguration("namespace"), LaunchConfiguration("robot_type"),
-        ), {"use_sim_time": True}],
+        ), {
+            "use_sim_time": True,
+            "base_frame_id": monitor["base_frame_id"],
+            **{name + ".polygon_pub_topic": namespaced_topic(
+                robot_namespace(context), monitor[name]["polygon_pub_topic"],
+            ) for name in ("PolygonSurroundForward", "PolygonSurroundReverse", "PolygonRotate")},
+        }],
     )
-    return [
-        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
-        SetLaunchConfiguration("collision_config", path),
-        SetLaunchConfiguration("navigation_config", navigation_config),
+    return actions + [
         selector,
         RegisterEventHandler(OnProcessExit(
             target_action=selector,
@@ -215,13 +200,7 @@ def configure_direction_zones(context, collision_config, navigation_config, dire
 
 
 def configure_surround(context, collision_config, navigation_config, direction_config):
-    if (LaunchConfiguration("direction_zones").perform(context).lower() == "true"
-            and LaunchConfiguration("navigate").perform(context).lower() == "true"):
-        return configure_direction_zones(context, collision_config, navigation_config, direction_config)
-    return [
-        SetLaunchConfiguration("collision_config", collision_config),
-        SetLaunchConfiguration("navigation_config", navigation_config),
-    ]
+    return configure_direction_zones(context, collision_config, navigation_config, direction_config)
 
 
 def robot_nodes(context, package, nav):

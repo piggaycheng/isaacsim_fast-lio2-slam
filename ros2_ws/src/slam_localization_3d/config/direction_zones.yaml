@@ -1,15 +1,14 @@
-# Direction-aware collision_monitor zone sets (direction_zones.py), derived at launch
-# from the robot's PolygonSurround and local_costmap footprint:
-#   forward: PolygonStop, PolygonSlow, PolygonSurround trimmed behind the footprint
-#   reverse: PolygonSurround trimmed ahead of the footprint
-#   Forward/reverse edges are also clipped to the global costmap robot_radius.
-#   rotate:  PolygonRotate, a circle about base_link with the global costmap's
-#            robot_radius, so the planner keeps room for in-place rotation
+# Zones are generated at launch from both costmaps' matching padded body rectangles.
+# Forward/reverse extend only along the travel direction; rotate covers the corner
+# sweep about base_link. PolygonSlow encloses the union and is always enabled.
 direction_zones:
   ros__parameters:
-    # Kept beyond the padded footprint on the trimmed side for corner swing while
-    # turning (about 0.75 rad/s * 0.4 m lateral corner offset over a 0.5 s stop).
-    swing_margin: 0.15
+    # Design estimates, not certified braking measurements. At 0.75 m/s these
+    # produce 0.56 m stop extension. Slow expansion is a separate fixed distance.
+    reaction_time: 0.3
+    effective_deceleration: 1.0
+    distance_margin: 0.05
+    slow_padding: 0.10
     # Commands below these magnitudes do not request a zone change.
     linear_deadband: 0.01
     angular_deadband: 0.02

@@ -57,10 +57,7 @@ def planning_corridor_width(config_path=PLANNING_CONFIG):
 
 def configured_corridor_width(config_path=PLANNING_CONFIG):
     """Nominal aligned safety width, not a guarantee of traversability."""
-    monitor_path = Path(config_path).with_name("collision_monitor.yaml")
-    monitor = yaml.safe_load(monitor_path.read_text())
-    points = np.asarray(monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"])
-    return max(planning_corridor_width(config_path), float(np.ptp(points.reshape(-1, 2)[:, 1])))
+    return planning_corridor_width(config_path)
 
 
 def scenario(name, corridor_width=None):

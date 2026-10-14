@@ -63,24 +63,57 @@ Visualization Manager:
       Class: rviz_default_plugins/Polygon
       Color: 255; 0; 0
       Enabled: true
-      Name: Collision monitor stop zone (navigate mode)
+      Name: Forward surround (navigate mode)
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /collision_monitor/polygon_stop
+        Value: /collision_monitor/polygon_surround_forward
     - Alpha: 1
       Class: rviz_default_plugins/Polygon
       Color: 255; 0; 150
       Enabled: true
-      Name: Collision monitor surround stop zone (navigate mode)
+      Name: Reverse surround (navigate mode)
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /collision_monitor/polygon_surround
+        Value: /collision_monitor/polygon_surround_reverse
+    - Alpha: 1
+      Class: rviz_default_plugins/Polygon
+      Color: 180; 100; 255
+      Enabled: true
+      Name: Rotation surround (navigate mode)
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /collision_monitor/polygon_rotate
+    - Alpha: 1
+      Class: rviz_default_plugins/Polygon
+      Color: 80; 220; 100
+      Enabled: true
+      Name: Global body footprint
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/published_footprint
+    - Alpha: 1
+      Class: rviz_default_plugins/Polygon
+      Color: 80; 180; 255
+      Enabled: true
+      Name: Local body footprint
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_costmap/published_footprint
     - Alpha: 1
       Class: rviz_default_plugins/Polygon
       Color: 255; 170; 0

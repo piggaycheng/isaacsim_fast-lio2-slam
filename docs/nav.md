@@ -50,7 +50,7 @@ flowchart TD
 **`/perception/obstacles`**（`slam_nav/config/ground_obstacle_filter.yaml`）：
 
 1. 依原始時間戳把點轉到 `base_link`，去除非有限座標。
-2. 去除車身矩形內的點（Nova Carter：x −0.65–0.20 m、y ±0.32 m，不限高度），保留水平距離 0–20 m；先發布 `/perception/self_filtered_points`。
+2. 去除車身矩形內的點（Nova Carter：x −0.588–0.141 m、y ±0.250 m；Carter v1：x −0.431–0.279 m、y ±0.315 m，不限高度），保留水平距離 0–20 m；先發布 `/perception/self_filtered_points`。自體濾除不包含 costmap 的 1 cm padding，避免吞掉車外障礙點。
 3. 以 profile 的 `ground_z` 為中心、±0.25 m 的候選點做 RANSAC 估計近水平地面（至少 50 個內點，距離門檻 0.04 m），且平面須通過距離 `(0, 0, ground_z)` 不超過 0.04 m 的驗證。
 4. 保留地面上方 0.06–2.0 m 的點，再以 0.08 m 體素降採樣。
 
@@ -99,9 +99,18 @@ flowchart TD
 - **global 管走哪條路**：含 PGM 牆壁，並記得看過的障礙物直到被清除。
 - **local 管現在怎麼走**：放在 `odom`，不受 `map -> odom` 校正跳動影響；不載入 PGM，只看感測器，定位誤差時不會被對不準的地圖牆壁擋住。
 
-local costmap 使用實體 `base_link` footprint（Nova Carter：前 0.20 m、後 0.65 m、左右 0.32 m）與 `footprint_padding: 0.01`，inflation 半徑 0.9 m。global costmap 改用以 `base_link` 為圓心的原地旋轉圓（`footprint: '[]'`、`robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，`footprint_padding: 0`，inflation 1.1 m），讓 inscribed 與 circumscribed 相同，NavFn 規劃出的每個位置都留有原地旋轉的空間；方向切換保護區的 rotate 組使用同一半徑。Nav2 以 16 邊形近似該圓，launch 會以 `robot_fleet.rotation_radius` 檢查其內切半徑不小於 padded footprint 的旋轉掃掠再加一格。代價是可規劃通道至少約 2 × `robot_radius`（Nova Carter 1.62 m），車子若已停在距障礙小於該半徑處，planner 可能找不到脫離路徑。global obstacle layer 關閉 `footprint_clearing_enabled`，避免把旋轉圓內的真實障礙清掉；車體點雲由上游 self-filter 移除，`/scan` raytrace 負責清除。inflation 只是導航代價，不是安全煞停距離；NavFn 仍不檢查前進／後退保護區的朝向掃掠。
+global 與 local 都使用貼合 USD **可見與碰撞幾何聯集**的矩形，邊界向外取整到 1 mm，再設定 `footprint_padding: 0.01`。兩者的 padded footprint 必須一致，否則 launch 報錯。旋轉半徑改為獨立計算，不再使用 global `robot_radius`。
 
-![Nova Carter 車體包絡、footprint 與 forward／reverse／rotate 三組方向保護區的等比例俯視圖](images/nav_safety_zones.svg)
+| 車型 | 原始 footprint（`base_link`，m） | 加 padding 後長 × 寬 | 旋轉半徑 |
+| :-- | :-- | :-- | :-- |
+| Nova Carter（預設 carter1） | x −0.588–0.141，y ±0.250 | 0.749 × 0.520 m | 0.652077 m |
+| Carter v1（預設 carter2） | x −0.431–0.279，y ±0.315 | 0.730 × 0.650 m | 0.547819 m |
+
+global／local inflation 半徑仍為 1.1／0.9 m；inflation 是障礙代價梯度，不是車體 footprint 或煞停距離。global obstacle layer 仍關閉 `footprint_clearing_enabled`；車體點雲由上游 self-filter 移除，`/scan` raytrace 負責清除。
+
+**NavFn 仍只規劃 XY，不做完整矩形姿態／掃掠規劃；改用矩形不代表保證窄道可通行，也不再保證每個規劃位置能原地旋轉。** 控制器仍檢查 local footprint，collision monitor 的旋轉圓則可能拒絕在窄道內轉向。1 cm 是幾何 padding，不是涵蓋所有定位、感測與控制誤差的認證安全餘量。
+
+![兩台 Carter 的矩形 footprint 與 forward／reverse／rotate 停止區、聯集外擴 slowdown 的等比例俯視圖](images/nav_safety_zones.svg)
 
 ### 障礙物標記與清除
 
@@ -195,12 +204,19 @@ BackUp 以 local costmap footprint 模擬 2 秒內的後退路徑，會撞到就
 
 | 區域 | 範圍（`base_link`） | 動作 |
 | :-- | :-- | :-- |
-| `PolygonStop` | x 0.20–0.85 m，y ±0.36 m | 超過 3 個點就停車 |
-| `PolygonSurround` | x −1.35–0.80 m，y ±0.75 m | 超過 3 個點就停車，涵蓋側面、後方與近車頭 |
-| `PolygonSlow` | x 0.20–0.95 m，y ±0.50 m | 超過 3 個點降為 50% |
+| `PolygonSurroundForward` | 後方、左右貼齊 padded footprint；前方延伸 0.56 m | 超過 3 個點就停車 |
+| `PolygonSurroundReverse` | 前方、左右貼齊 padded footprint；後方延伸 0.56 m | 超過 3 個點就停車 |
+| `PolygonRotate` | 以 `base_link` 為圓心，到最遠 padded 車角的距離為半徑 | 超過 3 個點就停車 |
+| `PolygonSlow` | 三個停止區的保守聯集凸包，再固定外擴 0.10 m | 所有方向超過 3 個點降為 50% |
 | `FootprintApproach` | local costmap footprint | 沿目前命令模擬 1.5 秒，依碰撞時間按比例降速，後退與原地旋轉也檢查 |
 
-以上為 `--static-zones` 時同時生效的原始區域；預設依方向只啟用一組。固定區域不會隨 footprint 自動更新，換車或提高速度時需重新調整並驗證，發布零速也不代表車體瞬間停止。感測來源時間戳落後超過 1 秒時 monitor 會忽略該來源，停車後持續發布零速 2 秒（`stop_pub_timeout`）。所有 Surround 變體都發布在 `/collision_monitor/polygon_surround`，RViz 顯示目前啟用的那組（Stop 紅、Surround 粉紅、Slow 橘）。
+不再使用 `PolygonStop` 或舊 `PolygonSurround` 範本。幾何在 launch 時由 profile、costmaps 與 `direction_zones.yaml` 自動產生；執行中修改 footprint／最高速度不會自動重算區域，需重啟並重新驗證。發布零速不代表車體瞬間停止。感測來源時間戳落後超過 1 秒時 monitor 會忽略該來源，停車後持續發布零速 2 秒（`stop_pub_timeout`）。
+
+停止距離是**兩車共用的設計估值，尚非兩車實測認證值**：最高線速度取 smoother 的正／反向上限（目前 0.75 m/s），反應時間 0.30 s（10 Hz 感測、10 Hz 控制及傳輸餘量），有效減速度假設 1.0 m/s²，比 smoother 設定的 1.5 m/s² 保守，另加 0.05 m 距離餘量。停止區延伸 `v × reaction_time + v² / (2 × effective_deceleration) + distance_margin`，向上取整到 cm 得 0.56 m。slow 改採 `direction_zones.yaml` 的固定 `slow_padding: 0.10`，不隨最高速度自動增加；這是縮小減速範圍的測試設定，不代表保證能在進入停止區前完成降至 50% 的減速。
+
+聯集有凹角；slow 使用包住三區的凸包再做邊線外偏移，可能比精確聯集略大，但不會漏掉聯集的外擴範圍。旋轉圓在 slow 計算中用外切 32 邊形保守近似。左右 stop 貼齊 padded 車體，轉彎車角的掃掠由 `FootprintApproach` 補充預測，不再有額外固定 swing margin。
+
+單車與 fleet RViz 預設開啟 footprint、forward、reverse、rotate 與 slow 顯示。monitor 分別發布 `/collision_monitor/polygon_surround_forward`、`polygon_surround_reverse`、`polygon_rotate`、`polygon_slowdown`；fleet relay 轉發到 `/fleet/NAME/collision_monitor/...` 並加上 frame prefix。Humble 只持續發布啟用區域；`direction_zones` 在確認啟動狀態或模式切換成功後，立即在已停用區域的顯示 topic 發布空 `PolygonStamped`，並以 10 Hz 補送，讓 RViz 清除舊輪廓，避免 late message 或重新訂閱造成殘影。清除訊息使用最新 TF，不等待新的定位時間戳；不清除目前啟用區域或一直啟用的 slow，也不修改碰撞幾何或安全參數。靜態模式不啟動 selector，仍顯示全部啟用區域。
 
 自體濾除與保護區須隨機器人幾何一起調整；這只解決軟體距離濾除的盲區，不涵蓋 LiDAR 物理遮蔽、最短量測距離或點數不足。
 
@@ -210,18 +226,15 @@ Humble 的 `stop` 區域不分命令方向，車頭前有障礙時連 BackUp 與
 
 | 方向組 | 判斷 | 啟用的區域 | 轉發限制 |
 | :-- | :-- | :-- | :-- |
-| forward | `linear.x` > 0.01 m/s | `PolygonStop`、`PolygonSlow`、`PolygonSurroundForward`（後緣縮到 padded footprint 後方 0.15 m） | 只轉發 `linear.x` ≥ 0 |
-| reverse | `linear.x` < −0.01 m/s | `PolygonSurroundReverse`（前緣縮到 padded footprint 前方 0.15 m） | 只轉發 `linear.x` ≤ 0 |
-| rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | `PolygonRotate`：以 `base_link` 為圓心、半徑等於 global costmap `robot_radius` 的圓 | 線速度歸零，只轉發角速度 |
+| forward | `linear.x` > 0.01 m/s（含邊走邊轉） | `PolygonSurroundForward`、`PolygonSlow` | 只轉發 `linear.x` ≥ 0 |
+| reverse | `linear.x` < −0.01 m/s（含邊退邊轉） | `PolygonSurroundReverse`、`PolygonSlow` | 只轉發 `linear.x` ≤ 0 |
+| rotate | 線速度在 ±0.01 內且 \|`angular.z`\| > 0.02 rad/s | `PolygonRotate`、`PolygonSlow` | 線速度歸零，只轉發角速度 |
 
 - `FootprintApproach` 一直啟用，也會檢查轉彎時車角的掃掠。
-- Forward／Reverse 由 launch 依 profile 的 `PolygonSurround` 與 local footprint 自動產生；`swing_margin: 0.15` m（`direction_zones.yaml`）是被縮側車角的擺動裕度。前、後、左右邊界再裁到 global costmap `robot_radius` 以內，planner 接受的位置不會被 Surround 擋下；矩形四角仍會超出圓。padded footprint 加 `swing_margin` 超出 `robot_radius` 時 launch 報錯。
-  - Nova Carter（半徑 0.81 m）：forward x −0.81–0.80 m，reverse x −0.81–0.36 m，y ±0.75 m。
-  - Carter v1（半徑 0.71 m）：forward x −0.66–0.71 m，reverse x −0.71–0.51 m，y ±0.71 m。
-  - 倒車時後方只比 padded footprint 多 0.15 m（Nova）／0.20 m（Carter v1）；倒車只用於低速 BackUp。
+- Forward／Reverse 不裁切到旋轉圓：Nova forward x −0.598–0.711 m、reverse x −1.158–0.151 m，y ±0.260 m；Carter v1 forward x −0.441–0.849 m、reverse x −1.001–0.289 m，y ±0.325 m。兩方向都依最高線速度估算停止距離，涵蓋低速 BackUp。
+- Rotate 圓心是實際旋轉中心 `base_link`，不是偏移的矩形幾何中心；半徑為最遠 padded 頂點距離。此圓本身沒有額外角速度煞停餘量，慢速區與 approach 是輔助，仍需實測旋轉停止與感測遮蔽。
 - 要求不同方向時先輸出零速，等至少 0.2 秒，且收到 barrier 之後的 `/odometry/local` 證實 twist 與位姿差分都在 0.03 m/s、0.05 rad/s 內，才原子切換；monitor 回覆成功前一律輸出零速。命令或里程計過期（0.3 秒）時不切換；切換被拒絕、逾時或 selector 結束時命令不再流到 monitor，`cmd_vel_safety` 於 0.5 秒後停車，需重啟。RPP 在原地轉向與前進之間轉換時會多停約 0.2–0.4 秒。
-- 典型 deadlock：前方障礙進入 `PolygonStop` 而停車後，BackUp 切到 reverse 組後退；障礙若在旋轉圓內，旋轉仍會被擋下。planner 與旋轉圓同半徑，但網格離散、路徑追蹤誤差與 costmap 延遲仍可能讓障礙落在圓內。
-- 方向切換模式下 `PolygonSurround` 只作為產生 Forward／Reverse 的範本，本身保持停用；`--static-zones` 仍使用未裁切的完整範本。
+- 前方障礙進入 forward 停止區後，BackUp 切到 reverse 組才可後退；若障礙在旋轉圓內，原地旋轉仍被擋下。矩形 global footprint 不保證規劃位置具有旋轉空間。
 
 `--static-zones`（或 `direction_zones:=false`）恢復全部區域同時生效；此時停車區不分方向，BackUp 會被前方障礙擋下，只能等障礙離開或 recovery 用完後中止。
 
@@ -254,7 +267,7 @@ bash tests/run_navigation_environment.sh --repeats 1 --cases baseline
 
 - `collision_monitor` 區域只在 Office／Nova Carter 平地模擬驗證過；點數門檻、稀疏／低矮障礙及更差的感測延遲未驗證，不是認證安全區。
 - RPP 不會在 local costmap 內主動繞開移動中的障礙物，也沒有移動物體軌跡預測；動態橫穿仍曾出現車體包絡與障礙重疊。
-- 規劃只保證原地旋轉圓，未檢查前進／後退保護區的朝向掃掠；`--static-zones` 下旋轉仍由矩形 `PolygonSurround` 判斷，可能與規劃半徑不一致而卡住。
+- NavFn 不檢查完整矩形姿態與前進／後退保護區的朝向掃掠；窄道內可能能直行卻不能原地旋轉。外層 slow 聯集涵蓋旋轉圓，窄道側牆通常會觸發 50% 減速，但不因 slow 區域而完全停車。
 - Speed 不涵蓋 recovery、原地旋轉或直接速度命令；Binary 開關區未實作。
 - 斜坡、複雜人流與完整動態清除未驗證。
 - 多車以 namespace 與獨立 `/NAME/tf` 支援，見 [multi_robot.md](multi_robot.md)，車輛之間無協調。

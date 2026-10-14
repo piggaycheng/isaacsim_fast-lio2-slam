@@ -1,81 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="830" viewBox="0 0 1320 830" font-size="16" fill="#0f172a" role="img" aria-labelledby="title description">
-  <title id="title">Nova Carter body, footprint and direction-switched collision monitor zones</title>
-  <desc id="description">Three equal-scale top views in base_link, forward x to the right and left y up, one per direction zone set. Forward enables the stop, slowdown and forward-trimmed surround zones; reverse enables the reverse-trimmed surround; rotate enables a circle whose radius equals the global costmap robot_radius, shown with Nav2's 16-gon approximation and the padded footprint rotation sweep.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1110" viewBox="0 0 1320 1110" font-size="16" fill="#0f172a" role="img" aria-labelledby="title description">
+  <title id="title">Nova Carter and Carter v1 body footprints and direction-switched safety zones</title>
+  <desc id="description">Six equal-scale top views in base_link: forward, reverse and rotation for both robots. Both costmaps use the tight body rectangle plus 1 cm padding. Forward and reverse stop rectangles extend 56 cm only in the travel direction. Rotation circles cover the farthest padded corner about base_link. The always-enabled slowdown polygon conservatively encloses the union of all three stop zones and expands it by 10 cm. There is no PolygonStop.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 0 L 10 5 L 0 10 Z" fill="#475569"/>
     </marker>
     <style>
       text { font-family: sans-serif; }
       .small { font-size: 14px; fill: #475569; }
       .heading { font-size: 18px; font-weight: bold; }
+      .slow { fill: #ffedd5; fill-opacity: 0.6; stroke: #c2410c; stroke-width: 2; }
+      .stop { fill: #fae8ff; fill-opacity: 0.7; stroke: #a21caf; stroke-width: 2.5; }
+      .rotate { fill: #ede9fe; fill-opacity: 0.7; stroke: #6d28d9; stroke-width: 2.5; }
+      .padding { fill: #dcfce7; stroke: #15803d; stroke-width: 2; stroke-dasharray: 4 3; }
+      .body { fill: #cbd5e1; stroke: #334155; stroke-width: 1.5; }
     </style>
+    <polygon id="novaSlow" class="slow" points="-125.8,-32.9 -28.3,-70.0 -14.7,-74.1 0,-75.6 14.7,-74.1 28.9,-69.8 42,-62.8 52.7,-54.1 81.1,-30.7 81.1,30.7 52.7,54.1 42,62.8 28.9,69.8 14.7,74.1 0,75.6 -14.7,74.1 -28.3,70 -125.8,32.9"/>
+    <polygon id="v1Slow" class="slow" points="-110.1,-40.4 -12.4,-63.9 0,-65.1 12.6,-63.9 94.9,-40 94.9,40 12.6,63.9 0,65.1 -12.4,63.9 -110.1,40.4"/>
+    <g id="novaBody">
+      <rect class="padding" x="-59.8" y="-26" width="74.9" height="52"/>
+      <rect class="body" x="-58.8" y="-25" width="72.9" height="50"/>
+      <circle r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
+      <line x1="-175" y1="0" x2="155" y2="0" stroke="#64748b" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+      <text x="147" y="20" class="small">+x</text>
+    </g>
+    <g id="v1Body">
+      <rect class="padding" x="-44.1" y="-32.5" width="73" height="65"/>
+      <rect class="body" x="-43.1" y="-31.5" width="71" height="63"/>
+      <circle r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
+      <line x1="-175" y1="0" x2="155" y2="0" stroke="#64748b" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+      <text x="147" y="20" class="small">+x</text>
+    </g>
   </defs>
-  <rect width="1320" height="830" fill="white"/>
-  <text x="40" y="40" font-size="26" font-weight="bold">Nova Carter navigation geometry: top view in base_link</text>
-  <text x="40" y="68" class="small">165 px/m, equal x/y scale; white dot is base_link. direction_zones.py enables one zone set at a time after standstill.</text>
-  <rect x="40" y="95" width="400" height="420" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="54.0" y="122.0" class="heading" >forward: linear.x &gt; 0</text>
-  <rect x="126.3" y="206.2" width="265.7" height="247.5" fill="#fae8ff" stroke="#a21caf" stroke-width="2.5" fill-opacity="0.5"/>
-  <rect x="293.0" y="247.5" width="123.8" height="165.0" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" fill-opacity="0.8"/>
-  <rect x="293.0" y="270.6" width="107.2" height="118.8" fill="#fee2e2" stroke="#dc2626" stroke-width="2.5" fill-opacity="0.8"/>
-  <circle cx="260.0" cy="330" r="133.7" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <rect x="151.1" y="275.6" width="143.6" height="108.9" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
-  <rect x="152.8" y="277.2" width="140.3" height="105.6" fill="#fde047" stroke="#a16207" stroke-width="2" />
-  <rect x="163.0" y="288.8" width="120.1" height="82.3" fill="#cbd5e1" stroke="#334155" stroke-width="2" />
-  <circle cx="260.0" cy="330" r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
-  <text x="54.0" y="480.0" class="small" fill="#a21caf">SurroundForward x [-0.81, 0.80]</text>
-  <text x="54.0" y="500.0" class="small" fill="#dc2626">Stop x [0.20, 0.85], y ±0.36</text>
-  <text x="54.0" y="520.0" class="small" fill="#c2410c">Slow 50% x [0.20, 0.95], y ±0.50</text>
-  <line x1="48" y1="330" x2="432" y2="330" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
-  <text x="428.0" y="350.0" class="small" text-anchor="end">+x</text>
-  <rect x="460" y="95" width="400" height="420" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="474.0" y="122.0" class="heading" >reverse: linear.x &lt; 0</text>
-  <rect x="596.4" y="206.2" width="193.1" height="247.5" fill="#fae8ff" stroke="#a21caf" stroke-width="2.5" fill-opacity="0.5"/>
-  <circle cx="730.0" cy="330" r="133.7" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="8 4"/>
-  <rect x="621.1" y="275.6" width="143.6" height="108.9" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
-  <rect x="622.8" y="277.2" width="140.3" height="105.6" fill="#fde047" stroke="#a16207" stroke-width="2" />
-  <rect x="633.0" y="288.8" width="120.1" height="82.3" fill="#cbd5e1" stroke="#334155" stroke-width="2" />
-  <circle cx="730.0" cy="330" r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
-  <text x="474.0" y="480.0" class="small" fill="#a21caf">SurroundReverse x [-0.81, 0.36], y ±0.75</text>
-  <text x="474.0" y="500.0" class="small" >Trimmed side: padded footprint + 0.15 m swing</text>
-  <text x="474.0" y="520.0" class="small" fill="#6d28d9">Both clipped to the 0.81 m circle (dashed)</text>
-  <line x1="468" y1="330" x2="852" y2="330" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
-  <text x="848.0" y="350.0" class="small" text-anchor="end">+x</text>
-  <rect x="880" y="95" width="400" height="420" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="894.0" y="122.0" class="heading" >rotate: in place</text>
-  <circle cx="1080.0" cy="330" r="133.7" fill="#ede9fe" fill-opacity="0.7" stroke="#6d28d9" stroke-width="2.5"/>
-  <polygon points="1213.7,330.0 1203.5,278.9 1174.5,235.5 1131.1,206.5 1080.0,196.3 1028.9,206.5 985.5,235.5 956.5,278.9 946.4,330.0 956.5,381.1 985.5,424.5 1028.9,453.5 1080.0,463.6 1131.1,453.5 1174.5,424.5 1203.5,381.1" fill="none" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <circle cx="1080.0" cy="330" r="121.8" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="2 4"/>
-  <rect x="971.1" y="275.6" width="143.6" height="108.9" fill="#dcfce7" stroke="#15803d" stroke-width="2" stroke-dasharray="5 3"/>
-  <rect x="972.8" y="277.2" width="140.3" height="105.6" fill="#fde047" stroke="#a16207" stroke-width="2" />
-  <rect x="983.0" y="288.8" width="120.1" height="82.3" fill="#cbd5e1" stroke="#334155" stroke-width="2" />
-  <circle cx="1080.0" cy="330" r="4" fill="white" stroke="#0f172a" stroke-width="2"/>
-  <text x="894.0" y="480.0" class="small" fill="#6d28d9">PolygonRotate = global robot_radius: 0.81 m</text>
-  <text x="894.0" y="500.0" class="small" fill="#0f766e">Nav2 16-gon, inscribed 0.794 m</text>
-  <text x="894.0" y="520.0" class="small" >Padded footprint sweep 0.738 m (+ one 0.05 m cell)</text>
-  <line x1="888" y1="330" x2="1272" y2="330" stroke="#94a3b8" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
-  <text x="1268.0" y="350.0" class="small" text-anchor="end">+x</text>
-  <rect x="45" y="557" width="20" height="14" fill="#cbd5e1" stroke="#334155" />
-  <text x="78" y="570">Body envelope (USD): x [-0.588, 0.140], y ±0.249 m</text>
-  <rect x="45" y="587" width="20" height="14" fill="#fde047" stroke="#a16207" />
-  <text x="78" y="600">Local footprint: x [-0.65, 0.20], y ±0.32 m</text>
-  <rect x="45" y="617" width="20" height="14" fill="#dcfce7" stroke="#15803d" stroke-dasharray="3 2"/>
-  <text x="78" y="630">+ padding 10 mm: x [-0.66, 0.21], y ±0.33 m</text>
-  <line x1="45" y1="654" x2="65" y2="654" stroke="#475569" stroke-width="2" stroke-dasharray="2 4"/>
-  <text x="78" y="660">Padded footprint rotation sweep: 0.738 m</text>
-  <line x1="45" y1="684" x2="65" y2="684" stroke="#0f766e" stroke-width="2" stroke-dasharray="6 4"/>
-  <text x="78" y="690">Nav2 16-gon of robot_radius: inscribed 0.794 m</text>
-  <rect x="600" y="557" width="20" height="14" fill="#fae8ff" stroke="#a21caf" />
-  <text x="633" y="570">SurroundForward / SurroundReverse: STOP</text>
-  <rect x="600" y="587" width="20" height="14" fill="#fee2e2" stroke="#dc2626" />
-  <text x="633" y="600">PolygonStop (front): STOP</text>
-  <rect x="600" y="617" width="20" height="14" fill="#ffedd5" stroke="#c2410c" />
-  <text x="633" y="630">PolygonSlow (front): slow to 50%</text>
-  <rect x="600" y="647" width="20" height="14" fill="#ede9fe" stroke="#6d28d9" />
-  <text x="633" y="660">PolygonRotate: STOP, radius = global robot_radius 0.81 m</text>
-  <text x="40" y="735" class="small">Panels show the default direction-zone mode. The global costmap plans with the same 0.81 m rotation circle (footprint '[]', no padding), so planned poses leave room to rotate.</text>
-  <text x="40" y="759" class="small">PolygonSurround x [-1.35, 0.80], y ±0.75 m is only the template here; Forward/Reverse are clipped to robot_radius. The full template is active with --static-zones.</text>
-  <text x="40" y="783" class="small">FootprintApproach (always on) projects the local footprint along the command for a 1.5 s time-to-collision check.</text>
-  <text x="40" y="807" class="small">Zones overlap and are independent settings. Inflation is a cost gradient around obstacles, not a robot-centered polygon.</text>
+  <rect width="1320" height="1110" fill="white"/>
+  <text x="40" y="40" font-size="26" font-weight="bold">Body-sized costmaps and forward / reverse / rotate safety zones</text>
+  <text x="40" y="68" class="small">100 px/m, equal x/y scale. +x forward (right), +y left (up). White dot: base_link / actual rotation centre, not rectangle centre.</text>
+  <rect x="40" y="95" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="460" y="95" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="880" y="95" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="54" y="123" class="heading">Nova Carter (carter1): forward</text>
+  <text x="474" y="123" class="heading">Nova Carter: reverse</text>
+  <text x="894" y="123" class="heading">Nova Carter: rotate</text>
+  <g transform="translate(260 280)">
+    <use href="#novaSlow"/>
+    <rect class="stop" x="-59.8" y="-26" width="130.9" height="52"/>
+    <use href="#novaBody"/>
+  </g>
+  <g transform="translate(680 280)">
+    <use href="#novaSlow"/>
+    <rect class="stop" x="-115.8" y="-26" width="130.9" height="52"/>
+    <use href="#novaBody"/>
+  </g>
+  <g transform="translate(1100 280)">
+    <use href="#novaSlow"/>
+    <circle class="rotate" r="65.2077"/>
+    <use href="#novaBody"/>
+  </g>
+  <text x="54" y="433" class="small">STOP: x [-0.598, 0.711], y +/-0.260 m</text>
+  <text x="54" y="457" class="small">Rear / sides match padded footprint</text>
+  <text x="474" y="433" class="small">STOP: x [-1.158, 0.151], y +/-0.260 m</text>
+  <text x="474" y="457" class="small">Front / sides match padded footprint</text>
+  <text x="894" y="433" class="small">STOP circle: radius 0.652077 m</text>
+  <text x="894" y="457" class="small">Farthest padded corner: (-0.598, +/-0.260)</text>
+  <rect x="40" y="520" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="460" y="520" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="880" y="520" width="400" height="390" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="54" y="548" class="heading">Carter v1 (carter2): forward</text>
+  <text x="474" y="548" class="heading">Carter v1: reverse</text>
+  <text x="894" y="548" class="heading">Carter v1: rotate</text>
+  <g transform="translate(260 705)">
+    <use href="#v1Slow"/>
+    <rect class="stop" x="-44.1" y="-32.5" width="129" height="65"/>
+    <use href="#v1Body"/>
+  </g>
+  <g transform="translate(680 705)">
+    <use href="#v1Slow"/>
+    <rect class="stop" x="-100.1" y="-32.5" width="129" height="65"/>
+    <use href="#v1Body"/>
+  </g>
+  <g transform="translate(1100 705)">
+    <use href="#v1Slow"/>
+    <circle class="rotate" r="54.7819"/>
+    <use href="#v1Body"/>
+  </g>
+  <text x="54" y="858" class="small">STOP: x [-0.441, 0.849], y +/-0.325 m</text>
+  <text x="54" y="882" class="small">Rear / sides match padded footprint</text>
+  <text x="474" y="858" class="small">STOP: x [-1.001, 0.289], y +/-0.325 m</text>
+  <text x="474" y="882" class="small">Front / sides match padded footprint</text>
+  <text x="894" y="858" class="small">STOP circle: radius 0.547819 m</text>
+  <text x="894" y="882" class="small">Farthest padded corner: (-0.441, +/-0.325)</text>
+  <rect class="body" x="45" y="941" width="20" height="14"/>
+  <text x="78" y="955">Body rectangle (USD visible + collision bounds, rounded outward to 1 mm)</text>
+  <rect class="padding" x="45" y="971" width="20" height="14"/>
+  <text x="78" y="985">Global = local footprint, +1 cm padding: Nova 74.9 x 52 cm; Carter v1 73 x 65 cm</text>
+  <rect class="slow" x="45" y="1001" width="20" height="14"/>
+  <text x="78" y="1015">PolygonSlow: convex envelope of all three STOP zones +0.10 m (fixed); slow to 50% in every mode</text>
+  <text x="40" y="1049" class="small">Estimate: v=0.75 m/s, reaction=0.30 s, effective deceleration=1.0 m/s2, margin=0.05 m. STOP extension rounded up to 0.56 m.</text>
+  <text x="40" y="1073" class="small">One surround is enabled after measured standstill; FootprintApproach remains on (1.5 s trajectory check). No separate PolygonStop.</text>
+  <text x="40" y="1097" class="small">Rotation is no longer guaranteed at every planned pose. NavFn remains XY-only. These are design estimates, not certified safety distances.</text>
 </svg>

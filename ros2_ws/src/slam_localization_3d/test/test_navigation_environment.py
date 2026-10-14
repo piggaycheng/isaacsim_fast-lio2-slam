@@ -39,23 +39,23 @@ class NavigationEnvironmentTest(unittest.TestCase):
         global_params = config["global_costmap"]["global_costmap"]["ros__parameters"]
         local_params = config["local_costmap"]["local_costmap"]["ros__parameters"]
         self.assertEqual(json.loads(local_params["footprint"]),
-                         [[0.20, 0.32], [0.20, -0.32], [-0.65, -0.32], [-0.65, 0.32]])
+                         [[0.141, 0.250], [0.141, -0.250], [-0.588, -0.250], [-0.588, 0.250]])
         self.assertEqual(local_params["footprint_padding"], 0.01)
         self.assertEqual(local_params["inflation_layer"]["inflation_radius"], 0.9)
-        self.assertEqual(global_params["footprint"], "[]")
-        self.assertEqual(global_params["robot_radius"], 0.81)
-        self.assertEqual(global_params["footprint_padding"], 0.0)
+        self.assertEqual(global_params["footprint"], local_params["footprint"])
+        self.assertNotIn("robot_radius", global_params)
+        self.assertEqual(global_params["footprint_padding"], 0.01)
         self.assertEqual(global_params["inflation_layer"]["inflation_radius"], 1.1)
         for params in (global_params, local_params):
             self.assertTrue(params["obstacle_layer"]["scan_clearing"]["clearing"])
             self.assertFalse(params["obstacle_layer"]["obstacles"]["clearing"])
         self.assertFalse(global_params["obstacle_layer"]["footprint_clearing_enabled"])
         self.assertTrue(local_params["obstacle_layer"].get("footprint_clearing_enabled", True))
-        self.assertEqual(rotation_radius(config), 0.81)
-        self.assertAlmostEqual(planning_corridor_width(), 1.62)
-        self.assertAlmostEqual(configured_corridor_width(), 1.62)
-        self.assertTrue(scenario("corridor_1.4")[2])
-        self.assertTrue(scenario("corridor_1.6")[2])
+        self.assertAlmostEqual(rotation_radius(config), np.hypot(0.598, 0.26))
+        self.assertAlmostEqual(planning_corridor_width(), 0.52)
+        self.assertAlmostEqual(configured_corridor_width(), 0.52)
+        self.assertFalse(scenario("corridor_1.4")[2])
+        self.assertFalse(scenario("corridor_1.6")[2])
         self.assertFalse(scenario("corridor_1.8")[2])
 
     def crossing_evidence(self):
@@ -217,7 +217,7 @@ class NavigationEnvironmentTest(unittest.TestCase):
 
 
 class GlobalObstacleClearingTest(unittest.TestCase):
-    def test_rotation_circle_does_not_clear_returns_and_scan_still_clears(self):
+    def test_body_footprint_does_not_clear_returns_and_scan_still_clears(self):
         config_path = Path(__file__).resolve().parents[1] / "config/observation_costmaps.yaml"
         params = yaml.safe_load(config_path.read_text())["global_costmap"]["global_costmap"]["ros__parameters"]
         params.update(use_sim_time=False, global_frame="map", robot_base_frame="clearing_test_base",
@@ -302,11 +302,11 @@ class GlobalObstacleClearingTest(unittest.TestCase):
                 ]))
                 wait(future.done)
                 values = future.result().values
-                self.assertEqual(values[0].string_value, "[]")
+                self.assertEqual(values[0].string_value, params["footprint"])
                 self.assertEqual(values[1].type, ParameterType.PARAMETER_BOOL)
                 self.assertFalse(values[1].bool_value)
                 self.assertEqual(values[2].string_value, "clearing_test_base")
-                self.assertEqual(values[3].double_value, params["robot_radius"])
+                self.assertEqual(values[3].type, ParameterType.PARAMETER_DOUBLE)
 
                 def subscribe():
                     topics = [name for name, types in node.get_topic_names_and_types()
@@ -327,8 +327,11 @@ class GlobalObstacleClearingTest(unittest.TestCase):
                     row = int((point[1] - message.info.origin.position.y) / message.info.resolution)
                     return message.data[row * message.info.width + col]
 
-                # Returns inside the planning rotation circle stay marked for the planner.
-                self.assertLess(np.hypot(*points[0][:2]), params["robot_radius"])
+                # Returns near the body remain marked; upstream handles self filtering.
+                self.assertLess(np.hypot(*points[0][:2]), rotation_radius({
+                    name: {name: {"ros__parameters": params}}
+                    for name in ("global_costmap", "local_costmap")
+                }))
                 wait(lambda: maps and all(cost(point) == 100 for point in points))
                 state.update(points=[], clear=True)
                 wait(lambda: maps and all(cost(point) == 0 for point in points))

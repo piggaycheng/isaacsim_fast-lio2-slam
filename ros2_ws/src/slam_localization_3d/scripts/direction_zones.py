@@ -11,7 +11,7 @@ after a zero-command barrier with measured standstill.
 import math
 
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PolygonStamped, Twist
 from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import Parameter as ParameterMessage, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParametersAtomically
@@ -20,11 +20,11 @@ from rclpy.qos import qos_profile_sensor_data
 
 # Keep in sync with configure_direction_zones() in global_fusion.launch.py.
 ZONE_SETS = {
-    "forward": ("PolygonStop", "PolygonSlow", "PolygonSurroundForward"),
-    "reverse": ("PolygonSurroundReverse",),
-    "rotate": ("PolygonRotate",),
+    "forward": ("PolygonSurroundForward", "PolygonSlow"),
+    "reverse": ("PolygonSurroundReverse", "PolygonSlow"),
+    "rotate": ("PolygonRotate", "PolygonSlow"),
 }
-POLYGONS = tuple(name for names in ZONE_SETS.values() for name in names)
+POLYGONS = tuple(dict.fromkeys(name for names in ZONE_SETS.values() for name in names))
 
 
 class DirectionZones(Node):
@@ -59,9 +59,31 @@ class DirectionZones(Node):
         self.publisher = self.create_publisher(Twist, "nav2/cmd_vel_direction", 10)
         self.getter = self.create_client(GetParameters, "collision_monitor/get_parameters")
         self.setter = self.create_client(SetParametersAtomically, "collision_monitor/set_parameters_atomically")
+        self.base_frame = self.declare_parameter("base_frame_id", "base_link").value
+        self.zone_visualizers = {
+            name: self.create_publisher(
+                PolygonStamped, self.declare_parameter(name + ".polygon_pub_topic", topic).value, 10,
+            )
+            for name, topic in (
+                ("PolygonSurroundForward", "collision_monitor/polygon_surround_forward"),
+                ("PolygonSurroundReverse", "collision_monitor/polygon_surround_reverse"),
+                ("PolygonRotate", "collision_monitor/polygon_rotate"),
+            )
+        }
         self.create_subscription(Twist, "nav2/cmd_vel", self.on_command, 10)
         self.create_subscription(Odometry, "odometry/local", self.on_odometry, qos_profile_sensor_data)
         self.create_timer(0.05, self.tick)
+        self.create_timer(0.1, self.clear_inactive_visualizations)
+
+    def clear_inactive_visualizations(self):
+        if not self.checked or self.active is None or self.future is not None:
+            return
+        message = PolygonStamped()
+        # Zero timestamp uses latest TF, avoiding a delayed clear waiting for a future transform.
+        message.header.frame_id = self.base_frame
+        for name, publisher in self.zone_visualizers.items():
+            if name not in ZONE_SETS[self.active]:
+                publisher.publish(message)
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -158,11 +180,13 @@ class DirectionZones(Node):
             self.active = next((mode for mode, names in ZONE_SETS.items() if enabled == set(names)), None)
             self.checked = True
             self.get_logger().info(f"Direction zones active: {self.active}")
+            self.clear_inactive_visualizations()
             return
         if not response.result.successful:
             raise RuntimeError("Direction zone switch rejected: " + response.result.reason)
         self.active = self.target
         self.get_logger().info(f"Direction zones active: {self.active}")
+        self.clear_inactive_visualizations()
 
     def tick(self):
         now = self.now()

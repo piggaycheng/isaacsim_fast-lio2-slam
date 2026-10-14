@@ -66,7 +66,7 @@ def robot_stack(context, package):
             }.items(),
         ))
     if mqtt_host:
-        # Open-RMF plans traffic with the same circle the planner and rotate zone use.
+        # Open-RMF's circular traffic envelope covers the padded body's rotation sweep.
         radius = rotation_radius(load_parameters(
             os.path.join(package, "config", "observation_costmaps.yaml"), spec.robot_type))
         # cmd_vel_safety's caps bound every command the robot can execute.

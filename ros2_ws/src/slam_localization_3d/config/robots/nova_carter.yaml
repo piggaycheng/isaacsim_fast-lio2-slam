@@ -84,35 +84,24 @@ parameter_overrides:
       min_covariance_yaw: 1.4647e-06
 
   # --- Footprint in base_link (measure with scripts/usd_bbox.py) ---
-  # config/observation_costmaps.yaml. The global costmap plans with the in-place
-  # rotation circle; robot_radius must cover the padded footprint's rotation sweep
-  # (0.738 m) plus one cell after Nav2's 16-gon (robot_fleet.rotation_radius).
+  # USD visible/collision envelope rounded outward to 1 mm; both costmaps match.
   global_costmap:
     global_costmap:
       ros__parameters:
-        footprint: '[]'
-        robot_radius: 0.81
-        footprint_padding: 0.0
+        footprint: '[[0.141, 0.250], [0.141, -0.250], [-0.588, -0.250], [-0.588, 0.250]]'
+        footprint_padding: 0.01
         inflation_layer: {inflation_radius: 1.1}
   local_costmap:
     local_costmap:
       ros__parameters:
-        footprint: '[[0.20, 0.32], [0.20, -0.32], [-0.65, -0.32], [-0.65, 0.32]]'
+        footprint: '[[0.141, 0.250], [0.141, -0.250], [-0.588, -0.250], [-0.588, 0.250]]'
         footprint_padding: 0.01
         inflation_layer: {inflation_radius: 0.9}
   # slam_nav/config/ground_obstacle_filter.yaml: [x_min, x_max, y_min, y_max]
   ground_obstacle_filter:
     ros__parameters:
       ground_z: 0.0
-      self_filter_bounds: [-0.65, 0.20, -0.32, 0.32]
-
-  # --- Safety zones, x/y pairs in base_link (config/collision_monitor.yaml) ---
-  collision_monitor:
-    ros__parameters:
-      PolygonStop: {points: [0.85, 0.36, 0.85, -0.36, 0.20, -0.36, 0.20, 0.36]}
-      # Rear margin includes the measured 1 m/s reverse stopping distance.
-      PolygonSurround: {points: [0.80, 0.75, 0.80, -0.75, -1.35, -0.75, -1.35, 0.75]}
-      PolygonSlow: {points: [0.95, 0.50, 0.95, -0.50, 0.20, -0.50, 0.20, 0.50]}
+      self_filter_bounds: [-0.588, 0.141, -0.250, 0.250]
 
   # --- Speed and acceleration (config/navigation.yaml, config/collision_monitor.yaml) ---
   controller_server:

@@ -32,7 +32,7 @@ public:
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     min_range_ = declare_parameter<double>("min_range", 0.0);
     self_filter_bounds_ = declare_parameter<std::vector<double>>(
-      "self_filter_bounds", {-0.20, 0.65, -0.32, 0.32});
+      "self_filter_bounds", {-0.588, 0.141, -0.250, 0.250});
     max_range_ = declare_parameter<double>("max_range", 20.0);
     ground_z_ = declare_parameter<double>("ground_z", 0.0);
     ground_search_height_ = declare_parameter<double>("ground_search_height", 0.25);

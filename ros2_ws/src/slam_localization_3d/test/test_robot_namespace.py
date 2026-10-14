@@ -6,9 +6,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 from launch import LaunchContext
+from launch.actions import DeclareLaunchArgument, SetLaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "launch"))
@@ -92,7 +95,7 @@ class RobotProfileTest(unittest.TestCase):
         # (footprint, safety zones, speeds) keep Nova Carter's values as base defaults.
         overrides = robot_fleet.load_robot_profile("nova_carter")["parameter_overrides"]
         for node in ("wheel_encoder_odometry", "nav_imu_adapter", "global_pose_adapter",
-                     "local_costmap", "collision_monitor", "ground_obstacle_filter"):
+                     "local_costmap", "ground_obstacle_filter"):
             self.assertIn(node, overrides)
         defaults = copy.deepcopy(overrides)
         for node, keys in VEHICLE_OVERRIDES.items():
@@ -142,11 +145,12 @@ class RobotProfileTest(unittest.TestCase):
         merged = robot_fleet.merge_overrides(config, overrides)
         self.assertNotEqual(merged, config)
         self.assertEqual(merged["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"],
-                         "[[0.35, 0.38], [0.35, -0.38], [-0.50, -0.38], [-0.50, 0.38]]")
-        self.assertEqual(merged["global_costmap"]["global_costmap"]["ros__parameters"]["footprint"], "[]")
-        self.assertEqual(robot_fleet.rotation_radius(merged), 0.71)
+                         "[[0.279, 0.315], [0.279, -0.315], [-0.431, -0.315], [-0.431, 0.315]]")
+        self.assertEqual(merged["global_costmap"]["global_costmap"]["ros__parameters"]["footprint"],
+                         merged["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"])
+        self.assertAlmostEqual(robot_fleet.rotation_radius(merged), math.hypot(0.441, 0.325))
         self.assertEqual(overrides["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"],
-                         [-0.50, 0.35, -0.38, 0.38])
+                         [-0.431, 0.279, -0.315, 0.315])
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "local_odometry.yaml"
             path.write_text(yaml.safe_dump({"wheel_encoder_odometry": {"ros__parameters": {}}}))
@@ -320,6 +324,46 @@ class LaunchNamespaceTest(unittest.TestCase):
         self.assertEqual(FUSION.push_robot_namespace(context), [])
         self.assertNotIn("ros_remaps", context.launch_configurations)
 
+    def test_navigation_node_construction_with_rectangular_costmaps_for_both_robots(self):
+        package = get_package_share_directory("slam_localization_3d")
+        nav = get_package_share_directory("slam_nav")
+        for namespace, kind in (("carter1", "nova_carter"), ("carter2", "carter_v1")):
+            with self.subTest(kind=kind):
+                context = self.context(namespace)
+                context.launch_configurations.update(
+                    robot_type=kind, costmaps="true", navigate="true", obstacle_cloud="true",
+                    rviz="false", map_pcd="/workspace/maps/office/map.pcd",
+                    map_pgm="/workspace/maps/office/map_2d.yaml",
+                )
+                for action in FUSION.generate_launch_description().entities:
+                    if isinstance(action, (DeclareLaunchArgument, SetLaunchConfiguration)):
+                        action.execute(context)
+                filter_actions = FUSION.configure_filters(
+                    context, str(CONFIG / "observation_costmaps.yaml"))
+                for action in filter_actions:
+                    if isinstance(action, SetLaunchConfiguration):
+                        action.execute(context)
+                factory = tempfile.TemporaryDirectory
+
+                def directory(**kwargs):
+                    result = factory(**kwargs)
+                    self.addCleanup(result.cleanup)
+                    return result
+
+                with patch.object(FUSION.tempfile, "TemporaryDirectory", side_effect=directory):
+                    zone_actions = FUSION.configure_surround(
+                        context, *(str(CONFIG / name) for name in
+                                   ("collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml")),
+                    )
+                for action in zone_actions:
+                    if isinstance(action, SetLaunchConfiguration):
+                        action.execute(context)
+                actions = FUSION.robot_nodes(context, package, nav)
+                nodes = [action for action in actions if isinstance(action, FUSION.Node)]
+                executables = {node._Node__node_executable for node in nodes}
+                for executable in ("planner_server", "controller_server", "collision_monitor"):
+                    self.assertIn(executable, executables)
+
     def test_sensor_transforms_follow_profile(self):
         nodes = FUSION.sensor_transforms(self.context("carter1"))
         arguments = {
@@ -362,12 +406,15 @@ class FleetRvizTest(unittest.TestCase):
         groups = [d for d in config["Visualization Manager"]["Displays"]
                   if d["Class"] == "rviz_common/Group"]
         for group in groups:
-            surround = next(d for d in group["Displays"]
-                            if d["Name"] == "Collision surround stop zone")
-            self.assertTrue(surround["Enabled"])
-            self.assertEqual(surround["Class"], "rviz_default_plugins/Polygon")
-            self.assertEqual(surround["Topic"]["Value"],
-                             f"/fleet/{group['Name']}/collision_monitor/polygon_surround")
+            for name, topic in (("Forward surround", "polygon_surround_forward"),
+                                ("Reverse surround", "polygon_surround_reverse"),
+                                ("Rotation surround", "polygon_rotate"),
+                                ("Collision slowdown zone", "polygon_slowdown")):
+                surround = next(d for d in group["Displays"] if d["Name"] == name)
+                self.assertTrue(surround["Enabled"])
+                self.assertEqual(surround["Class"], "rviz_default_plugins/Polygon")
+                self.assertEqual(surround["Topic"]["Value"],
+                                 f"/fleet/{group['Name']}/collision_monitor/{topic}")
 
     def topics(self, value):
         if isinstance(value, dict):

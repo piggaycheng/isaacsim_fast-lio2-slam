@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from usd_bbox import box_corners, summarize, transform_points, yaw_rotation
 sys.path.insert(0, str(ROOT / "ros2_ws/src/slam_localization_3d/launch"))
 from robot_fleet import load_robot_profile, merge_overrides, rotation_radius
+from nav_geometry import footprint_bounds, safety_geometry
 
 
 def validate(stage, profile):
@@ -71,8 +72,7 @@ def validate(stage, profile):
 
     costmaps = parameters(config / "observation_costmaps.yaml")
     physical = ast.literal_eval(costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint"])
-    # Checks the global planning circle covers the footprint's rotation sweep.
-    planning_radius = rotation_radius(costmaps)
+    sweep_radius = rotation_radius(costmaps)
     footprint = np.asarray(physical)
     fmin, fmax = footprint.min(axis=0), footprint.max(axis=0)
     filtering = parameters(
@@ -80,15 +80,18 @@ def validate(stage, profile):
     )["ground_obstacle_filter"]["ros__parameters"]["self_filter_bounds"]
     np.testing.assert_allclose(filtering, [fmin[0], fmax[0], fmin[1], fmax[1]])
     monitor = parameters(config / "collision_monitor.yaml")
-    surround = np.asarray(
-        monitor["collision_monitor"]["ros__parameters"]["PolygonSurround"]["points"]
-    ).reshape(-1, 2)
+    navigation = parameters(config / "navigation.yaml")
+    smoother = navigation["velocity_smoother"]["ros__parameters"]
+    speed = max(abs(smoother[key][0]) for key in ("max_velocity", "min_velocity"))
+    settings = parameters(config / "direction_zones.yaml")["direction_zones"]["ros__parameters"]
+    zones = safety_geometry(costmaps, speed, settings,
+                            monitor["collision_monitor"]["ros__parameters"]["PolygonSlow"]["slowdown_ratio"])
     padding = costmaps["local_costmap"]["local_costmap"]["ros__parameters"]["footprint_padding"]
     report = {"robot_type": profile["robot_type"],
               "collider_count": len(colliders), "footprint": physical,
-              "planning_radius": planning_radius,
+              "rotation_radius": sweep_radius,
               "footprint_padding": padding,
-              "self_filter": filtering, "surround": surround.tolist()}
+              "self_filter": filtering, "safety_zones": zones}
     if profile["robot_type"] == "nova_carter":
         def base_x(name):
             prim = stage.GetPrimAtPath(f"{robot.GetPath()}/{name}")
@@ -113,8 +116,13 @@ def validate(stage, profile):
             raise AssertionError(f"Footprint does not enclose {kind}: {margins}")
         report[kind] = summarize(points, decimals=6)
         report[kind]["footprint_margins_rear_right_front_left"] = margins.tolist()
-    if (surround.min(axis=0) >= fmin).any() or (surround.max(axis=0) <= fmax).any():
-        raise AssertionError("Surround zone must extend outside footprint on every side")
+    front, rear, left, right = footprint_bounds(costmaps)
+    np.testing.assert_allclose(zones["forward"],
+                               [front + zones["stop_distance"], left, front + zones["stop_distance"],
+                                right, rear, right, rear, left])
+    np.testing.assert_allclose(zones["reverse"],
+                               [front, left, front, right, rear - zones["stop_distance"],
+                                right, rear - zones["stop_distance"], left])
     print("GEOMETRY_RESULT " + json.dumps(report), flush=True)
     return report
 
