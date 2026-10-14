@@ -21,6 +21,8 @@
 
 這會啟動 Isaac Sim、RViz 與建圖管理器。**起始狀態是 `idle`，尚未建圖**，必須另外執行 `start`。
 
+RViz 使用 `/clock` 模擬時間（`use_sim_time=true`），與點雲及 TF 的時間一致。管理器在初始化的 30 秒內保留 ground truth，收到第一筆 LIO 里程計後立即鎖定時間相符的參考位姿，避免 DDS 發現或傳輸延遲導致早期 ground truth 被淘汰。
+
 等 Office 場景與車輛載入完成後，點選 Isaac Sim 模擬視窗，使用以下按鍵：
 
 | 按鍵 | 功能 |
@@ -133,6 +135,7 @@ JSON 中的 `output_dir` 是容器內路徑，例如 `/workspace/maps/floor_grou
 |---|---|
 | ROS container 未啟動或無法連線管理器 | 先執行 `run_slam.sh`，檢查第一個終端的啟動輸出。 |
 | 初始化超過 30 秒、沒有 LIO 或 ground truth | 保持模擬播放與車子停穩；查看 `slam.log`。失敗的建圖程序會停止，目錄保留；修正後用新名稱重試。 |
+| RViz 無點雲 | 先確認 session 為 `mapping`；`idle` 或 `start_failed` 沒有持續建圖輸出。確認 `/fastlio2/world_cloud` 有資料、Fixed Frame 為 `lidar`，並用 `docker compose exec ros /workspace/docker/entrypoint.sh ros2 param get /rviz use_sim_time` 確認為 `true`；舊的 RViz 可用 `docker compose exec ros /workspace/docker/entrypoint.sh ros2 param set /rviz use_sim_time true` 即時修正。 |
 | 樓層目錄已存在 | 使用新名稱，如 `floor_lower_run2`；不要期待從舊圖接續。 |
 | 已有其他建圖節點 | 先停止另一個 launcher，不要同時使用兩套建圖流程。 |
 | 存圖失敗、空圖或檔案不完整 | 不要換樓層或關閉模擬；查 `status`／`slam.log`，確認有有效資料及可寫入空間後重試 `save-stop`。 |

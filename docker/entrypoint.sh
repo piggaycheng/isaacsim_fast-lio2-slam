@@ -46,7 +46,8 @@ case "$command" in
     require_workspace
     python3 /workspace/scripts/mapping_manager.py serve &
     ros_pid=$!
-    rviz2 -d "$workspace_dir/src/isaac_fastlio_adapter/config/fastlio.rviz" &
+    rviz2 -d "$workspace_dir/src/isaac_fastlio_adapter/config/fastlio.rviz" \
+      --ros-args -p use_sim_time:=true &
     rviz_pid=$!
     # Background jobs of a non-interactive shell ignore SIGINT, so forward TERM.
     trap 'kill -TERM "$ros_pid" "$rviz_pid" 2>/dev/null || true' INT TERM

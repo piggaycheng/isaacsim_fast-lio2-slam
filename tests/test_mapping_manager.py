@@ -1,4 +1,5 @@
 from contextlib import redirect_stderr
+from collections import deque
 import io
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock
 from types import SimpleNamespace
@@ -214,6 +216,56 @@ class MappingManagerTest(unittest.TestCase):
             stamp=SimpleNamespace(sec=10, nanosec=0),
         ))]
         self.assertIs(backend.reference(), reference)
+
+    def reference_backend(self):
+        backend = RosBackend.__new__(RosBackend)
+        backend.initial_reference = None
+        backend.first_odom = None
+        backend.ground_truth = deque()
+        backend.collecting = True
+        backend.collection_deadline = time.monotonic() + backend.STARTUP_TIMEOUT
+        backend.sensor_frames = {}
+        backend.pose = Mock(return_value={"position": [0, 0, 0]})
+        return backend
+
+    @staticmethod
+    def stamped_message(tick):
+        return SimpleNamespace(header=SimpleNamespace(
+            stamp=SimpleNamespace(sec=tick // 120, nanosec=(tick % 120) * 1_000_000_000 // 120),
+        ))
+
+    def test_delayed_first_odom_matches_truth_older_than_200_messages(self):
+        backend = self.reference_backend()
+        for tick in range(600):
+            backend.on_truth(self.stamped_message(tick))
+        backend.on_odom(self.stamped_message(10))
+        self.assertIsNotNone(backend.initial_reference)
+        self.assertEqual(backend.initial_reference["stamp_difference_seconds"], 0)
+        backend.on_truth(self.stamped_message(601))
+        self.assertEqual(len(backend.ground_truth), 600)
+
+    def test_reference_is_latched_when_matching_truth_arrives_after_odom(self):
+        backend = self.reference_backend()
+        backend.on_odom(self.stamped_message(120))
+        self.assertIsNone(backend.initial_reference)
+        backend.on_truth(self.stamped_message(120))
+        self.assertIsNotNone(backend.initial_reference)
+
+    def test_truth_is_not_collected_while_idle_or_after_startup_deadline(self):
+        backend = self.reference_backend()
+        backend.collecting = False
+        backend.on_truth(self.stamped_message(120))
+        backend.collecting = True
+        backend.collection_deadline = 0.0
+        backend.on_truth(self.stamped_message(120))
+        self.assertFalse(backend.ground_truth)
+
+    def test_readiness_timeout_stops_truth_collection(self):
+        backend = self.reference_backend()
+        backend.wait = Mock(side_effect=TimeoutError("not ready"))
+        with self.assertRaises(TimeoutError):
+            backend.wait_ready(Mock())
+        self.assertFalse(backend.collecting)
 
 
 if __name__ == "__main__":

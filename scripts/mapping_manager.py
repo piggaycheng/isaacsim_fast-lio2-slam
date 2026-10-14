@@ -210,6 +210,8 @@ class MappingManager:
 
 
 class RosBackend:
+    STARTUP_TIMEOUT = 30
+
     def __init__(self, stopping):
         import rclpy
         from interface.srv import SaveMaps
@@ -227,10 +229,11 @@ class RosBackend:
             "mapping_manager", parameter_overrides=[Parameter("use_sim_time", value=True)],
         )
         self.client = self.node.create_client(SaveMaps, "/pgo/save_maps")
-        self.ground_truth = deque(maxlen=200)
+        self.ground_truth = deque()
         self.first_odom = None
         self.initial_reference = None
         self.collecting = False
+        self.collection_deadline = 0.0
         self.odom_subscription = None
         self.Odometry = Odometry
         self.save_future = None
@@ -253,11 +256,15 @@ class RosBackend:
                 "position": [p.x, p.y, p.z], "orientation_xyzw": [q.x, q.y, q.z, q.w]}
 
     def on_truth(self, message):
-        self.ground_truth.append(message)
+        if (self.collecting and self.initial_reference is None
+                and time.monotonic() < self.collection_deadline):
+            self.ground_truth.append(message)
+            self.reference()
 
     def on_odom(self, message):
         if self.collecting and self.first_odom is None:
             self.first_odom = message
+            self.reference()
 
     def spin(self):
         self.rclpy.spin_once(self.node, timeout_sec=0.05)
@@ -290,6 +297,7 @@ class RosBackend:
         self.first_odom = None
         self.initial_reference = None
         self.collecting = True
+        self.collection_deadline = time.monotonic() + self.STARTUP_TIMEOUT
         self.save_future = None
         self.save_directory = None
         self.clear_display()
@@ -318,9 +326,12 @@ class RosBackend:
             reference = self.reference()
             return self.client.service_is_ready() and reference is not None
 
-        self.wait(ready, 30, "No initialized LIO/PGO with matching simulator truth within 30s. "
-                  "Keep Isaac Sim playing and the robot stationary; inspect slam.log")
-        self.collecting = False
+        try:
+            self.wait(ready, self.STARTUP_TIMEOUT,
+                      "No initialized LIO/PGO with matching simulator truth within 30s. "
+                      "Keep Isaac Sim playing and the robot stationary; inspect slam.log")
+        finally:
+            self.collecting = False
         return self.reference()
 
     def save(self, directory):

@@ -103,16 +103,19 @@ def validate():
     with tempfile.TemporaryDirectory() as temporary:
         log_path = Path(temporary) / "manager.log"
         rviz_pid_path = Path(temporary) / "rviz.pid"
+        rviz_args_path = Path(temporary) / "rviz.args"
         shell_init = Path(temporary) / "headless_rviz.sh"
         shell_init.write_text(
-            'rviz2() { echo "$BASHPID" > "$RVIZ_VALIDATION_PID"; exec sleep 120; }\n',
+            'rviz2() { echo "$BASHPID" > "$RVIZ_VALIDATION_PID"; '
+            'printf "%s\\n" "$@" > "$RVIZ_VALIDATION_ARGS"; exec sleep 120; }\n',
         )
         try:
             with log_path.open("w") as log:
                 server = subprocess.Popen(
                     [str(ROOT / "docker/entrypoint.sh"), "slam"],
                     env={**os.environ, "BASH_ENV": str(shell_init),
-                         "RVIZ_VALIDATION_PID": str(rviz_pid_path)},
+                         "RVIZ_VALIDATION_PID": str(rviz_pid_path),
+                         "RVIZ_VALIDATION_ARGS": str(rviz_args_path)},
                     stdout=log, stderr=subprocess.STDOUT,
                 )
 
@@ -137,6 +140,9 @@ def validate():
             else:
                 raise RuntimeError("Manager socket did not become ready")
             assert command("status")["state"] == "idle"
+            assert rviz_args_path.read_text().splitlines()[-3:] == [
+                "--ros-args", "-p", "use_sim_time:=true",
+            ]
             command("save-stop", success=False)
             identifier = uuid.uuid4().hex[:12]
             for floor, elevation in (("ground", 0.0), ("lower", -3.3)):
