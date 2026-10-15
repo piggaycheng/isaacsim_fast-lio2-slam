@@ -61,7 +61,7 @@ ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose 
 
 ## 初始位姿
 
-預設載入 `maps/1F`，需由 RViz 或 [MQTT `change_floor`](online.md#mqtt-換樓層與初始定位) 提供初始位姿；
+預設載入 `maps/1F`，需由 RViz 或 [MQTT `change_floor`](nav_change_map.md) 提供初始位姿；
 不會把 Isaac world 的生成位置直接當作獨立建圖的 1F 座標。只有明確使用
 `--map maps/office/map_2d.yaml` 時，才預設以生成位姿自動初始化
 （`--manual-initial-pose` 改由 RViz 設定）。`robot_fleet.initial_pose()` 把每台車的 body 位姿換算到錄製地圖的參考車 body frame，作為 `map → camera_init` 的猜測值，再由 ICP 修正。`global_localization_xyz.py` 覆寫上游的初始化函式，讓 ICP 失敗後的重試仍從該猜測值開始。

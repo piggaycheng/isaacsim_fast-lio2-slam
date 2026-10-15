@@ -25,7 +25,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from robot_localization.srv import SetPose
-from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap
+from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap, PrepareFloorChange
 from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
 
@@ -64,7 +64,8 @@ class FloorSwitchTest(unittest.TestCase):
         self.executor.add_node(self.node)
         self.executor.add_node(self.peer)
         self.events = []
-        self.holds = {"safety": False, "adapter": False, "tf": False}
+        self.holds = {"safety": False, "adapter": False, "tf": False, "icp": False}
+        self.reject_holds = set()
         self.loaded = False
         self.reject_pcd = False
         self.reject_map = False
@@ -81,16 +82,22 @@ class FloorSwitchTest(unittest.TestCase):
             ("safety", "navigation/set_map_switch_hold"),
             ("adapter", "localization_3d/set_map_switch_hold"),
             ("tf", "global_tf_gate/set_map_switch_hold"),
+            ("icp", "localization_3d/set_registration_hold"),
         ):
             def hold(request, response, key=key):
+                if key in self.reject_holds:
+                    response.success = False
+                    response.message = f"test {key} hold rejected"
+                    return response
                 self.holds[key] = request.data
                 self.events.append((key, request.data))
                 response.success = True
                 return response
             self.services.append(self.peer.create_service(SetBool, name, hold))
+        self.navigation_service = self.peer.create_service(
+            ManageLifecycleNodes, "lifecycle_manager_navigation/manage_nodes", self.navigation)
         self.services += [
-            self.peer.create_service(ManageLifecycleNodes,
-                                     "lifecycle_manager_navigation/manage_nodes", self.navigation),
+            self.navigation_service,
             self.peer.create_service(LoadMap, "map_server/load_map", self.map_load),
             self.peer.create_service(LoadLocalizationMap, "localization_3d/load_map", self.pcd_load),
             self.peer.create_service(SetPose, "global_ekf/set_pose", self.set_pose),
@@ -113,9 +120,12 @@ class FloorSwitchTest(unittest.TestCase):
         self.tf = TransformBroadcaster(self.peer)
         self.peer.create_timer(0.05, self.publish_inputs)
         self.client = self.peer.create_client(ChangeFloor, "navigation/change_floor")
+        self.prepare_client = self.peer.create_client(
+            PrepareFloorChange, "navigation/prepare_floor_change")
         self.spin_until(lambda: all(client.service_is_ready()
                                    for client in self.node.service_clients.values()))
         self.spin_until(self.client.service_is_ready)
+        self.spin_until(self.prepare_client.service_is_ready)
         self.extra_nodes = []
 
     def tearDown(self):
@@ -145,7 +155,7 @@ class FloorSwitchTest(unittest.TestCase):
         self.local_pub.publish(local)
         if not self.loaded:
             return
-        if self.accept_icp and not self.holds["adapter"]:
+        if self.accept_icp and not self.holds["adapter"] and not self.holds["icp"]:
             self.target.header.stamp = stamp
             self.pose_pub.publish(self.target)
         global_odom = Odometry()
@@ -229,6 +239,64 @@ class FloorSwitchTest(unittest.TestCase):
         self.assertLess(kinds.index("ekf"), kinds.index("clear"))
         self.assertEqual(self.events[-1], ("safety", False))
 
+    def prepare(self):
+        future = self.prepare_client.call_async(PrepareFloorChange.Request())
+        self.spin_until(future.done)
+        self.assertIsNone(future.exception())
+        return future.result()
+
+    def test_prepare_holds_until_successful_change_floor_without_loading_maps(self):
+        for _ in range(2):
+            response = self.prepare()
+            self.assertTrue(response.success, response.message)
+            self.assertEqual(self.node.transition_state, "prepared")
+            self.assertEqual(response.current_floor, "")
+            self.assertTrue(all(self.holds.values()))
+            self.assertFalse(self.nav_active)
+            self.assertNotIn("map", [event[0] for event in self.events])
+            self.assertNotIn("pcd", [event[0] for event in self.events])
+        self.assertFalse(any(not value for key, value in self.events
+                             if key in self.holds))
+        result = self.switch()
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(self.node.transition_state, "idle")
+        self.assertFalse(any(self.holds.values()))
+
+    def test_prepare_failure_and_invalid_target_preserve_holds(self):
+        self.moving = True
+        response = self.prepare()
+        self.assertFalse(response.success)
+        self.assertIn("stationary", response.message)
+        self.assertEqual(self.node.transition_state, "failed")
+        self.assertTrue(all(self.holds.values()))
+        self.moving = False
+        self.assertTrue(self.prepare().success)
+        self.assertFalse(self.switch(self.request("missing")).success)
+        self.assertEqual(self.node.transition_state, "prepared")
+        self.assertTrue(all(self.holds.values()))
+        self.assertTrue(self.switch().success)
+
+    def test_prepare_does_not_succeed_if_icp_hold_fails(self):
+        self.reject_holds.add("icp")
+        result = self.prepare()
+        self.assertFalse(result.success)
+        self.assertIn("icp", result.message)
+        self.assertEqual(self.node.transition_state, "failed")
+        self.assertTrue(self.holds["safety"])
+        self.assertTrue(self.holds["adapter"])
+        self.assertTrue(self.holds["tf"])
+        self.assertNotIn("map", [event[0] for event in self.events])
+
+    def test_change_floor_is_rejected_while_preparation_is_in_progress(self):
+        future = self.prepare_client.call_async(PrepareFloorChange.Request())
+        self.spin_until(lambda: self.node.busy)
+        result = self.switch()
+        self.assertFalse(result.success)
+        self.assertIn("already in progress", result.message)
+        self.spin_until(future.done)
+        self.assertTrue(future.result().success, future.result().message)
+        self.assertTrue(all(self.holds.values()))
+
     def test_invalid_floor_and_pose_do_not_stop_or_change_healthy_stack(self):
         for request in (self.request("../B1"), self.request("missing")):
             result = self.switch(request)
@@ -246,6 +314,8 @@ class FloorSwitchTest(unittest.TestCase):
         self.assertEqual(result.current_floor, "")
         self.assertTrue(self.holds["safety"])
         self.assertFalse(self.nav_active)
+        self.assertTrue(self.holds["icp"])
+        self.assertEqual(self.node.transition_state, "failed")
         self.reject_pcd = False
         result = self.switch()
         self.assertTrue(result.success, result.message)
@@ -262,8 +332,33 @@ class FloorSwitchTest(unittest.TestCase):
         result = self.switch()
         self.assertFalse(result.success)
         self.assertIn("ICP", result.message)
+        self.assertIn("target x=3.000", result.message)
+        self.assertIn("no accepted global pose received since PCD load", result.message)
         self.assertTrue(self.holds["safety"])
         self.assertFalse(self.nav_active)
+        self.assertTrue(all(self.holds.values()))
+        self.accept_icp = True
+        retry = self.switch()
+        self.assertTrue(retry.success, retry.message)
+        self.assertFalse(any(self.holds.values()))
+
+    def test_localization_diagnostics_report_pose_errors_and_freshness(self):
+        pose = PoseWithCovarianceStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = self.peer.get_clock().now().to_msg()
+        pose.pose.pose.position.x = 5.0
+        pose.pose.pose.orientation.z = 1.0
+        pose.pose.pose.orientation.w = 0.0
+        self.node.on_pose(pose)
+        after = pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9 - 1.0
+        self.assertFalse(self.node.localized(after, self.target))
+        details = self.node.localization_details(after, self.target)
+        self.assertIn("distance=2.000 m", details)
+        self.assertIn("yaw_error=3.142 rad", details)
+        self.assertIn("newer_than_load=True", details)
+        pose.header.stamp.sec -= 2
+        details = self.node.localization_details(after, self.target)
+        self.assertIn("newer_than_load=False", details)
 
     def test_moving_robot_does_not_load_new_maps(self):
         self.moving = True
@@ -333,7 +428,7 @@ class FloorSwitchTest(unittest.TestCase):
         self.assertEqual(explicit.initial_pose.pose.pose.orientation.w, 1.0)
 
     def test_first_pose_can_bootstrap_before_navigation_manager_exists(self):
-        self.peer.destroy_service(self.services[3])
+        self.peer.destroy_service(self.navigation_service)
         self.spin_until(lambda: not self.node.service_clients["nav"].service_is_ready())
         self.node.navigation_seen = False
         self.nav_active = False
@@ -376,6 +471,29 @@ class FloorSwitchTest(unittest.TestCase):
             probe.subscribe(base + "/command_result", qos=1)
             self.spin_until(lambda: bool(subscribed) and bridge.client.is_connected())
             self.spin_until(bridge.floor_client.service_is_ready)
+            self.spin_until(bridge.prepare_client.service_is_ready)
+            prepare_payload = json.dumps({
+                "robot_id": self.namespace, "cmd_id": 41, "action": "prepare_floor_change"})
+            probe.publish(base + "/command", prepare_payload, qos=1).wait_for_publish(2)
+            self.spin_until(lambda: not received.empty())
+            prepared = received.get_nowait()
+            self.assertEqual(prepared["status"], "completed", prepared)
+            self.assertTrue(bridge.floor_prepared)
+            self.assertTrue(all(self.holds.values()))
+            self.assertNotIn("map", [event[0] for event in self.events])
+            count = len(self.events)
+            probe.publish(base + "/command", prepare_payload, qos=1).wait_for_publish(2)
+            self.spin_until(lambda: not received.empty())
+            self.assertEqual(received.get_nowait(), prepared)
+            self.assertEqual(len(self.events), count)
+            bridge.registered = True
+            probe.publish(base + "/command", json.dumps({
+                "robot_id": self.namespace, "cmd_id": 40, "action": "navigate",
+                "target": {"x": 1, "y": 2, "yaw": 0},
+            }), qos=1).wait_for_publish(2)
+            self.spin_until(lambda: not received.empty())
+            self.assertIn("retry change_floor", received.get_nowait()["message"])
+            bridge.registered = False
             payload = json.dumps({
                 "robot_id": self.namespace, "cmd_id": 42, "action": "change_floor",
                 "floor_name": "B1", "initial_pose": {"x": 3, "y": 0, "yaw": 0},
@@ -388,6 +506,7 @@ class FloorSwitchTest(unittest.TestCase):
                              (42, "completed", "B1"), result)
             # RMF sends planar poses: the bridge supplies the floor base_link height.
             self.assertAlmostEqual(self.target.pose.pose.position.z, -0.526)
+            self.assertFalse(bridge.floor_prepared)
             count = sum(event[0] == "pcd" for event in self.events)
             probe.publish(base + "/command", payload, qos=1).wait_for_publish(2)
             self.spin_until(lambda: not received.empty())
@@ -442,7 +561,18 @@ class FloorSwitchTest(unittest.TestCase):
                 "target": {"x": 1, "y": 2, "yaw": 0},
             }), qos=1).wait_for_publish(2)
             self.spin_until(lambda: not received.empty())
-            self.assertIn("Only change_floor", received.get_nowait()["message"])
+            self.assertIn("Only prepare_floor_change and change_floor", received.get_nowait()["message"])
+            from std_msgs.msg import String
+            prepare_panel = self.peer.create_publisher(
+                String, "navigation/floor_prepare_request", 1)
+            self.spin_until(lambda: self.peer.count_subscribers(prepare_panel.topic_name) > 0)
+            prepare_panel.publish(String(data=""))
+            self.spin_until(lambda: not received.empty())
+            prepared = received.get_nowait()
+            self.assertEqual(prepared["status"], "completed", prepared)
+            self.assertEqual(self.node.transition_state, "prepared")
+            self.assertTrue(all(self.holds.values()))
+            self.assertNotIn("map", [event[0] for event in self.events])
             probe.publish(base + "/command", json.dumps({
                 "robot_id": self.namespace, "cmd_id": 2, "action": "change_floor",
                 "floor_name": "B1",

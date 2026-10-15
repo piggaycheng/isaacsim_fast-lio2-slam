@@ -1,0 +1,4 @@
+---
+bool success
+string message
+string current_floor

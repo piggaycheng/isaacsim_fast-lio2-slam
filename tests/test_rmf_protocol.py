@@ -69,6 +69,11 @@ class RmfProtocolTest(unittest.TestCase):
             parsed = rmf.parse_command(command(action="change_floor", **data), "r1")
             self.assertEqual(parsed, (7, "change_floor", {"floor_name": "B1", "initial_pose": None}))
 
+    def test_prepare_floor_change_has_no_target_pose_or_resume_flag(self):
+        self.assertEqual(
+            rmf.parse_command(command(action="prepare_floor_change"), "r1"),
+            (7, "prepare_floor_change", None))
+
     def test_floor_result_and_heartbeat_report_level(self):
         result = json.loads(rmf.command_result_payload(
             "r1", 7, "completed", location=(1, 2, 0), level="B1"))

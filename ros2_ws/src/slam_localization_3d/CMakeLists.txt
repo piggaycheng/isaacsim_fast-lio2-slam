@@ -6,6 +6,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ChangeFloor.srv"
+  "srv/PrepareFloorChange.srv"
   "srv/LoadLocalizationMap.srv"
   DEPENDENCIES geometry_msgs
 )

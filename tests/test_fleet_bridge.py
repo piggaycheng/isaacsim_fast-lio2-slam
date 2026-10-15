@@ -67,6 +67,7 @@ class FleetBridgeCancellationTest(unittest.TestCase):
         self.bridge.cmd_ids = {}
         self.bridge.floor_future = None
         self.bridge.floor_error = False
+        self.bridge.floor_prepared = False
         self.bridge.level = "1F"
         self.bridge.get_logger = lambda: types.SimpleNamespace(
             info=lambda message: None, warning=lambda message: None, error=self.errors.append)
@@ -131,6 +132,34 @@ class FleetBridgeCancellationTest(unittest.TestCase):
         self.bridge.runner.tick()
         self.assertEqual(self.results(), [(2, "failed")])
         self.assertEqual(self.bridge.runner.task.goal_id, "1")
+
+    def test_prepared_state_blocks_motion_even_without_pending_request(self):
+        self.bridge.floor_prepared = True
+        self.command(2, "navigate")
+        self.assertEqual(self.results(), [(2, "failed")])
+        self.assertEqual(self.bridge.runner.task.goal_id, "1")
+
+    def test_late_prepare_response_never_replaces_timeout_with_success(self):
+        self.bridge.floor_future = types.SimpleNamespace(
+            done=lambda: False, exception=lambda: None,
+            result=lambda: types.SimpleNamespace(
+                success=True, current_floor="", message="prepared"))
+        self.bridge.floor_cmd_id = 11
+        self.bridge.floor_action = "prepare_floor_change"
+        self.bridge.floor_started = 0.0
+        self.bridge.floor_deadline = 90.0
+        self.bridge.floor_response_overdue = False
+        self.bridge.floor_results = {}
+        self.bridge.floor_prepared = True
+        with patch("time.monotonic", return_value=91.0):
+            self.bridge.poll_floor_switch()
+        self.assertEqual(self.results(), [(11, "failed")])
+        self.assertIsNotNone(self.bridge.floor_future)
+        self.bridge.floor_future.done = lambda: True
+        self.bridge.poll_floor_switch()
+        self.assertEqual(self.results(), [(11, "failed")])
+        self.assertTrue(self.bridge.floor_error)
+        self.assertTrue(self.bridge.floor_prepared)
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ class FleetBridge(Node):
         self.floor_cmd_id = None
         self.floor_results = OrderedDict()
         self.floor_error = False
+        self.floor_prepared = False
+        self.floor_action = None
         self.floor_started = None
         self.floor_response_overdue = False
         self.floor_timeout = float(param("floor_switch_timeout", 90.0))
@@ -89,12 +91,18 @@ class FleetBridge(Node):
                    for value in (self.floor_timeout, self.manual_pose_timeout)):
             raise ValueError("floor_switch_timeout and manual_pose_timeout must be finite and positive")
         self.floor_deadline = self.floor_timeout
-        from slam_localization_3d.srv import ChangeFloor
+        from slam_localization_3d.srv import ChangeFloor, PrepareFloorChange
         from std_msgs.msg import String
         from rclpy.qos import DurabilityPolicy, QoSProfile
         self.floor_client = self.create_client(ChangeFloor, "navigation/change_floor")
+        self.prepare_client = self.create_client(
+            PrepareFloorChange, "navigation/prepare_floor_change")
         self.create_subscription(
             String, "navigation/current_floor", self.on_floor,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self.create_subscription(
+            String, "navigation/floor_transition_state", self.on_floor_state,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
 
@@ -150,6 +158,9 @@ class FleetBridge(Node):
     def on_floor(self, message):
         self.level = message.data
 
+    def on_floor_state(self, message):
+        self.floor_prepared = message.data != "idle"
+
     def floor_result(self, cmd_id, status, message):
         payload = rmf.command_result_payload(
             self.robot, cmd_id, status, message, self.pose, level=self.level)
@@ -158,7 +169,7 @@ class FleetBridge(Node):
             self.floor_results.popitem(last=False)
         self.publish("command_result", payload)
 
-    def begin_floor_switch(self, cmd_id, command):
+    def begin_floor_switch(self, cmd_id, command, action="change_floor"):
         if cmd_id in self.floor_results:
             self.publish("command_result", self.floor_results[cmd_id])
             return
@@ -169,22 +180,29 @@ class FleetBridge(Node):
         if self.runner.active:
             self.floor_result(cmd_id, "failed", "Finish or stop the current task before changing floor")
             return
-        if not self.floor_client.service_is_ready():
+        client = self.prepare_client if action == "prepare_floor_change" else self.floor_client
+        if not client.service_is_ready():
             self.floor_result(cmd_id, "failed", "Robot floor manager is unavailable")
             return
-        from slam_localization_3d.srv import ChangeFloor
-        request = rmf.fill_change_floor_request(
-            ChangeFloor.Request(), command, self.floor_base_z, self.get_clock().now().to_msg())
+        from slam_localization_3d.srv import ChangeFloor, PrepareFloorChange
+        manual = action == "change_floor" and command["initial_pose"] is None
+        request = (
+            PrepareFloorChange.Request() if action == "prepare_floor_change" else
+            rmf.fill_change_floor_request(
+                ChangeFloor.Request(), command, self.floor_base_z, self.get_clock().now().to_msg()))
         self.floor_deadline = self.floor_timeout + (
-            self.manual_pose_timeout if request.manual_initial_pose else 0.0)
+            self.manual_pose_timeout if manual else 0.0)
+        self.floor_action = action
+        if action == "prepare_floor_change":
+            self.floor_prepared = True
         self.floor_cmd_id = cmd_id
         self.floor_started = time.monotonic()
         self.floor_response_overdue = False
-        self.floor_future = self.floor_client.call_async(request)
+        self.floor_future = client.call_async(request)
         self.floor_error = False
         self.get_logger().info(
-            f"MQTT floor switch {cmd_id}: {request.floor_name}"
-            + (" (waiting for RViz 2D Pose Estimate)" if request.manual_initial_pose else ""))
+            f"MQTT {action} {cmd_id}"
+            + (" (waiting for RViz 2D Pose Estimate)" if manual else ""))
 
     def poll_floor_switch(self):
         future = self.floor_future
@@ -204,7 +222,7 @@ class FleetBridge(Node):
         result = None if error is not None else future.result()
         if result is not None:
             self.level = result.current_floor
-            if result.success:
+            if result.success and self.floor_action == "change_floor":
                 pose = result.final_pose.pose.pose
                 self.pose = (pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation))
                 stamp = result.final_pose.header.stamp
@@ -231,6 +249,7 @@ class FleetBridge(Node):
     def maybe_register(self):
         if (self.registered or self.pose is None or not self.level
                 or self.floor_future is not None or self.floor_error
+                or self.floor_prepared
                 or not self.client.is_connected()):
             return
         now = time.monotonic()
@@ -267,13 +286,13 @@ class FleetBridge(Node):
         if parsed is None:
             return
         cmd_id, action, steps = parsed
-        if not self.registered and action != "change_floor":
+        if not self.registered and action not in rmf.FLOOR_ACTIONS:
             self.get_logger().warning("ignoring command before register_ack")
             return
-        if action == "change_floor":
-            self.begin_floor_switch(cmd_id, steps)
+        if action in rmf.FLOOR_ACTIONS:
+            self.begin_floor_switch(cmd_id, steps, action)
             return
-        if self.floor_future is not None or self.floor_error:
+        if self.floor_future is not None or self.floor_error or self.floor_prepared:
             self.publish("command_result", rmf.command_result_payload(
                 self.robot, cmd_id, "failed",
                 "Floor switch pending or failed; retry change_floor before sending other commands"))
@@ -302,6 +321,8 @@ class FleetBridge(Node):
         status = ("moving" if active else "idle") if self.registered else "error"
         if self.floor_future is not None:
             status, cmd_id = "moving", self.floor_cmd_id
+        elif self.floor_prepared:
+            status = "moving"
         if self.floor_error:
             status = "error"
         self.publish("heartbeat", rmf.heartbeat_payload(

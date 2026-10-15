@@ -324,12 +324,12 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         self.node.get_subscriptions_info_by_topic = Mock(
             return_value=[Mock(node_name="global_localization")]
         )
-        self.input()
+        self.input(x=8)
         self.node.get_subscriptions_info_by_topic.assert_called_with("/initialpose")
         initial = self.node.initial_pose_publisher.publish.call_args.args[0]
-        self.assertEqual(initial.pose.pose.position.x, 3.0)
-        self.assertEqual(initial.pose.pose.position.y, -2.0)
-        self.assertEqual(initial.pose.pose.position.z, 0.1)
+        self.assertAlmostEqual(initial.pose.pose.position.x, 3.0 - BODY_TO_BASE[0][1])
+        self.assertAlmostEqual(initial.pose.pose.position.y, -2.0 + 8 + BODY_TO_BASE[0][0])
+        self.assertAlmostEqual(initial.pose.pose.position.z, 0.1 + BODY_TO_BASE[0][2])
         self.assertAlmostEqual(initial.pose.pose.orientation.z, math.sin(math.pi / 4))
         self.assertAlmostEqual(initial.pose.pose.orientation.w, math.cos(math.pi / 4))
 

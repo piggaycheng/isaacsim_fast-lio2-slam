@@ -9,7 +9,8 @@ import re
 import time
 
 GIMBAL_ACTIONS = ("gimbal_move", "gimbal_rotate")
-COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed", "change_floor") + GIMBAL_ACTIONS
+FLOOR_ACTIONS = ("prepare_floor_change", "change_floor")
+COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed") + FLOOR_ACTIONS + GIMBAL_ACTIONS
 RESULT_STATUS = {"succeeded": "completed", "aborted": "failed", "canceled": "canceled",
                  "rejected": "failed"}
 
@@ -162,7 +163,7 @@ def parse_command(payload, robot):
     action = command.get("action")
     if action not in COMMAND_ACTIONS:
         raise CommandError(f"unknown action {action!r}")
-    if action in ("stop", "proceed"):
+    if action in ("stop", "proceed", "prepare_floor_change"):
         return cmd_id, action, None
     if action == "change_floor":
         floor = command.get("floor_name")

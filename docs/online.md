@@ -44,14 +44,14 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 | `register` | 車 → adapter（QoS 1） | 初始位置與車體規格 |
 | `register_ack` | adapter → 車（QoS 1） | 註冊結果 |
 | `heartbeat` | 車 → adapter（QoS 0） | `x`、`y`、`yaw`、`level_name`、`battery`、`status`、`current_cmd_id` |
-| `command` | adapter → 車（QoS 1） | `navigate`、`dock`、`stop`、`task`、`change_floor`（擴充） |
+| `command` | adapter → 車（QoS 1） | `navigate`、`dock`、`stop`、`task`、`prepare_floor_change`／`change_floor`（擴充） |
 | `command_result` | 車 → adapter（QoS 1） | `completed`／`failed`／`canceled` |
 | `deregister` | 車 → adapter（QoS 1） | 正常關機 |
 | `status` | broker → adapter（LWT） | 異常斷線時的 `offline` |
 | `task_state` | 車 → adapter（QoS 1，retained） | 擴充：任務進度 |
 
 - Client ID `amr_F_NAME`，clean session，keepalive 20 s。
-- 流程：連線並取得 `odometry/global` 後送 `register`，未收到成功的 `register_ack` 每 3 秒重送（fleet adapter 比車晚啟動也能註冊上）；MQTT 重連不會重新註冊（`register` 代表新 session，adapter 會中斷進行中的任務），只在 adapter 回 `require_register` 時才重新註冊。收到 `status: success` 後才接受一般 `command`；唯一例外為 `change_floor`，可在註冊前初始化首次定位。結束時送 `deregister`。
+- 流程：連線並取得 `odometry/global` 後送 `register`，未收到成功的 `register_ack` 每 3 秒重送（fleet adapter 比車晚啟動也能註冊上）；MQTT 重連不會重新註冊（`register` 代表新 session，adapter 會中斷進行中的任務），只在 adapter 回 `require_register` 時才重新註冊。收到 `status: success` 後才接受一般 `command`；樓層指令 `prepare_floor_change`／`change_floor` 為例外，可在註冊前準備換層與初始化定位。結束時送 `deregister`。
 - 晚啟動／重啟自癒：註冊完成前也持續送 `heartbeat`（`status` 為 `error`，不是 `idle`），adapter 發現未知車輛會回 `register_ack` 的 `status: require_register`，車端收到後立即重送 `register` 並回到未註冊狀態（執行中的任務不中斷）。
 - `heartbeat`（預設 2 Hz）：`x`、`y`、`yaw`（`map` 座標，rad）、`battery`、`status`（已註冊：`moving` 任務執行中或取消中，否則 `idle`；未註冊：`error`）、`current_cmd_id`（無任務為 `null`；取消中仍為舊任務）。位置與電量為 node 屬性，`status` 與 `current_cmd_id` 每次從任務執行器現算。
 - `command`：`navigate` 與 `dock` 都轉成一個 Nav2 目標（`target.x/y/yaw`；`dock` 不做額外對位或充電動作，`speed_limit` 目前不套用）。新的 `cmd_id` 會非同步取消執行中的任務，等 Nav2 回傳舊導航的最終結果後才回報舊任務結果並開始新任務；即使取消發生在等待 Nav2 接受目標時，也會在取得 goal handle 後送出取消。取消期間不執行後續步驟，若收到更多新任務只保留最新一份，被取代的待執行任務回 `canceled`。執行中或待執行的相同 `cmd_id` 重送會被忽略；已結束的指令沒有去重紀錄。`stop` 也會清除待執行任務，確認舊導航結束後才回 `completed`，不是確認車已完全停穩。`robot_id` 與本車不同的指令會被忽略，格式錯誤的指令回 `failed`。
@@ -61,115 +61,8 @@ ffplay rtsp://HOST:8554/ceiling_cams/ceiling_cam_1
 - 可調參數（`fleet_bridge` node 參數）：`level_name`（`1F`；launch 依起始地圖資料夾設定，換樓層後自動更新）、`waypoint_name`、`default_charger`、`default_parking`、`footprint_radius`（必填；`slam_bringup/robot.launch.py` 帶入該車 global costmap 的 `robot_radius`：Nova Carter 0.81 m、Carter v1 0.71 m，與 planner、旋轉保護區同一半徑）、`max_linear_velocity`、`max_angular_velocity`（必填；`robot.launch.py` 帶入該車 `cmd_vel_safety` 的 `max_linear_speed`／`max_angular_speed`，目前兩車皆 0.75 m/s、0.5 rad/s）、`heartbeat_rate`、`battery`。
 - 容器 image 需含 `paho-mqtt` 與 `py_trees`（Dockerfile 已加入）；修改後需 `docker compose run --rm ros build`。
 
-## MQTT 換樓層與初始定位
-
-導航腳本預設載入 `maps/1F/map_2d.yaml`（由 YAML 讀取 PGM）及同目錄的 `map.pcd`。
-`--map`／`--pgm` 可改起始地圖；未指定 `--pcd` 時使用該 YAML 旁的 `map.pcd`。
-1F／B1 獨立建圖的座標不保證與 Isaac world 對齊，因此不自動套用 Office 生成位姿；
-首次啟動也可由上位系統發送 `change_floor` 到 `1F` 進行初始化。
-模擬必須持續播放並提供感測器；啟動的 TF readiness 最多等待 300 秒。
-
-上位系統**只需要 MQTT，不需要 ROS 2**。此為本專案 fleet bridge 的協定擴充，
-RMF adapter 需明確發送以下命令，不會只因 RMF 的 level 改變就自動觸發。
-`rmf_isaacsim` 的 MQTT fleet adapter 已實作：RMF 乘電梯（`--elevator-lift lift_1`，見 [Isaac 橋接](isaac_bridge.md)）
-抵達目的樓層開門後，自動以路網 `levels[].transform` 換算的電梯車廂位姿發送 `change_floor`（只帶 x/y/yaw）。
-Office 的電梯位置與 B1 transform 取自 Isaac 參考位姿，未經實車校正，可能有公分級誤差；
-Nova Carter 的 global costmap 半徑（0.81 m）可能讓 Nav2 無法規劃進車廂，尚未在 Isaac 中實測。
-使用 QoS 1、**不要 retain**：
-
-```bash
-mosquitto_pub -h localhost -q 1 \
-  -t rmf/fleet1/robot/carter1/command \
-  -m '{
-    "robot_id": "carter1",
-    "cmd_id": 301,
-    "action": "change_floor",
-    "floor_name": "B1",
-    "initial_pose": {"x": 2.1, "y": -0.8, "z": -0.526, "yaw": 1.5708}
-  }'
-```
-
-座標僅為格式範例，**不可直接當作電梯的實際位置**：
-
-- `floor_name`：地圖目錄名稱，例如 `1F`、`B1`，與 RMF level 名稱一致；只接受英數字、底線、連字號，不接受路徑。各層需有 `map_2d.yaml`、其引用的影像及 `map.pcd`。車內 `floor_manager.maps_root` 預設為起始樓層目錄的上一層（容器內 `/workspace/maps`）。
-- `initial_pose.x/y/z`：**目標樓層 PCD／PGM 共用 `map` 座標系中的 `base_link` 位置**，單位 m。`z` 是該層 PCD 中的高度，不是樓層編號，也不一定等於 Isaac world 高度。`x`、`y`、`yaw` 必填；`z` 可省略（Open-RMF 只有 2D 位姿），車端改用 fleet bridge 參數 `floor_base_z`（`robot.launch.py` 依 robot profile 算出 base_link 在各層地圖的地面高度，Nova Carter 為 -0.526）；有填則須為有限數值。
-- `initial_pose.yaw`：`base_link` 航向，單位 rad，逆時針為正。車端依 robot profile 的 IMU 安裝外參與當前 LIO 位姿，轉成 ICP 所需的 `map -> camera_init` 猜測；上位不用計算 LiDAR／IMU 外參。
-
-上位需先完成／`stop` 舊任務並等待結果，確認電梯抵達目標層且停穩後再換圖。
-若車廂內特徵不足，應先由電梯系統開啟**目標層**門，讓 LiDAR 看見地圖中的環境；
-初始位姿只是 ICP 的先驗，**不會繞過定位品質檢查**。換圖期間不得要求移動車輛或模擬傳送；
-本接口不控制電梯、樓層感測或 Isaac 車輛高度。
-
-車內流程：鎖住速度輸出 → 暫停 Nav2、取消舊目標、確認新鮮里程計顯示停車
-→ 暫停全域 pose／TF 校正 → 載入目標 PGM／PCD → 等待新 ICP 校正
-（距先驗小於 1 m、航向差小於 0.5 rad）→ 以接受的 pose 重設 Global EKF
-（保留連續的 Local EKF／LIO）→ 確認新 TF → 恢復 Nav2、清除兩張 costmap → 解鎖速度。
-成功才可繼續送該樓層的導航目標。
-
-結果由 `rmf/F/robot/NAME/command_result` 回覆，沿用同一個 `cmd_id`：
-
-```json
-{
-  "robot_id": "carter1",
-  "cmd_id": 301,
-  "status": "completed",
-  "message": "Floor B1 maps, ICP and navigation ready",
-  "level_name": "B1",
-  "final_location": {"x": 2.1, "y": -0.8, "yaw": 1.5708},
-  "timestamp": 1792036000.0
-}
-```
-
-`heartbeat.level_name` 同步反映樓層；切換中 `status: moving`、`current_cmd_id` 為換層指令，
-發生部分換圖時暫不回報已知樓層（結果的 `level_name` 為空字串、heartbeat 省略此欄位）。
-失敗回 `failed`，不會宣告已完成；若已開始切換，速度鎖保持停止、Nav2 保持暫停。
-修正問題後用**新的 `cmd_id`** 重送 `change_floor`，也可以切回原樓層；不是自動 rollback。
-切換中或失敗後其他 MQTT 命令（含 `stop`）回 `failed`，不會打斷換圖或解鎖速度；
-緊急停止仍是獨立、不可被此接口解除的車內安全鎖。
-單純的參數／檔案預檢失敗不改動原有地圖或車內安全鎖，但 fleet bridge 仍要求成功重試才接受其他命令。
-執行中的相同 `cmd_id` 不重複執行，最近 64 筆換層結果會重送快取；重啟車端後不保留快取。
-車內操作總 timeout 預設 60 秒；bridge 等待 90 秒後回 `failed` 並保持阻擋命令，
-繼續追蹤未完成的車內請求，收到延遲結果也不改寫該指令已回報的失敗結果。
-不要在結果未確認時繼續派送導航。
-
-此功能只在完整 3D 融合導航（`navigate:=true`）啟動；2D AMCL、純定位展示及 costmap filter editor
-尚不支援動態樓層切換（editor 啟用時接口明確拒絕）。ROS 2 的
-`/NAME/navigation/change_floor` service 僅供車內 fleet bridge 協調，不是上位系統的接口。
-每車 namespace／TF 隔離維持不變。
-
-### 省略 `initial_pose`：RViz 手動重新定位
-
-`change_floor` 不帶 `initial_pose`（或為 `null`）時，車端照常停車、載入目標層 PGM（RViz 立即顯示新地圖），
-接著等待操作者在 RViz 按 **2D Pose Estimate**（最多 `manual_pose_timeout` 300 秒），
-再以該位姿（`z` 為 0 時改用 `floor_base_z`）載入 PCD、等待 ICP 並恢復 Nav2。
-開始載入地圖前的 RViz 位姿會被忽略；bridge 的結果 timeout 相應延長為 90 + 300 秒。
-ICP 確認期間不要再按 2D Pose Estimate（會以未換算里程計的先驗重設定位）；
-若失敗，用新的 `cmd_id` 重送。
-
-### 不經 Open-RMF：`run_nav.sh` 手動測試
-
-`./scripts/run_nav.sh --mqtt-host localhost [--mqtt-port 1883]` 另啟動
-`floor_command_bridge.py`，只接受 `rmf/manual/robot/carter/command` 上的 `change_floor`
-（其他 action 回 `failed`，不送 register／heartbeat），結果回到 `.../command_result`：
-
-1. 啟動後在 RViz 以 2D Pose Estimate 設定 1F 位姿，以 Nav2 目標或手動把車開進電梯。
-2. Isaac Sim 視窗按 **E** 關門、**L** 換層到 B1、停妥後按 **E** 開門。
-3. 車輛靜止後發送：
-
-   ```bash
-   mosquitto_sub -h localhost -t rmf/manual/robot/carter/command_result &
-   mosquitto_pub -h localhost -q 1 -t rmf/manual/robot/carter/command \
-     -m '{"robot_id":"carter","cmd_id":1,"action":"change_floor","floor_name":"B1"}'
-   ```
-
-4. RViz 顯示 B1 地圖後，按一次 **2D Pose Estimate** 點選車在 B1 地圖上的位置與朝向。
-5. 收到 `"status": "completed"` 後即可在 RViz 下 B1 導航目標。每次換層使用新的 `cmd_id`。
-
-RViz 左側的 **Floor** 面板可取代第 3 步：選擇（或輸入）樓層後按 **Switch floor (MQTT)**，
-面板發布 `navigation/floor_request`，`floor_command_bridge` 以時間戳為 `cmd_id`
-把同樣的 `change_floor` 發到 broker，再由自己訂閱收下執行，因此仍走完整 MQTT 路徑。
-面板顯示目前樓層及 `navigation/floor_command_status`（送出、等待 2D Pose Estimate、完成／失敗）；
-未加 `--mqtt-host` 時按鈕會提示 bridge 未啟動。樓層清單存於 RViz 設定的 `Floors`。
+換圖操作、MQTT `prepare_floor_change`／`change_floor` 格式、RViz 面板與實作流程統一見
+[導航地圖切換](nav_change_map.md)。
 
 ## 擴充：多步任務
 

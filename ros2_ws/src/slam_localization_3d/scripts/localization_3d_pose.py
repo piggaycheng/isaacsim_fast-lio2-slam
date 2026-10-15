@@ -179,7 +179,11 @@ class LocalizationVisualization(Node):
             initial_pose = PoseWithCovarianceStamped()
             initial_pose.header = message.header
             initial_pose.header.frame_id = "map"
-            initial_pose.pose.pose.orientation.w = 1.0
+            position, quaternion = compose_pose(pose_values(message.pose.pose), self.body_to_base)
+            (initial_pose.pose.pose.position.x, initial_pose.pose.pose.position.y,
+             initial_pose.pose.pose.position.z) = position
+            (initial_pose.pose.pose.orientation.x, initial_pose.pose.pose.orientation.y,
+             initial_pose.pose.pose.orientation.z, initial_pose.pose.pose.orientation.w) = quaternion
             self.initial_pose_received = True
             self.initial_pose_publisher.publish(initial_pose)
             self.get_logger().info("Sent Office origin initial pose to 3D localizer")

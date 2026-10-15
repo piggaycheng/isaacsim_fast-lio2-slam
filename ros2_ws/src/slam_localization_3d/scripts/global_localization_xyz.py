@@ -19,6 +19,7 @@ from geometry_msgs.msg import Point, Pose, Quaternion
 from nav_msgs.msg import Odometry
 from tf_transformations import quaternion_from_matrix
 from slam_localization_3d.srv import LoadLocalizationMap
+from std_srvs.srv import SetBool
 
 from floor_maps import validate_initial_pose
 from localization_3d_pose import imu_mount_parameter
@@ -66,9 +67,22 @@ class XYZGlobalLocalization(upstream_localization_class()):
         self.registration_covariance = None
         self.scan_stamp = None
         self.body_to_base = imu_mount_parameter(self)
+        self.pending_initial_pose = None
+        self.registration_hold = False
         self.create_service(
             LoadLocalizationMap, "localization_3d/load_map", self.load_localization_map
         )
+        self.create_service(
+            SetBool, "localization_3d/set_registration_hold", self.on_registration_hold)
+
+    def on_registration_hold(self, request, response):
+        self.registration_hold = request.data
+        self.pending_initial_pose = None
+        self.registration_covariance = None
+        response.success = True
+        response.message = "Global ICP paused" if request.data else "Global ICP enabled"
+        self.get_logger().info(response.message)
+        return response
 
     def load_localization_map(self, request, response):
         try:
@@ -89,17 +103,7 @@ class XYZGlobalLocalization(upstream_localization_class()):
                 raise ValueError(f"PCD map is empty or non-finite: {path}")
             cloud = self.voxel_down_sample(cloud, self.get_parameter("map_voxel_size").value)
             # RMF supplies map -> base_link; ICP expects map -> camera_init.
-            mount = np.eye(4)
-            mount[:3, :3] = self.pose_to_mat(Pose(orientation=Quaternion(
-                x=self.body_to_base[1][0], y=self.body_to_base[1][1],
-                z=self.body_to_base[1][2], w=self.body_to_base[1][3],
-            )))[:3, :3]
-            mount[:3, 3] = self.body_to_base[0]
-            seed = (
-                self.pose_to_mat(request.initial_pose.pose.pose)
-                @ self.inverse_se3(mount)
-                @ self.inverse_se3(self.pose_to_mat(self.cur_odom.pose.pose))
-            )
+            seed = self.base_pose_seed(request.initial_pose.pose.pose)
         except (ValueError, OSError, RuntimeError) as error:
             self.get_logger().error(f"PCD map switch rejected: {error}")
             response.success = False
@@ -108,6 +112,7 @@ class XYZGlobalLocalization(upstream_localization_class()):
         self.global_map = cloud
         self.T_map_to_odom = seed
         self.registration_covariance = None
+        self.pending_initial_pose = None
         self.cur_scan = None
         self.initialized = True
         response.success = True
@@ -116,6 +121,8 @@ class XYZGlobalLocalization(upstream_localization_class()):
         return response
 
     def global_localization(self, pose_estimation):
+        if self.registration_hold:
+            return
         # Same two ICP calls and threshold as upstream; the fine stage is inlined
         # so its downsampled clouds can also produce the information matrix.
         scan = copy.copy(self.cur_scan)
@@ -146,12 +153,47 @@ class XYZGlobalLocalization(upstream_localization_class()):
         self.T_map_to_odom = result.transformation
         self.publish_odom(result.transformation)
 
+    def base_pose_seed(self, pose):
+        mount = np.eye(4)
+        mount[:3, :3] = self.pose_to_mat(Pose(orientation=Quaternion(
+            x=self.body_to_base[1][0], y=self.body_to_base[1][1],
+            z=self.body_to_base[1][2], w=self.body_to_base[1][3],
+        )))[:3, :3]
+        mount[:3, 3] = self.body_to_base[0]
+        return (
+            self.pose_to_mat(pose) @ self.inverse_se3(mount)
+            @ self.inverse_se3(self.pose_to_mat(self.cur_odom.pose.pose))
+        )
+
     def cb_initialize_pose(self, msg):
-        # Upstream tries the guess once and otherwise retries from identity, so a
-        # robot away from the map origin (or a guess sent before a usable scan)
-        # never localizes. Keep the guess as the retry seed until ICP accepts.
-        self.T_map_to_odom = self.pose_to_mat(msg.pose.pose)
-        super().cb_initialize_pose(msg)
+        if self.registration_hold:
+            self.get_logger().info("Global ICP held; initialpose is handled by floor manager")
+            return
+        try:
+            validate_initial_pose(msg)
+        except ValueError as error:
+            self.get_logger().warning(f"Initial pose rejected: {error}")
+            return
+        if self.cur_odom is None:
+            self.pending_initial_pose = copy.deepcopy(msg)
+            self.get_logger().info("Initial pose received; waiting for LIO odometry")
+            return
+        pose = copy.deepcopy(msg.pose.pose)
+        # A 2D RViz click supplies z=0; floor maps are recorded at the initial IMU height.
+        if pose.position.z == 0.0:
+            pose.position.z = self.body_to_base[0][2]
+        self.T_map_to_odom = self.base_pose_seed(pose)
+        self.pending_initial_pose = None
+        self.registration_covariance = None
+        self.initialized = True
+        self.get_logger().info("Initial base_link pose received and converted to LIO map seed")
+        if self.cur_scan is not None:
+            self.global_localization(self.T_map_to_odom)
+
+    def cb_save_cur_odom(self, msg):
+        super().cb_save_cur_odom(msg)
+        if self.pending_initial_pose is not None:
+            self.cb_initialize_pose(self.pending_initial_pose)
 
     def publish_odom(self, transform):
         message = Odometry()

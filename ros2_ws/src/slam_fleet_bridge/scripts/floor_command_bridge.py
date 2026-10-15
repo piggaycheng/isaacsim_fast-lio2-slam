@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""MQTT change_floor for a single robot without Open-RMF (e.g. scripts/run_nav.sh).
+"""MQTT floor preparation and switching without Open-RMF (e.g. scripts/run_nav.sh).
 
 Listens on rmf/<fleet_name>/robot/<robot_name>/command for the same change_floor payload
-as fleet_bridge_node and answers on .../command_result. Other actions are rejected; no
+as fleet_bridge_node, accepts prepare_floor_change, and answers on .../command_result.
+Other actions are rejected; no
 register or heartbeat is sent. Omitting initial_pose shows the floor's map and waits for
 an RViz 2D Pose Estimate. The RViz Floor panel publishes navigation/floor_request, which is
 sent to the broker as such a command, and follows navigation/floor_command_status.
@@ -19,7 +20,7 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from slam_localization_3d.srv import ChangeFloor
+from slam_localization_3d.srv import ChangeFloor, PrepareFloorChange
 from std_msgs.msg import String
 
 import rmf_protocol as rmf
@@ -55,6 +56,11 @@ class FloorCommandBridge(Node):
         self.status_pub = self.create_publisher(String, "navigation/floor_command_status", latched)
         self.create_subscription(String, "navigation/floor_request", self.on_floor_request, 1)
         self.floor_client = self.create_client(ChangeFloor, "navigation/change_floor")
+        self.prepare_client = self.create_client(
+            PrepareFloorChange, "navigation/prepare_floor_change")
+        self.create_subscription(
+            String, "navigation/floor_prepare_request",
+            lambda message: self.send_panel_command("prepare_floor_change"), 1)
         self.create_subscription(
             String, "navigation/current_floor", lambda message: setattr(self, "level", message.data),
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
@@ -83,16 +89,17 @@ class FloorCommandBridge(Node):
         self.status_pub.publish(String(data=text))
 
     def on_floor_request(self, message):
-        floor = message.data.strip()
+        self.send_panel_command("change_floor", floor_name=message.data.strip())
+
+    def send_panel_command(self, action, **data):
         if not self.client.is_connected():
-            self.status(f"{floor}: MQTT broker is not connected")
+            self.status(f"{action}: MQTT broker is not connected")
             return
         self.next_cmd_id = max(self.next_cmd_id + 1, int(time.time() * 1000))
         self.client.publish(self.topic["command"], json.dumps({
-            "robot_id": self.robot, "cmd_id": self.next_cmd_id, "action": "change_floor",
-            "floor_name": floor,
+            "robot_id": self.robot, "cmd_id": self.next_cmd_id, "action": action, **data,
         }), qos=1)
-        self.status(f"Sent change_floor {floor} (cmd {self.next_cmd_id}) via MQTT")
+        self.status(f"Sent {action} {data.get('floor_name', '')} (cmd {self.next_cmd_id}) via MQTT")
 
     def result(self, cmd_id, status, message, cache=True):
         payload = rmf.command_result_payload(self.robot, cmd_id, status, message, level=self.level)
@@ -101,7 +108,7 @@ class FloorCommandBridge(Node):
             while len(self.results) > 64:
                 self.results.popitem(last=False)
         self.client.publish(self.topic["command_result"], payload, qos=1)
-        self.get_logger().info(f"change_floor {cmd_id} {status}: {message}")
+        self.get_logger().info(f"floor command {cmd_id} {status}: {message}")
         self.status(f"cmd {cmd_id} {status}: {message}")
 
     def on_command(self, payload):
@@ -116,8 +123,8 @@ class FloorCommandBridge(Node):
         if parsed is None:
             return
         cmd_id, action, data = parsed
-        if action != "change_floor":
-            self.result(cmd_id, "failed", "Only change_floor is supported without Open-RMF",
+        if action not in rmf.FLOOR_ACTIONS:
+            self.result(cmd_id, "failed", "Only prepare_floor_change and change_floor are supported",
                         cache=False)
             return
         if cmd_id in self.results:
@@ -127,24 +134,29 @@ class FloorCommandBridge(Node):
             if cmd_id != self.cmd_id:
                 self.result(cmd_id, "failed", "Another floor switch is in progress")
             return
-        if not self.floor_client.service_is_ready():
+        client = self.prepare_client if action == "prepare_floor_change" else self.floor_client
+        if not client.service_is_ready():
             self.result(cmd_id, "failed", "Robot floor manager is unavailable", cache=False)
             return
-        request = rmf.fill_change_floor_request(
-            ChangeFloor.Request(), data, self.floor_base_z, self.get_clock().now().to_msg())
+        manual = action == "change_floor" and data["initial_pose"] is None
+        request = (
+            PrepareFloorChange.Request() if action == "prepare_floor_change" else
+            rmf.fill_change_floor_request(
+                ChangeFloor.Request(), data, self.floor_base_z, self.get_clock().now().to_msg()))
         self.cmd_id = cmd_id
         self.started = time.monotonic()
-        self.deadline = self.timeout + (
-            self.manual_pose_timeout if request.manual_initial_pose else 0.0)
+        self.deadline = self.timeout + (self.manual_pose_timeout if manual else 0.0)
         self.overdue = False
-        self.future = self.floor_client.call_async(request)
-        self.status(
-            f"Switching to {request.floor_name} (cmd {cmd_id}); when the map appears, "
-            "click 2D Pose Estimate" if request.manual_initial_pose
-            else f"Switching to {request.floor_name} (cmd {cmd_id})")
+        self.future = client.call_async(request)
+        if action == "prepare_floor_change":
+            message = "Preparing for elevator travel; wait for completed before moving the elevator"
+        else:
+            message = f"Switching to {request.floor_name}"
+            if manual:
+                message += "; when the map appears, click 2D Pose Estimate"
+        self.status(f"cmd {cmd_id}: {message}")
         self.get_logger().info(
-            f"MQTT floor switch {cmd_id}: {request.floor_name}"
-            + (" (set the pose with RViz 2D Pose Estimate)" if request.manual_initial_pose else ""))
+            f"MQTT {action} {cmd_id}: {message}")
 
     def poll(self):
         future = self.future

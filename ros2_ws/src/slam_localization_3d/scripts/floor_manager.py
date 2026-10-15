@@ -21,7 +21,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.task import Future
 from rclpy.time import Time
 from robot_localization.srv import SetPose
-from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap
+from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap, PrepareFloorChange
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -57,6 +57,7 @@ class FloorManager(Node):
             raise ValueError("floor_base_z must be finite")
         self.manual_pose = None
         self.busy = False
+        self.transition_state = "idle"
         self.filter_editor_active = self.declare_parameter("filter_editor_active", False).value
         self.pose = None
         self.global_odom = None
@@ -70,6 +71,11 @@ class FloorManager(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self.publish_floor()
+        self.state_publisher = self.create_publisher(
+            String, "navigation/floor_transition_state",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self.set_transition_state("idle")
         self.create_subscription(
             PoseWithCovarianceStamped, "localization_3d/global_pose", self.on_pose, 10
         )
@@ -81,6 +87,7 @@ class FloorManager(Node):
             "safety": self.create_client(SetBool, "navigation/set_map_switch_hold"),
             "adapter": self.create_client(SetBool, "localization_3d/set_map_switch_hold"),
             "tf": self.create_client(SetBool, "global_tf_gate/set_map_switch_hold"),
+            "icp": self.create_client(SetBool, "localization_3d/set_registration_hold"),
             "nav": self.create_client(
                 ManageLifecycleNodes, "lifecycle_manager_navigation/manage_nodes"
             ),
@@ -103,6 +110,10 @@ class FloorManager(Node):
             ChangeFloor, "navigation/change_floor", self.change_floor,
             callback_group=ReentrantCallbackGroup(),
         )
+        self.create_service(
+            PrepareFloorChange, "navigation/prepare_floor_change", self.prepare_floor_change,
+            callback_group=ReentrantCallbackGroup(),
+        )
         self.create_timer(0.2, self.observe_navigation, clock=self.steady_clock)
 
     def observe_navigation(self):
@@ -110,6 +121,10 @@ class FloorManager(Node):
 
     def publish_floor(self):
         self.floor_publisher.publish(String(data=self.current_floor))
+
+    def set_transition_state(self, state):
+        self.transition_state = state
+        self.state_publisher.publish(String(data=state))
 
     def on_pose(self, message):
         if message.header.frame_id == "map" and valid_pose(message.pose.pose):
@@ -189,6 +204,78 @@ class FloorManager(Node):
         elif state.current_state.id != State.PRIMARY_STATE_INACTIVE:
             raise FloorSwitchError("Nav2 is neither active nor paused")
 
+    async def stop_for_floor_change(self, deadline):
+        await self.hold("safety", True, deadline)
+        await self.hold("adapter", True, deadline)
+        await self.hold("tf", True, deadline)
+        await self.hold("icp", True, deadline)
+        stopped_after = self.get_clock().now().nanoseconds * 1e-9
+        navigation_ready = self.service_clients["nav"].service_is_ready()
+        if not navigation_ready and self.navigation_seen:
+            raise FloorSwitchError("Previously available navigation manager disappeared")
+        if navigation_ready:
+            state = await self.call("nav_state", GetState.Request(), deadline)
+            if state.current_state.id == State.PRIMARY_STATE_UNCONFIGURED:
+                navigation_ready = False
+            else:
+                if state.current_state.id == State.PRIMARY_STATE_ACTIVE:
+                    for name in ("navigate_to_pose", "navigate_through_poses"):
+                        result = await self.call(name, CancelGoal.Request(), deadline)
+                        if result.return_code != CancelGoal.Response.ERROR_NONE:
+                            raise FloorSwitchError(f"{name} cancellation failed: {result.return_code}")
+                await self.pause_navigation(deadline)
+        await self.wait_until(
+            lambda: self.stopped(stopped_after), deadline, "fresh stationary odometry")
+        return navigation_ready
+
+    async def hold_after_failure(self, response):
+        self.set_transition_state("failed")
+        # An adapter may already have been released for target-map confirmation.
+        stopped = False
+        for name in ("safety", "adapter", "tf", "icp"):
+            try:
+                await self.hold(name, True, time.monotonic() + self.service_timeout)
+                if name == "safety":
+                    stopped = True
+            except (FloorSwitchError, RuntimeError) as error:
+                response.message += f"; could not hold {name}: {error}"
+                self.get_logger().error(response.message)
+        try:
+            await self.pause_navigation(time.monotonic() + self.service_timeout * 2)
+            response.message += "; robot held stopped, Nav2 paused" if stopped else "; Nav2 paused"
+        except (FloorSwitchError, RuntimeError) as error:
+            response.message += f"; could not confirm Nav2 pause: {error}"
+            self.get_logger().error(response.message)
+
+    async def prepare_floor_change(self, request, response):
+        response.current_floor = self.current_floor
+        if self.busy or self.filter_editor_active:
+            response.message = (
+                "A floor switch is already in progress" if self.busy else
+                "Floor switching requires restarting without the costmap filter editor")
+            self.get_logger().warning(response.message)
+            return response
+        self.busy = True
+        self.set_transition_state("preparing")
+        try:
+            await self.stop_for_floor_change(time.monotonic() + self.timeout)
+            self.current_floor = ""
+            self.publish_floor()
+            self.set_transition_state("prepared")
+            response.success = True
+            response.message = (
+                "Prepared for elevator travel: robot stopped, Nav2 and global ICP held; "
+                "use change_floor after arrival to relocalize and resume")
+            self.get_logger().info(response.message)
+        except (FloorSwitchError, RuntimeError) as error:
+            response.message = f"Floor preparation failed: {error}"
+            self.get_logger().error(response.message)
+            await self.hold_after_failure(response)
+        finally:
+            response.current_floor = self.current_floor
+            self.busy = False
+        return response
+
     def stopped(self, after):
         message = self.local_odom
         if (
@@ -220,6 +307,29 @@ class FloorManager(Node):
             math.hypot(first.position.x - second.position.x,
                        first.position.y - second.position.y) < 1.0
             and abs(math.atan2(math.sin(turn), math.cos(turn))) < 0.5
+        )
+
+    def localization_details(self, after, target):
+        expected = target.pose.pose
+        details = (
+            f"target x={expected.position.x:.3f}, y={expected.position.y:.3f}, "
+            f"yaw={yaw_of(expected.orientation):.3f} rad"
+        )
+        if self.pose is None:
+            return details + "; no accepted global pose received since PCD load"
+        actual = self.pose.pose.pose
+        distance = math.hypot(
+            actual.position.x - expected.position.x, actual.position.y - expected.position.y)
+        turn = abs(math.remainder(
+            yaw_of(actual.orientation) - yaw_of(expected.orientation), math.tau))
+        stamp = seconds(self.pose.header.stamp)
+        age = self.get_clock().now().nanoseconds * 1e-9 - stamp
+        return (
+            details + f"; latest pose x={actual.position.x:.3f}, y={actual.position.y:.3f}, "
+            f"yaw={yaw_of(actual.orientation):.3f} rad; "
+            f"distance={distance:.3f} m (required <1.0), "
+            f"yaw_error={turn:.3f} rad (required <0.5); "
+            f"age={age:.3f} s (required >=0 and <1.0), newer_than_load={stamp > after}"
         )
 
     def tf_ready(self, after):
@@ -277,30 +387,10 @@ class FloorManager(Node):
             self.get_logger().error(f"Floor switch rejected: {error}")
             return response
         self.busy = True
+        self.set_transition_state("switching")
         deadline = time.monotonic() + self.timeout
         try:
-            await self.hold("safety", True, deadline)
-            stopped_after = self.get_clock().now().nanoseconds * 1e-9
-            navigation_ready = self.service_clients["nav"].service_is_ready()
-            if not navigation_ready and self.navigation_seen:
-                raise FloorSwitchError("Previously available navigation manager disappeared")
-            if navigation_ready:
-                state = await self.call("nav_state", GetState.Request(), deadline)
-                if state.current_state.id == State.PRIMARY_STATE_UNCONFIGURED:
-                    navigation_ready = False
-                else:
-                    if state.current_state.id == State.PRIMARY_STATE_ACTIVE:
-                        for name in ("navigate_to_pose", "navigate_through_poses"):
-                            result = await self.call(name, CancelGoal.Request(), deadline)
-                            if result.return_code != CancelGoal.Response.ERROR_NONE:
-                                raise FloorSwitchError(
-                                    f"{name} cancellation failed: {result.return_code}")
-                    await self.pause_navigation(deadline)
-            await self.wait_until(
-                lambda: self.stopped(stopped_after), deadline, "fresh stationary odometry"
-            )
-            await self.hold("adapter", True, deadline)
-            await self.hold("tf", True, deadline)
+            navigation_ready = await self.stop_for_floor_change(deadline)
             # From here a failure may leave a partially changed map pair.
             self.current_floor = ""
             self.publish_floor()
@@ -326,22 +416,28 @@ class FloorManager(Node):
                 await self.wait_until(
                     received, shown + self.manual_pose_timeout, "RViz 2D Pose Estimate")
                 initial_pose = manual[0]
-                # The 3D localizer also reacts to /initialpose with an odom-unaware
-                # seed; let that finish before load_map installs the proper seed.
-                settle = time.monotonic() + 1.0
-                deadline = settle + self.timeout
-                await self.wait_until(
-                    lambda: time.monotonic() >= settle, deadline, "initial pose settle")
+                deadline = time.monotonic() + self.timeout
+            target_pose = initial_pose.pose.pose
+            self.get_logger().info(
+                f"Floor {request.floor_name} localization target: "
+                f"x={target_pose.position.x:.3f}, y={target_pose.position.y:.3f}, "
+                f"z={target_pose.position.z:.3f}, yaw={yaw_of(target_pose.orientation):.3f} rad")
             await self.call("pcd", LoadLocalizationMap.Request(
                 pcd_path=pcd, initial_pose=initial_pose,
             ), deadline)
             self.pose = None
             await self.hold("adapter", False, deadline)
             localization_after = self.get_clock().now().nanoseconds * 1e-9
-            await self.wait_until(
-                lambda: self.localized(localization_after, initial_pose),
-                deadline, "accepted target-floor ICP pose near initial_pose",
-            )
+            await self.hold("icp", False, deadline)
+            try:
+                await self.wait_until(
+                    lambda: self.localized(localization_after, initial_pose),
+                    deadline, "accepted target-floor ICP pose near initial_pose",
+                )
+            except FloorSwitchError as error:
+                raise FloorSwitchError(
+                    f"{error}; {self.localization_details(localization_after, initial_pose)}"
+                ) from error
             reset = copy.deepcopy(self.pose)
             reset.header.stamp = self.get_clock().now().to_msg()
             await self.call("ekf", SetPose.Request(pose=reset), deadline)
@@ -378,6 +474,7 @@ class FloorManager(Node):
             await self.hold("safety", False, deadline)
             self.current_floor = request.floor_name
             self.publish_floor()
+            self.set_transition_state("idle")
             response.success = True
             response.final_pose.header = self.global_odom.header
             response.final_pose.pose = self.global_odom.pose
@@ -386,14 +483,7 @@ class FloorManager(Node):
         except (FloorSwitchError, RuntimeError) as error:
             response.message = f"Floor switch failed: {error}"
             self.get_logger().error(response.message)
-            try:
-                recovery_deadline = time.monotonic() + self.service_timeout * 2
-                await self.hold("safety", True, recovery_deadline)
-                await self.pause_navigation(recovery_deadline)
-                response.message += "; robot held stopped, Nav2 paused"
-            except (FloorSwitchError, RuntimeError) as recovery_error:
-                response.message += f"; could not confirm stop/pause: {recovery_error}"
-                self.get_logger().error(response.message)
+            await self.hold_after_failure(response)
         finally:
             response.current_floor = self.current_floor
             self.busy = False

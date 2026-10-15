@@ -235,6 +235,12 @@ class GlobalPoseAdapter(Node):
             initial.pose.pose.position.z = z
             initial.pose.pose.orientation.z = math.sin(yaw / 2)
             initial.pose.pose.orientation.w = math.cos(yaw / 2)
+            # Spawn parameters describe map->camera_init; /initialpose describes map->base_link.
+            position, quaternion = base_pose(initial.pose.pose, message.pose.pose, self.body_to_base)
+            (initial.pose.pose.position.x, initial.pose.pose.position.y,
+             initial.pose.pose.position.z) = position
+            (initial.pose.pose.orientation.x, initial.pose.pose.orientation.y,
+             initial.pose.pose.orientation.z, initial.pose.pose.orientation.w) = quaternion
             self.initial_pose_received = True
             self.initial_pose_publisher.publish(initial)
             self.get_logger().info(
