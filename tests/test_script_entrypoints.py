@@ -79,19 +79,31 @@ class ScriptEntrypointsTest(unittest.TestCase):
                   "map_pcd:=/workspace/maps/1F/map.pcd",
                   "map_pgm:=/workspace/maps/1F/map_2d.yaml",
                   "rviz:=false", "SIMULATOR", "--headless")),
+                ("run_3d_localization.sh",
+                 ("--dynamic-elevator-doors", "--elevator-door-mode", "manual"),
+                 ("SIMULATOR", "--dynamic-elevator-doors --elevator-door-mode manual")),
+                ("run_3d_localization.sh", ("--headless", "--dynamic-elevator-doors"),
+                 ("SIMULATOR", "--headless",
+                  "--dynamic-elevator-doors --elevator-door-mode cycle")),
+                ("run_nav.sh", ("--mode", "2d"),
+                 ("ROOT", "localization_2d.launch.py", "SIMULATOR")),
                 ("run_nav.sh", ("--mode", "2d", "--headless", "--no-rviz"),
                  ("ROOT", "localization_2d.launch.py", "SIMULATOR", "--headless")),
                 ("run_nav.sh", (),
                  ("ROOT", "global_fusion.launch.py", "costmaps:=true",
                   "navigate:=true", "rviz:=true", "SIMULATOR",
-                  "--ros-cmd-vel")),
+                  "--ros-cmd-vel", "--dynamic-elevator-doors --elevator-door-mode manual")),
+                ("run_nav.sh", ("--mode", "3d", "--no-rviz"),
+                 ("global_fusion.launch.py", "rviz:=false", "--ros-cmd-vel",
+                  "--dynamic-elevator-doors --elevator-door-mode manual")),
                 ("run_nav.sh", ("--mode", "3d", "--headless", "--no-rviz"),
                  ("ROOT", "global_fusion.launch.py", "costmaps:=true",
                   "navigate:=true", "rviz:=false", "SIMULATOR", "--headless",
                   "--ros-cmd-vel")),
                 ("run_nav.sh", ("--navigate", "--manual-initial-pose"),
                  ("global_fusion.launch.py", "navigate:=true",
-                  "auto_initial_pose:=false", "--ros-cmd-vel")),
+                  "auto_initial_pose:=false", "--ros-cmd-vel",
+                  "--dynamic-elevator-doors --elevator-door-mode manual")),
                 ("run_multi_nav.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "launch slam_bringup robot.launch.py",
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
@@ -110,6 +122,12 @@ class ScriptEntrypointsTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     for text in expected:
                         self.assertIn(text, result.stdout)
+                    if (name == "run_nav.sh" and
+                            ("--headless" in args or "--mode 2d" in " ".join(args))):
+                        self.assertNotIn("--dynamic-elevator-doors", result.stdout)
+                        self.assertNotIn("--elevator-door-mode", result.stdout)
+                    if name == "run_3d_localization.sh" and "--dynamic-elevator-doors" not in args:
+                        self.assertNotIn("--dynamic-elevator-doors", result.stdout)
                     if "ROOT" in expected:
                         self.assertIn(f"ROOT {root}\n", result.stdout)
                     if name in ("run_nav.sh", "run_3d_localization.sh", "run_multi_nav.sh"):

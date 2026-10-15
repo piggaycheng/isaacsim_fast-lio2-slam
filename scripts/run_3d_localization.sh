@@ -6,6 +6,8 @@ source "$project_dir/docker/ros_compose.sh"
 map_pcd=""
 map_pgm="$project_dir/maps/1F/map_2d.yaml"
 headless=false
+dynamic_elevator_doors=false
+elevator_door_mode=cycle
 rviz=true
 auto_jog=false
 auto_initial_pose=true
@@ -32,6 +34,11 @@ Options:
       --pcd FILE      PCD map used by 3D ICP (default: map.pcd beside the map YAML).
       --pgm FILE      Nav2 YAML for the RViz PGM map (default: maps/1F/map_2d.yaml).
       --headless      Run Isaac Sim without its GUI.
+      --dynamic-elevator-doors
+                      Enable Office elevator doors and moving cabins.
+      --elevator-door-mode MODE
+                      cycle (default) or manual (E doors, L floors; requires
+                      --dynamic-elevator-doors and a GUI for manual mode).
       --auto-jog      Move Carter automatically instead of using W/S/A/D.
       --manual-initial-pose
                       Wait for RViz's 2D Pose Estimate instead of using the
@@ -78,6 +85,15 @@ while (($# > 0)); do
       shift 2
       ;;
     --headless) headless=true; shift ;;
+    --dynamic-elevator-doors) dynamic_elevator_doors=true; shift ;;
+    --elevator-door-mode)
+      if (($# < 2)) || [[ "$2" != cycle && "$2" != manual ]]; then
+        echo "--elevator-door-mode requires cycle or manual" >&2
+        exit 2
+      fi
+      elevator_door_mode="$2"
+      shift 2
+      ;;
     --filter-editor) filter_editor=true; shift ;;
     --filter-state)
       if (($# < 2)) || [[ -z "$2" ]]; then
@@ -117,6 +133,16 @@ while (($# > 0)); do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$elevator_door_mode" == manual ]]; then
+  if [[ "$dynamic_elevator_doors" != true ]]; then
+    echo "--elevator-door-mode manual requires --dynamic-elevator-doors" >&2
+    exit 2
+  fi
+  if [[ "$headless" == true ]]; then
+    echo "Manual elevator doors require the GUI; use cycle mode with --headless" >&2
+    exit 2
+  fi
+fi
 if [[ "$filter_editor" == true &&
       ( "$global_fusion" != true || "$costmaps" != true ) ]]; then
   echo "Costmap filters require --global-fusion and --costmaps or --navigate" >&2
@@ -194,6 +220,9 @@ fi
 start_ros launch slam_localization_3d "$launch_file" "${launch_args[@]}"
 
 isaac_args=(--lidar-motion-compensation noncompensated)
+if [[ "$dynamic_elevator_doors" == true ]]; then
+  isaac_args+=(--dynamic-elevator-doors --elevator-door-mode "$elevator_door_mode")
+fi
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then isaac_args+=(--auto-jog); fi
 if [[ "$navigate" == true || "$ros_cmd_vel" == true ]]; then isaac_args+=(--ros-cmd-vel); fi

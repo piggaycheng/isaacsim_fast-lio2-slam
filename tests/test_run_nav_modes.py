@@ -132,6 +132,24 @@ class TestRunNavModes(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("Costmap filters require", result.stderr)
 
+    def test_direct_3d_rejects_invalid_elevator_options_before_startup(self):
+        cases = (
+            (("--elevator-door-mode",), "requires cycle or manual"),
+            (("--elevator-door-mode", ""), "requires cycle or manual"),
+            (("--elevator-door-mode", "other"), "requires cycle or manual"),
+            (("--elevator-door-mode", "manual"), "requires --dynamic-elevator-doors"),
+            (("--headless", "--dynamic-elevator-doors", "--elevator-door-mode", "manual"),
+             "Manual elevator doors require the GUI"),
+        )
+        for args, error in cases:
+            with self.subTest(args=args):
+                result = subprocess.run(
+                    [str(RUN_NAV.with_name("run_3d_localization.sh")), *args],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(error, result.stderr)
+
     def test_state_requires_editor(self):
         result = launch("--mode", "3d", "--filter-state", "zones.json")
         self.assertEqual(result.returncode, 2)

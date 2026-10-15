@@ -22,6 +22,7 @@ Usage: ./scripts/run_nav.sh [--mode {2d|3d}] [OPTIONS]
 
 Launch Isaac Sim with 3D localization and Nav2 navigation by default.
 Navigation waits for a valid localization and an RViz goal; no automatic goal.
+3D GUI mode enables manual Office elevators: E opens/closes doors, L changes floors.
 
 Options:
       --mode MODE      3d (default: PCD fusion and Nav2), or 2d (AMCL only).
@@ -35,7 +36,7 @@ Options:
       --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
       --filter-state FILE
                        Persistent editor JSON (default: maps/costmap_filters/editor.json).
-      --headless       Run Isaac Sim without its GUI.
+      --headless       Run Isaac Sim without its GUI or manual elevator controls.
       --auto-jog       2d only: drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
       --box X,Y[,SX,SY,SZ]
@@ -129,6 +130,9 @@ if [[ "$mode" == 2d ]]; then
     exit 2
   fi
   exec "$project_dir/scripts/run_2d_localization.sh" --map "$map_file" "${args[@]}"
+fi
+if [[ "$headless" == false ]]; then
+  args+=(--dynamic-elevator-doors --elevator-door-mode manual)
 fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi

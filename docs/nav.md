@@ -20,6 +20,12 @@
 明確指定 `--map maps/office/map_2d.yaml` 時，`global_pose_adapter` 才會依 Office 生成點自動送出初始位姿；
 log 出現 `navigator active` 後即可送目標。
 
+3D GUI 模式預設啟用 Office 手動電梯，初始關門、車廂停在地面樓層。
+點選 Isaac Sim 視窗後按 **E** 開／關門、**L** 切換樓層；導航仍由 ROS `cmd_vel`
+控制車輛，不啟用鍵盤駕駛。按 L 前先取消導航並確認車輛停穩；電梯操作不會自動換圖或重新定位，
+目前也沒有防夾偵測。`--headless` 不啟用手動電梯，`--mode 2d` 維持原行為；
+`--no-rviz` 只關閉 RViz，不影響 Isaac GUI 的電梯按鍵。
+
 ## 感測 → costmap
 
 ```mermaid
