@@ -156,6 +156,12 @@ Keepout 是軟體限制，collision monitor 不讀 mask。Speed 只限制 RPP �
 | Progress checker | `SimpleProgressChecker` | 15 秒內移動不到 0.15 m 視為卡住 |
 | `failure_tolerance` | 1.0 秒 | controller 持續失敗超過 1 秒就回報失敗，交給 BT |
 
+路徑追蹤啟用 `use_rotate_to_heading: true`，並設定
+`rotate_to_heading_min_angle: 0.08726646259971647`（5°）。車頭與路徑前視點方向的
+誤差大於 5° 時，控制器輸出零線速度並原地旋轉；縮小至 5° 以內才切回前進，
+行駛中仍會修正方向。此門檻對兩種 Carter 都生效，不是終點朝向容許誤差
+`yaw_goal_tolerance`，也不要求角速度先降到零；下游速度平滑與車體慣性仍會影響實際停車過程。
+
 **繞障靠 global costmap 重新規劃，不靠 controller。** RPP 只沿路徑走，local costmap 對它只影響碰撞預測時的降速與停車；障礙進入 global costmap 後 BT 每秒重新規劃，新路徑才會繞開。移動中的障礙若尚未進入 global costmap，車子只會減速或停下等待。取樣式 controller（MPPI、DWB）可在 local 視窗內閃避，目前尚未採用。
 
 行駛中前方突然出現障礙時的分工：

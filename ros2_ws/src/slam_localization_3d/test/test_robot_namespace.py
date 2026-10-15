@@ -78,6 +78,17 @@ class RobotSpecTest(unittest.TestCase):
 
 
 class RobotProfileTest(unittest.TestCase):
+    def test_both_profiles_require_five_degree_path_alignment(self):
+        for robot_type in ("nova_carter", "carter_v1"):
+            with self.subTest(robot_type=robot_type):
+                config = robot_namespace.load_parameters(CONFIG / "navigation.yaml", robot_type)
+                controller = config["controller_server"]["ros__parameters"]["FollowPath"]
+                self.assertTrue(controller["use_rotate_to_heading"])
+                self.assertFalse(controller["allow_reversing"])
+                self.assertAlmostEqual(
+                    controller["rotate_to_heading_min_angle"], math.radians(5), places=14,
+                )
+
     def test_nova_carter_profile_matches_sensor_mount(self):
         profile = robot_fleet.load_robot_profile("nova_carter")
         self.assertEqual(profile["simulation"]["wheel_joints"],

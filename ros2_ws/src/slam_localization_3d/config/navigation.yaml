@@ -40,6 +40,7 @@ controller_server:
       approach_velocity_scaling_dist: 0.5
       rotate_to_heading_angular_vel: 0.5
       use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.08726646259971647
       # Keep rotating in place after reaching the goal unless Carter drifts this far away.
       latch_release_distance: 0.5
       allow_reversing: false
