@@ -1,4 +1,4 @@
-// Regulated Pure Pursuit with a latched final in-place rotation.
+// Regulated Pure Pursuit with hysteretic path alignment and latched final rotation.
 //
 // Humble's RPP re-evaluates "within xy_goal_tolerance" every cycle, and it
 // stops translating exactly at that boundary. Small base_link drift while
@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -41,26 +43,74 @@ public:
     nav2_util::declare_parameter_if_not_declared(
       node, name + ".latch_release_distance", rclcpp::ParameterValue(0.5));
     node->get_parameter(name + ".latch_release_distance", latch_release_distance_);
+    nav2_util::declare_parameter_if_not_declared(
+      node, name + ".path_alignment_tolerance", rclcpp::ParameterValue(5.0 * M_PI / 180.0));
+    node->get_parameter(name + ".path_alignment_tolerance", path_alignment_tolerance_);
+    if (!validHeadingAngles(path_alignment_tolerance_, rotate_to_heading_min_angle_)) {
+      throw std::invalid_argument(
+              "Heading thresholds must satisfy 0 < path_alignment_tolerance <= "
+              "rotate_to_heading_min_angle <= pi");
+    }
     latched_ = false;
+    aligning_path_ = true;
   }
 
   void activate() override
   {
     RegulatedPurePursuitController::activate();
     latched_ = false;
+    aligning_path_ = true;
+    heading_parameters_handler_ = node_.lock()->add_on_set_parameters_callback(
+      [this](const std::vector<rclcpp::Parameter> & parameters) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        double alignment = path_alignment_tolerance_;
+        double moving = rotate_to_heading_min_angle_;
+        rcl_interfaces::msg::SetParametersResult result;
+        for (const auto & parameter : parameters) {
+          if (parameter.get_name() != plugin_name_ + ".path_alignment_tolerance" &&
+            parameter.get_name() != plugin_name_ + ".rotate_to_heading_min_angle")
+          {
+            continue;
+          }
+          if (parameter.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
+            result.successful = false;
+            result.reason = "Heading thresholds must be doubles in radians";
+            return result;
+          }
+          if (parameter.get_name() == plugin_name_ + ".path_alignment_tolerance") {
+            alignment = parameter.as_double();
+          } else {
+            moving = parameter.as_double();
+          }
+        }
+        result.successful = validHeadingAngles(alignment, moving);
+        if (result.successful) {
+          path_alignment_tolerance_ = alignment;
+        } else {
+          result.reason =
+            "Heading thresholds must satisfy 0 < path_alignment_tolerance <= "
+            "rotate_to_heading_min_angle <= pi";
+        }
+        return result;
+      });
   }
 
   void deactivate() override
   {
+    heading_parameters_handler_.reset();
     RegulatedPurePursuitController::deactivate();
     latched_ = false;
+    aligning_path_ = true;
   }
 
   void setPlan(const nav_msgs::msg::Path & path) override
   {
-    if (latched_ && (path.poses.empty() || goalChanged(path.poses.back()))) {
-      RCLCPP_INFO(logger_, "New goal received; releasing final heading latch");
+    if (path.poses.empty() || goalChanged(path.poses.back())) {
+      if (latched_) {
+        RCLCPP_INFO(logger_, "New goal received; releasing final heading latch");
+      }
       latched_ = false;
+      aligning_path_ = true;
     }
     if (!path.poses.empty()) {
       goal_ = path.poses.back();
@@ -101,16 +151,55 @@ public:
       RCLCPP_WARN(
         logger_, "Robot drifted %.3f m from the goal; releasing final heading latch", distance);
       latched_ = false;
+      aligning_path_ = true;
     }
 
-    if (!latched_) {
-      return RegulatedPurePursuitController::computeVelocityCommands(
-        pose, velocity, goal_checker);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> costmap_lock(
+        *costmap_ros_->getCostmap()->getMutex());
+      if (latched_) {
+        const double heading_error = std::remainder(
+          tf2::getYaw(goal.pose.orientation) - tf2::getYaw(pose.pose.orientation),
+          2.0 * M_PI);
+        return rotationCommand(pose, velocity, heading_error, distance);
+      }
+
+      // Humble's shouldRotateToPath() is not virtual; reuse its lookahead geometry
+      // to enforce hysteresis without changing the upstream tracking controller.
+      auto transformed_plan = transformGlobalPlan(pose);
+      auto carrot = getLookAheadPoint(getLookAheadDistance(velocity), transformed_plan);
+      const double heading_error = std::atan2(carrot.pose.position.y, carrot.pose.position.x);
+      if (aligning_path_) {
+        if (std::abs(heading_error) <= path_alignment_tolerance_) {
+          aligning_path_ = false;
+        }
+      } else if (std::abs(heading_error) > rotate_to_heading_min_angle_) {
+        aligning_path_ = true;
+      }
+      if (aligning_path_) {
+        carrot_pub_->publish(createCarrotMsg(carrot));
+        return rotationCommand(
+          pose, velocity, heading_error,
+          std::hypot(carrot.pose.position.x, carrot.pose.position.y));
+      }
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    const double heading_error = std::remainder(
-      tf2::getYaw(goal.pose.orientation) - tf2::getYaw(pose.pose.orientation), 2.0 * M_PI);
+    return RegulatedPurePursuitController::computeVelocityCommands(
+      pose, velocity, goal_checker);
+  }
+
+private:
+  static bool validHeadingAngles(double alignment, double moving)
+  {
+    return std::isfinite(alignment) && std::isfinite(moving) &&
+           alignment > 0.0 && alignment <= moving && moving <= M_PI;
+  }
+
+  geometry_msgs::msg::TwistStamped rotationCommand(
+    const geometry_msgs::msg::PoseStamped & pose,
+    const geometry_msgs::msg::Twist & velocity, double heading_error, double distance)
+  {
     double linear_vel = 0.0;
     double angular_vel = 0.0;
     rotateToHeading(linear_vel, angular_vel, heading_error, velocity);
@@ -129,7 +218,6 @@ public:
     return command;
   }
 
-private:
   bool goalChanged(const geometry_msgs::msg::PoseStamped & goal) const
   {
     if (goal.header.frame_id != goal_.header.frame_id) {
@@ -146,7 +234,10 @@ private:
 
   geometry_msgs::msg::PoseStamped goal_;
   double latch_release_distance_{0.5};
+  double path_alignment_tolerance_{5.0 * M_PI / 180.0};
   bool latched_{false};
+  bool aligning_path_{true};
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr heading_parameters_handler_;
 };
 
 }  // namespace slam_nav

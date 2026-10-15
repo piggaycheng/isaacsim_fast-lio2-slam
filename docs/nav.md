@@ -162,11 +162,19 @@ Keepout 是軟體限制，collision monitor 不讀 mask。Speed 只限制 RPP �
 | Progress checker | `SimpleProgressChecker` | 15 秒內移動不到 0.15 m 視為卡住 |
 | `failure_tolerance` | 1.0 秒 | controller 持續失敗超過 1 秒就回報失敗，交給 BT |
 
-路徑追蹤啟用 `use_rotate_to_heading: true`，並設定
-`rotate_to_heading_min_angle: 0.08726646259971647`（5°）。車頭與路徑前視點方向的
-誤差大於 5° 時，控制器輸出零線速度並原地旋轉；縮小至 5° 以內才切回前進，
-行駛中仍會修正方向。此門檻對兩種 Carter 都生效，不是終點朝向容許誤差
-`yaw_goal_tolerance`，也不要求角速度先降到零；下游速度平滑與車體慣性仍會影響實際停車過程。
+路徑追蹤啟用 `use_rotate_to_heading: true`，兩種 Carter 都使用分離的對準門檻：
+
+| 參數 | 值 | 用途 |
+| :-- | :-- | :-- |
+| `path_alignment_tolerance` | 0.08726646259971647 rad（5°） | 起步或重新對準時，車頭與路徑前視點方向的誤差縮小至此範圍才前進 |
+| `rotate_to_heading_min_angle` | 0.7853981633974483 rad（45°） | 行進中超過此誤差才切回原地對準，再轉到 5° 以內才繼續 |
+
+同一目標的重新規劃或障礙停車不重設對準狀態；新目標、控制器重新啟用或離開終點
+鎖定範圍時重新要求起步對準。目標變更沿用既有的 0.1 m／0.1 rad 判斷，忽略路徑
+終點的格網量化抖動。兩個角度可動態設定，須滿足 `0 < path_alignment_tolerance <=
+rotate_to_heading_min_angle <= pi`；無效更新會被拒絕。
+這不是進梯全程保持 5° 的模式，也不是終點朝向容許誤差 `yaw_goal_tolerance`；
+不要求角速度先降到零，下游速度平滑與車體慣性仍會影響實際停車過程。
 
 **繞障靠 global costmap 重新規劃，不靠 controller。** RPP 只沿路徑走，local costmap 對它只影響碰撞預測時的降速與停車；障礙進入 global costmap 後 BT 每秒重新規劃，新路徑才會繞開。移動中的障礙若尚未進入 global costmap，車子只會減速或停下等待。取樣式 controller（MPPI、DWB）可在 local 視窗內閃避，目前尚未採用。
 

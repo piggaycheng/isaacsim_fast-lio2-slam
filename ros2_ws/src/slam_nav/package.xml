@@ -22,6 +22,8 @@
   <depend>tf2_sensor_msgs</depend>
   <build_depend>libpcl-all-dev</build_depend>
 
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>nav2_costmap_2d</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -74,4 +74,22 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(nav2_costmap_2d REQUIRED)
+  ament_add_gtest(test_heading_alignment test/test_heading_alignment.cpp)
+  ament_target_dependencies(test_heading_alignment
+    geometry_msgs
+    nav2_core
+    nav2_costmap_2d
+    nav2_regulated_pure_pursuit_controller
+    nav2_util
+    nav_msgs
+    pluginlib
+    rclcpp
+    tf2
+    tf2_ros
+  )
+endif()
+
 ament_package()
