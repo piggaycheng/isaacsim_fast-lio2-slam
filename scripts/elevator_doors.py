@@ -270,26 +270,48 @@ class ElevatorDoors:
                     position.Set(center + travel * fraction
                                  + Gf.Vec3d(0, 0, self.lift_height if inside else 0))
 
+    @property
+    def moving(self):
+        """True while the doors close for a trip or the cabins travel."""
+        return self.lift_pending or self.lift_height != self.lift_target
+
     def toggle(self):
-        if self.lift_pending or self.lift_height != self.lift_target:
+        if not self.set_doors(not self.target_open):
             print("Elevator doors: opening blocked until the lift reaches a landing", flush=True)
             return
-        self.cycle = False
-        self.target_open = not self.target_open
         print(f"Elevator doors: {'opening' if self.target_open else 'closing'} "
               "(manual mode)", flush=True)
 
     def toggle_lift(self):
-        if self.lift_pending or self.lift_height != self.lift_target:
+        if self.moving:
             print("Elevator lift: already moving or closing doors; L ignored", flush=True)
             return
+        self.move_to(LOWER_LEVEL if self.lift_height == 0.0 else 0.0)
+
+    def set_doors(self, open_doors):
+        """Open or close the landing doors; refused while the cabins travel."""
+        if self.moving:
+            return False
         self.cycle = False
+        self.target_open = bool(open_doors)
+        return True
+
+    def move_to(self, height):
+        """Close the doors, then move both cabins to a landing height (m)."""
+        if not math.isfinite(height):
+            raise ValueError("Lift height must be finite")
+        if self.moving:
+            return height == self.lift_target
+        self.cycle = False
+        if height == self.lift_height:
+            return True
         self.target_open = False
-        self.lift_target = LOWER_LEVEL if self.lift_height == 0.0 else 0.0
+        self.lift_target = height
         self.lift_start = self.lift_height
         self.lift_elapsed = 0.0
         self.lift_pending = True
         print(f"Elevator lift requested: z={self.lift_target:.1f} m; closing doors first", flush=True)
+        return True
 
     def update(self, sim_time):
         if not math.isfinite(sim_time):
@@ -317,7 +339,7 @@ class ElevatorDoors:
             self.lift_height = self.lift_start + (self.lift_target - self.lift_start) * progress
             if self.lift_elapsed == LIFT_SECONDS:
                 self.lift_height = self.lift_target
-                print(f"Elevator lift arrived: z={self.lift_height:.1f} m; E opens doors", flush=True)
+                print(f"Elevator lift arrived: z={self.lift_height:.1f} m", flush=True)
         elif self.cycle:
             phase = (sim_time - self.started) % (2 * (HOLD_SECONDS + MOVE_SECONDS))
             if phase < HOLD_SECONDS:

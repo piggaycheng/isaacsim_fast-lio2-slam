@@ -24,12 +24,12 @@ from launch_ros.actions import Node
 
 LOCALIZATION = get_package_share_directory("slam_localization_3d")
 sys.path.insert(0, os.path.join(LOCALIZATION, "launch"))
-from robot_fleet import initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
+from robot_fleet import imu_mount, initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
 from robot_namespace import load_parameters  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
-    "direction_zones", "local_odometry_inputs",
+    "direction_zones", "local_odometry_inputs", "maps_root",
 )
 
 
@@ -84,6 +84,10 @@ def robot_stack(context, package):
                 "mqtt_username": LaunchConfiguration("mqtt_username").perform(context),
                 "mqtt_password": LaunchConfiguration("mqtt_password").perform(context),
                 "fleet_name": spec.fleet,
+                "level_name": os.path.basename(os.path.dirname(
+                    LaunchConfiguration("map_pgm").perform(context))),
+                # base_link height in each floor map (map = mapping robot's body frame).
+                "floor_base_z": pose[2] - imu_mount(profile)[2],
                 "footprint_radius": radius,
                 "max_linear_velocity": float(safety["max_linear_speed"]),
                 "max_angular_velocity": float(safety["max_angular_speed"]),
@@ -99,10 +103,13 @@ def generate_launch_description():
             "robot", description="NAME[:TYPE][#FLEET]@X,Y[,YAW] simulator spawn pose of this robot "
                                   "(FLEET is its Open-RMF fleet, default default_fleet)",
         ),
-        DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
-        DeclareLaunchArgument("map_pgm", description="Absolute Nav2 map YAML path"),
+        DeclareLaunchArgument("map_pcd", default_value=os.path.join(
+            os.getcwd(), "maps/1F/map.pcd"), description="Absolute PCD map path"),
+        DeclareLaunchArgument("map_pgm", default_value=os.path.join(
+            os.getcwd(), "maps/1F/map_2d.yaml"), description="Absolute Nav2 map YAML path"),
+        DeclareLaunchArgument("maps_root", default_value=""),
         DeclareLaunchArgument("rviz", default_value="false"),
-        DeclareLaunchArgument("auto_initial_pose", default_value="true"),
+        DeclareLaunchArgument("auto_initial_pose", default_value="false"),
         DeclareLaunchArgument("obstacle_cloud", default_value="true"),
         DeclareLaunchArgument("costmaps", default_value="true"),
         DeclareLaunchArgument("navigate", default_value="true"),

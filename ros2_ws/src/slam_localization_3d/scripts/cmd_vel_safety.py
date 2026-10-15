@@ -9,6 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Bool, Header
+from std_srvs.srv import SetBool
 
 
 class CmdVelSafety(Node):
@@ -18,6 +19,7 @@ class CmdVelSafety(Node):
         self.last_safety_warning = None
         self.last_speed_warning = None
         self.stop_latched = False
+        self.map_switch_hold = False
         self.sensor_timeout = self.declare_parameter("sensor_timeout", 1.0).value
         self.max_linear_accel = self.declare_parameter("max_linear_accel", 0.8).value
         self.max_angular_accel = self.declare_parameter("max_angular_accel", 1.5).value
@@ -51,7 +53,16 @@ class CmdVelSafety(Node):
         )
         self.create_subscription(Bool, "navigation/emergency_stop", self.on_stop, 10)
         self.create_subscription(Twist, "nav2/cmd_vel", self.on_command, 10)
+        self.create_service(SetBool, "navigation/set_map_switch_hold", self.on_map_switch_hold)
         self.create_timer(0.1, self.on_watchdog)
+
+    def on_map_switch_hold(self, request, response):
+        self.map_switch_hold = request.data
+        self.last_command_time = None
+        self.publish_output(Twist(), self.watchdog_time())
+        response.success = True
+        response.message = "Map switch hold enabled" if request.data else "Map switch hold released"
+        return response
 
     def on_sensor(self, source, message):
         now = self.watchdog_time()
@@ -88,7 +99,7 @@ class CmdVelSafety(Node):
 
     def on_watchdog(self):
         now = self.watchdog_time()
-        if not self.sensors_fresh(now) or self.stop_latched or (
+        if not self.sensors_fresh(now) or self.stop_latched or self.map_switch_hold or (
             self.last_correction is None
             or not 0 <= now - self.last_correction < 4.0
         ) or (
@@ -146,7 +157,7 @@ class CmdVelSafety(Node):
             or any(value != 0 for value in values[1:3] + values[3:5])
         ):
             self.get_logger().error("Rejected non-finite or nonplanar Nav2 /cmd_vel; stopping Carter")
-        elif self.stop_latched or (
+        elif self.stop_latched or self.map_switch_hold or (
             self.last_correction is None
             or not 0 <= now - self.last_correction < 4.0
         ):
@@ -155,7 +166,10 @@ class CmdVelSafety(Node):
                 or now < self.last_safety_warning
                 or now - self.last_safety_warning > 5
             ):
-                self.get_logger().warning("3D localization correction stale; stopping Carter")
+                self.get_logger().warning(
+                    "Map switch in progress; stopping Carter" if self.map_switch_hold
+                    else "3D localization correction stale; stopping Carter"
+                )
                 self.last_safety_warning = now
         elif sensors_fresh:
             linear_limit, angular_limit = self.max_linear_speed, self.max_angular_speed

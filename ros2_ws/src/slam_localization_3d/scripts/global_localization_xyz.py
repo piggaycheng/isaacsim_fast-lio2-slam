@@ -18,7 +18,10 @@ from ament_index_python.packages import get_package_prefix
 from geometry_msgs.msg import Point, Pose, Quaternion
 from nav_msgs.msg import Odometry
 from tf_transformations import quaternion_from_matrix
+from slam_localization_3d.srv import LoadLocalizationMap
 
+from floor_maps import validate_initial_pose
+from localization_3d_pose import imu_mount_parameter
 from xyz_cloud import make_point_cloud
 
 # Open3D information matrices use (wx, wy, wz, tx, ty, tz); ROS uses translation first.
@@ -61,6 +64,56 @@ class XYZGlobalLocalization(upstream_localization_class()):
             raise RuntimeError("Could not remove redundant /cur_scan_in_map publisher")
         del self.pub_pc_in_map
         self.registration_covariance = None
+        self.scan_stamp = None
+        self.body_to_base = imu_mount_parameter(self)
+        self.create_service(
+            LoadLocalizationMap, "localization_3d/load_map", self.load_localization_map
+        )
+
+    def load_localization_map(self, request, response):
+        try:
+            validate_initial_pose(request.initial_pose)
+            if self.cur_odom is None or self.cur_scan is None:
+                raise ValueError("Waiting for LIO odometry and scan")
+            now = self.get_clock().now().nanoseconds * 1e-9
+            stamp = self.cur_odom.header.stamp
+            if not 0 <= now - (stamp.sec + stamp.nanosec * 1e-9) < 1.0:
+                raise ValueError("LIO odometry is stale")
+            if self.scan_stamp is None or not 0 <= now - self.scan_stamp < 1.0:
+                raise ValueError("LIO scan is stale")
+            path = Path(request.pcd_path)
+            if path.suffix != ".pcd" or not path.is_file():
+                raise ValueError(f"Missing PCD map: {path}")
+            cloud = o3d.io.read_point_cloud(str(path))
+            if cloud.is_empty() or not np.all(np.isfinite(np.asarray(cloud.points))):
+                raise ValueError(f"PCD map is empty or non-finite: {path}")
+            cloud = self.voxel_down_sample(cloud, self.get_parameter("map_voxel_size").value)
+            # RMF supplies map -> base_link; ICP expects map -> camera_init.
+            mount = np.eye(4)
+            mount[:3, :3] = self.pose_to_mat(Pose(orientation=Quaternion(
+                x=self.body_to_base[1][0], y=self.body_to_base[1][1],
+                z=self.body_to_base[1][2], w=self.body_to_base[1][3],
+            )))[:3, :3]
+            mount[:3, 3] = self.body_to_base[0]
+            seed = (
+                self.pose_to_mat(request.initial_pose.pose.pose)
+                @ self.inverse_se3(mount)
+                @ self.inverse_se3(self.pose_to_mat(self.cur_odom.pose.pose))
+            )
+        except (ValueError, OSError, RuntimeError) as error:
+            self.get_logger().error(f"PCD map switch rejected: {error}")
+            response.success = False
+            response.message = str(error)
+            return response
+        self.global_map = cloud
+        self.T_map_to_odom = seed
+        self.registration_covariance = None
+        self.cur_scan = None
+        self.initialized = True
+        response.success = True
+        response.message = f"Loaded {path}; waiting for ICP confirmation"
+        self.get_logger().info(response.message)
+        return response
 
     def global_localization(self, pose_estimation):
         # Same two ICP calls and threshold as upstream; the fine stage is inlined
@@ -120,6 +173,7 @@ class XYZGlobalLocalization(upstream_localization_class()):
         points = self.msg_to_array(msg)
         self.cur_scan = o3d.geometry.PointCloud()
         self.cur_scan.points = o3d.utility.Vector3dVector(points)
+        self.scan_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
     def publish_point_cloud(self, publisher, header, points):
         publisher.publish(make_point_cloud(header, points))

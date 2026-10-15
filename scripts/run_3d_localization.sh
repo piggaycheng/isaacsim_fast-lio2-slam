@@ -3,8 +3,8 @@ set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/docker/ros_compose.sh"
-map_pcd="$project_dir/maps/office/map.pcd"
-map_pgm="$project_dir/maps/office/map_2d.yaml"
+map_pcd=""
+map_pgm="$project_dir/maps/1F/map_2d.yaml"
 headless=false
 rviz=true
 auto_jog=false
@@ -29,8 +29,8 @@ Run Isaac Sim Office and isolated FAST_LIO_LOCALIZATION2 with a PGM map in RViz.
 Do not run this alongside scripts/run_nav.sh.
 
 Options:
-      --pcd FILE      PCD map used by 3D ICP (default: maps/office/map.pcd).
-      --pgm FILE      Nav2 YAML for the RViz PGM map (default: maps/office/map_2d.yaml).
+      --pcd FILE      PCD map used by 3D ICP (default: map.pcd beside the map YAML).
+      --pgm FILE      Nav2 YAML for the RViz PGM map (default: maps/1F/map_2d.yaml).
       --headless      Run Isaac Sim without its GUI.
       --auto-jog      Move Carter automatically instead of using W/S/A/D.
       --manual-initial-pose
@@ -139,18 +139,19 @@ if [[ ( "$navigate" == true || "$ros_cmd_vel" == true ) && "$auto_jog" == true ]
   exit 2
 fi
 
-if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ "$map_pgm" != /* ]]; then map_pgm="$project_dir/$map_pgm"; fi
+if [[ -z "$map_pcd" ]]; then map_pcd="$(dirname "$map_pgm")/map.pcd"; fi
+if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ "$map_pcd" != "$project_dir/maps/office/map.pcd" ||
       "$map_pgm" != "$project_dir/maps/office/map_2d.yaml" ]]; then
   auto_initial_pose=false
 fi
-if [[ ! -f "$map_pcd" || "$map_pcd" != *.pcd ]]; then
-  echo "PCD map does not exist or is not a .pcd file: $map_pcd" >&2
-  exit 1
-fi
 if [[ ! -f "$map_pgm" || ( "$map_pgm" != *.yaml && "$map_pgm" != *.yml ) ]]; then
   echo "PGM map YAML does not exist: $map_pgm" >&2
+  exit 1
+fi
+if [[ ! -f "$map_pcd" || "$map_pcd" != *.pcd ]]; then
+  echo "PCD map does not exist or is not a .pcd file: $map_pcd" >&2
   exit 1
 fi
 map_image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$map_pgm" | head -1)"

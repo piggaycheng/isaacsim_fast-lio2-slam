@@ -7,10 +7,15 @@
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>map_msgs</build_depend>
   <build_depend>nav_msgs</build_depend>
-  <build_depend>nav2_msgs</build_depend>
+  <depend>nav2_msgs</depend>
   <build_depend>pluginlib</build_depend>
   <build_depend>rclcpp_lifecycle</build_depend>
   <build_depend>tf2</build_depend>

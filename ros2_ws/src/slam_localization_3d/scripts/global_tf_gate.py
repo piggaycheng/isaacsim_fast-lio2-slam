@@ -9,6 +9,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import Header
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 from geometry_msgs.msg import TransformStamped
 
@@ -54,6 +55,8 @@ class GlobalTfGate(Node):
         ):
             raise ValueError("tf_future_tolerance must be between 0 and 0.5 seconds")
         self.last_correction = None
+        self.map_switch_hold = False
+        self.minimum_correction_time = None
         self.warned_stale = False
         self.last_tf_warning = None
         self.tf_buffer = Buffer()
@@ -65,8 +68,22 @@ class GlobalTfGate(Node):
         self.create_subscription(
             Odometry, "odometry/global", self.on_global_odometry, 10
         )
+        self.create_service(SetBool, "global_tf_gate/set_map_switch_hold", self.on_map_switch_hold)
+
+    def on_map_switch_hold(self, request, response):
+        self.map_switch_hold = request.data
+        self.last_correction = None
+        self.minimum_correction_time = seconds(self.get_clock().now().to_msg())
+        response.success = True
+        response.message = "Global TF gate reset"
+        return response
 
     def on_correction(self, message):
+        if self.map_switch_hold or (
+            self.minimum_correction_time is not None
+            and seconds(message.stamp) <= self.minimum_correction_time
+        ):
+            return
         if message.frame_id != "map" or seconds(message.stamp) <= 0:
             self.get_logger().error("Invalid accepted correction header")
             return
@@ -78,6 +95,8 @@ class GlobalTfGate(Node):
         self.warned_stale = False
 
     def on_global_odometry(self, message):
+        if self.map_switch_hold:
+            return
         if (
             message.header.frame_id != "map"
             or message.child_frame_id != "base_link"

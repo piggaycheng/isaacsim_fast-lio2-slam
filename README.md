@@ -49,7 +49,7 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 
 啟動 Isaac Sim、RViz 與建圖管理器；**初始為閒置，尚未啟動 FAST-LIO2／PGO**。自動啟用 Office 電梯的手動模式（初始關門，車廂停在地面樓層）。使用 **W/S/A/D 或方向鍵**操控車輛，**Space** 停車；點選 Isaac Sim 模擬視窗後按 **E** 同步開／關停靠樓層的電梯門，按 **L** 同步切換兩個車廂的上下樓層。
 
-進入車廂後先按 **Space** 停車，再按 **L**；電梯會先關門、用約 6 秒升降，抵達後按 **E** 開門。井口不再有透明碰撞地板，未停靠樓層的門保持關閉；目前不含防夾偵測或多樓層 Nav2 導航。
+進入車廂後先按 **Space** 停車，再按 **L**；電梯會先關門、用約 6 秒升降，抵達後按 **E** 開門。井口不再有透明碰撞地板，未停靠樓層的門保持關閉；目前不含防夾偵測或自動電梯任務協調。導航的樓層換圖接口見下方及[對外連線文件](docs/online.md#mqtt-換樓層與初始定位)。
 
 等模擬載入完成、保持播放並停穩車輛，另開終端控制每層的獨立建圖：
 
@@ -93,6 +93,11 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 ```
 
 導航堆疊啟動完成後，用 RViz 的 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)。
+
+導航／定位腳本預設地圖為 **`maps/1F`**，初始定位需使用 RViz 或線上模式的 MQTT `change_floor`。
+上位系統可用 `floor_name: "B1"` 與目標樓層 `base_link` 的 `initial_pose: {x, y, z, yaw}`
+通知車端一起切換 PGM／PCD、重新定位；僅收到 `command_result.status: completed` 後才繼續導航。
+上位不需要 ROS 2，完整 payload、停車及失敗處理見[MQTT 換樓層接口](docs/online.md#mqtt-換樓層與初始定位)。
 
 常用參數：
 

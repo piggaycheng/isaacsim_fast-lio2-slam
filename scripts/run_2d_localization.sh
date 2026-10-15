@@ -3,7 +3,7 @@ set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/docker/ros_compose.sh"
-map_file="$project_dir/maps/office/map_2d.yaml"
+map_file="$project_dir/maps/1F/map_2d.yaml"
 headless=false
 rviz=true
 auto_jog=false
@@ -17,7 +17,7 @@ Launch Isaac Sim and the 2D AMCL localization stack.
 
 Options:
   -m, --map FILE       Nav2 map YAML file. The YAML selects its PGM image.
-                       Default: maps/office/map_2d.yaml
+                       Default: maps/1F/map_2d.yaml
       --headless       Run Isaac Sim without its GUI.
       --auto-jog       Drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
@@ -110,8 +110,13 @@ container_path "$map_image" >/dev/null
 require_ros_workspace
 set -u
 
+auto_initial_pose=false
+if [[ "$map_file" == "$project_dir/maps/office/map_2d.yaml" ]]; then
+  auto_initial_pose=true
+fi
 start_ros launch slam_localization_2d localization_2d.launch.py \
   map:="$container_map" \
+  auto_initial_pose:="$auto_initial_pose" \
   rviz:="$rviz"
 
 isaac_args=(--lidar-motion-compensation compensated)

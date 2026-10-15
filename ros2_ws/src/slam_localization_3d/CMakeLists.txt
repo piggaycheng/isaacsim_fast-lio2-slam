@@ -3,6 +3,13 @@ project(slam_localization_3d)
 
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/ChangeFloor.srv"
+  "srv/LoadLocalizationMap.srv"
+  DEPENDENCIES geometry_msgs
+)
+ament_export_dependencies(rosidl_default_runtime)
 find_package(map_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
@@ -45,6 +52,7 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/global_pose_adapter.py scripts/global_tf_gate.py
   scripts/lio_odometry.py
   scripts/global_localization_xyz.py
+  scripts/floor_manager.py
   scripts/wait_for_costmap_tf.py
   scripts/cmd_vel_safety.py
   scripts/direction_zones.py
@@ -55,7 +63,8 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/fleet_relay.py
   DESTINATION lib/${PROJECT_NAME}
 )
-install(FILES scripts/xyz_cloud.py scripts/costmap_zone_geometry.py DESTINATION lib/${PROJECT_NAME})
+install(FILES scripts/xyz_cloud.py scripts/costmap_zone_geometry.py
+  scripts/floor_maps.py DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )

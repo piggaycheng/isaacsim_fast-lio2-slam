@@ -44,6 +44,10 @@ def generate_launch_description():
             DeclareLaunchArgument("map", description="Absolute path to a Nav2 map YAML file"),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "auto_initial_pose", default_value="false",
+                description="Use the configured Office initial pose instead of waiting for RViz",
+            ),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",
@@ -120,7 +124,10 @@ def generate_launch_description():
                 executable="amcl",
                 name="amcl",
                 output="screen",
-                parameters=[amcl_config, {"use_sim_time": use_sim_time}],
+                parameters=[amcl_config, {
+                    "use_sim_time": use_sim_time,
+                    "set_initial_pose": LaunchConfiguration("auto_initial_pose"),
+                }],
             ),
             Node(
                 package="nav2_lifecycle_manager",

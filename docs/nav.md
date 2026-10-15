@@ -15,7 +15,10 @@
 ./scripts/run_nav.sh --mode 3d --navigate --static-zones  # 全部保護區同時生效
 ```
 
-以預設 Office 地圖啟動時，`global_pose_adapter` 會自動送出初始位姿；log 出現 `navigator active` 後即可送目標。
+預設載入 `maps/1F`，等待初始位姿；單車可用 RViz 初始化，線上多車可用
+[MQTT `change_floor`](online.md#mqtt-換樓層與初始定位) 初始化及切換樓層。
+明確指定 `--map maps/office/map_2d.yaml` 時，`global_pose_adapter` 才會依 Office 生成點自動送出初始位姿；
+log 出現 `navigator active` 後即可送目標。
 
 ## 感測 → costmap
 

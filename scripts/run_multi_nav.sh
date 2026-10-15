@@ -2,8 +2,8 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-map_pgm="$project_dir/maps/office/map_2d.yaml"
-map_pcd="$project_dir/maps/office/map.pcd"
+map_pgm="$project_dir/maps/1F/map_2d.yaml"
+map_pcd=""
 headless=false
 rviz=true
 auto_initial_pose=true
@@ -26,8 +26,8 @@ Options:
                        robot prim (world is aligned with the Office map).
                        Repeat per robot. Default: carter1:nova_carter@0,0 and
                        carter2:carter_v1@3.5,0.
-  -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
-      --pcd FILE       PCD map (default: maps/office/map.pcd).
+  -m, --map FILE       Nav2 map YAML file (default: maps/1F/map_2d.yaml).
+      --pcd FILE       PCD map (default: map.pcd beside the map YAML).
       --manual-initial-pose
                        Set each initial pose in RViz instead of the spawn pose.
       --no-rviz        Do not start the fleet RViz.
@@ -91,8 +91,9 @@ fi
 
 source "$project_dir/docker/ros_compose.sh"
 
-if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ "$map_pgm" != /* ]]; then map_pgm="$project_dir/$map_pgm"; fi
+if [[ -z "$map_pcd" ]]; then map_pcd="$(dirname "$map_pgm")/map.pcd"; fi
+if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ ! -f "$map_pcd" || "$map_pcd" != *.pcd ]]; then
   echo "PCD map does not exist or is not a .pcd file: $map_pcd" >&2
   exit 1

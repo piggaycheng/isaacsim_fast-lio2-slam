@@ -13,6 +13,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Bool, Header
+from std_srvs.srv import SetBool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from cmd_vel_safety import CmdVelSafety
@@ -68,6 +69,19 @@ class SafetyTest(unittest.TestCase):
 
     def test_startup_blocks_commands_without_sensor_data(self):
         self.node.on_command(self.command)
+        self.assert_output(0)
+
+    def test_map_switch_hold_stops_and_does_not_release_emergency_stop(self):
+        self.sensor("scan", 10)
+        self.node.on_map_switch_hold(SetBool.Request(data=True), SetBool.Response())
+        self.node.on_command(self.command)
+        self.assert_output(0)
+        self.node.on_watchdog()
+        self.assert_output(0)
+        self.node.on_stop(Bool(data=True))
+        self.node.on_map_switch_hold(SetBool.Request(data=False), SetBool.Response())
+        self.node.on_command(self.command)
+        self.assertTrue(self.node.stop_latched)
         self.assert_output(0)
 
     def test_either_source_allows_commands(self):

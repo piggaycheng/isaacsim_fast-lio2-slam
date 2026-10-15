@@ -2,8 +2,8 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-map_pgm="$project_dir/maps/office/map_2d.yaml"
-map_pcd="$project_dir/maps/office/map.pcd"
+map_pgm="$project_dir/maps/1F/map_2d.yaml"
+map_pcd=""
 headless=true
 rviz=true
 auto_initial_pose=true
@@ -16,6 +16,7 @@ mqtt_topic="${MQTT_TOPIC:-slam/cameras}"
 mqtt_username=""
 mqtt_password=""
 ceiling_cameras=true
+elevator_lift=""
 
 usage() {
   cat <<'EOF'
@@ -36,8 +37,8 @@ Options:
                        robot prim (world is aligned with the Office map).
                        Repeat per robot. Default: carter1:nova_carter#fleet1@0,0 and
                        carter2:carter_v1#fleet2@3.5,0.
-  -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
-      --pcd FILE       PCD map (default: maps/office/map.pcd).
+  -m, --map FILE       Nav2 map YAML file (default: maps/1F/map_2d.yaml).
+      --pcd FILE       PCD map (default: map.pcd beside the map YAML).
       --manual-initial-pose
                        Set each initial pose in RViz instead of the spawn pose.
       --no-rviz        Do not start the fleet RViz.
@@ -62,6 +63,10 @@ Options:
                        {"online":false} on shutdown. The broker may start later.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
+      --elevator-lift NAME
+                       Enable the moving Office elevator and let a lift controller
+                       (Open-RMF's mqtt_lift_adapter) drive it over MQTT
+                       rmf/lift/NAME/request and rmf/lift/NAME/state, landings 1F and B1.
   -h, --help           Show this help.
 
 In RViz's Fleet Control panel, select a robot, click "Set navigation goal",
@@ -101,6 +106,7 @@ while (($# > 0)); do
     --camera|--camera-resolution|--camera-fps)
       value "$@"; camera_args+=("$1" "$2"); shift 2 ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
+    --elevator-lift) value "$@"; elevator_lift="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -129,8 +135,9 @@ fi
 
 source "$project_dir/docker/ros_compose.sh"
 
-if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ "$map_pgm" != /* ]]; then map_pgm="$project_dir/$map_pgm"; fi
+if [[ -z "$map_pcd" ]]; then map_pcd="$(dirname "$map_pgm")/map.pcd"; fi
+if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
 if [[ ! -f "$map_pcd" || "$map_pcd" != *.pcd ]]; then
   echo "PCD map does not exist or is not a .pcd file: $map_pcd" >&2
   exit 1
@@ -178,4 +185,7 @@ for robot in "${robots[@]}"; do isaac_args+=(--robot "$robot"); done
 isaac_args+=("${boxes[@]}" "${camera_args[@]}" --mqtt-host "$mqtt_host" --mqtt-port "$mqtt_port" --mqtt-topic "$mqtt_topic")
 if [[ -n "$mqtt_username" ]]; then isaac_args+=(--mqtt-username "$mqtt_username" --mqtt-password "$mqtt_password"); fi
 if [[ "$ceiling_cameras" == true ]]; then isaac_args+=(--ceiling-cameras); fi
+if [[ -n "$elevator_lift" ]]; then
+  isaac_args+=(--dynamic-elevator-doors --elevator-mqtt-lift "$elevator_lift")
+fi
 "$project_dir/scripts/standalone.py" "${isaac_args[@]}"

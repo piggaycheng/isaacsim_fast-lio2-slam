@@ -45,7 +45,7 @@ for robot in "${robots[@]}"; do
   names+=("$name")
   start_ros_container "$name" launch slam_bringup robot.launch.py "robot:=$robot" \
     map_pcd:=/workspace/maps/office/map.pcd map_pgm:=/workspace/maps/office/map_2d.yaml \
-    rviz:=false > "$directory/ros_$name.log" 2>&1
+    rviz:=false auto_initial_pose:=true > "$directory/ros_$name.log" 2>&1
 done
 start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
   "robots:=$(IFS=';'; printf '%s' "${names[*]}")" rviz:=false > "$directory/fleet_relay.log" 2>&1

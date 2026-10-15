@@ -70,6 +70,16 @@ parser.add_argument(
     help="Dynamic door control: cycle every 14 simulated seconds, or press E in the GUI.",
 )
 parser.add_argument(
+    "--elevator-mqtt-lift", default=None, metavar="NAME",
+    help="Let a lift controller (e.g. the Open-RMF lift adapter) drive the dynamic elevator over "
+    "MQTT <elevator-mqtt-topic>/NAME/request and /state (needs --mqtt-host; works headless).",
+)
+parser.add_argument("--elevator-mqtt-topic", default="rmf/lift", help="MQTT topic prefix of the lift.")
+parser.add_argument(
+    "--elevator-floors", default="1F:0,B1:-3.3",
+    help="Lift landings as NAME:CABIN_HEIGHT_M, matching the map floor names.",
+)
+parser.add_argument(
     "--validation-control-dir",
     help="Opt-in file-controlled physical obstacles for braking/navigation validation.",
 )
@@ -135,6 +145,8 @@ if args.validation_control_dir and args.robot:
     parser.error("--validation-control-dir supports only the single default robot")
 if args.elevator_door_mode == "manual" and not args.dynamic_elevator_doors:
     parser.error("--elevator-door-mode manual requires --dynamic-elevator-doors")
+if args.elevator_mqtt_lift and not (args.dynamic_elevator_doors and args.mqtt_host):
+    parser.error("--elevator-mqtt-lift requires --dynamic-elevator-doors and --mqtt-host")
 if args.dynamic_elevator_doors and args.elevator_door_mode == "manual" and args.headless:
     parser.error("Manual elevator doors require the GUI; use cycle mode with --headless")
 
@@ -267,6 +279,7 @@ input_interface = None
 camera_runtime = []
 ceiling_gimbals = []
 camera_catalog = None
+elevator_lift = None
 keyboard = None
 keyboard_subscription = None
 elevator_doors = None
@@ -894,7 +907,17 @@ try:
         from elevator_doors import ElevatorDoors
 
         try:
-            elevator_doors = ElevatorDoors(stage, cycle=args.elevator_door_mode == "cycle")
+            elevator_doors = ElevatorDoors(
+                stage, cycle=args.elevator_door_mode == "cycle" and not args.elevator_mqtt_lift)
+            if args.elevator_mqtt_lift:
+                from mqtt_elevator import LiftController, MqttLift, parse_floors
+
+                elevator_lift = MqttLift(
+                    LiftController(elevator_doors, args.elevator_mqtt_lift,
+                                   parse_floors(args.elevator_floors)),
+                    args.mqtt_host, args.mqtt_port, args.elevator_mqtt_topic,
+                    args.mqtt_username, args.mqtt_password,
+                )
         except (RuntimeError, TypeError, ValueError, Tf.ErrorException) as error:
             simulation_exit_code = 1
             carb.log_error(f"Could not initialize dynamic elevator doors: {error}")
@@ -1013,6 +1036,8 @@ try:
         start_position = lead.robot.get_world_poses()[0].numpy()[0]
         for _ in range(60):
             lead.drive(0.2, 0.0)
+            if elevator_lift is not None:
+                elevator_lift.update()
             if elevator_doors is not None:
                 elevator_doors.update(SimulationManager.get_simulation_time())
             update_gimbals()
@@ -1045,6 +1070,8 @@ try:
         )
     else:
         while simulation_app.is_running():
+            if elevator_lift is not None:
+                elevator_lift.update()
             if elevator_doors is not None:
                 elevator_doors.update(SimulationManager.get_simulation_time())
             if validation_scene is not None:
@@ -1077,6 +1104,8 @@ try:
 finally:
     from rtsp_stream import shutdown_server
 
+    if elevator_lift is not None:
+        elevator_lift.close()
     if camera_catalog is not None:
         camera_catalog.close()
     for camera_stream in camera_runtime:

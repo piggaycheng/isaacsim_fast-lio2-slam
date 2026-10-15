@@ -267,7 +267,10 @@ def robot_nodes(context, package, nav):
             package="robot_localization", executable="ekf_node",
             name="local_ekf", output="screen",
             parameters=[*nav_parameters, {"reset_on_time_jump": True}],
-            remappings=[("odometry/filtered", topic("/odometry/local"))],
+            remappings=[
+                ("odometry/filtered", topic("/odometry/local")),
+                ("set_pose", topic("/local_ekf/set_pose")),
+            ],
         ),
         Node(
             package="pointcloud_to_laserscan",
@@ -315,6 +318,7 @@ def robot_nodes(context, package, nav):
             parameters=[{
                 "use_sim_time": True,
                 "pcd_map_path": value("map_pcd"),
+                "imu_mount": imu_mount(profile),
                 "map_voxel_size": 0.4,
                 "scan_voxel_size": 0.1,
                 "freq_localization": 0.5,
@@ -338,7 +342,10 @@ def robot_nodes(context, package, nav):
             package="robot_localization", executable="ekf_node",
             name="global_ekf", output="screen",
             parameters=[fusion_config, sim],
-            remappings=[("odometry/filtered", topic("/odometry/global"))],
+            remappings=[
+                ("odometry/filtered", topic("/odometry/global")),
+                ("set_pose", topic("/global_ekf/set_pose")),
+            ],
         ),
         Node(
             package="slam_localization_3d", executable="global_tf_gate.py",
@@ -367,6 +374,17 @@ def robot_nodes(context, package, nav):
             for name in ("global_costmap", "local_costmap")
         ]
     if navigate:
+        maps_root = LaunchConfiguration("maps_root", default="").perform(context)
+        initial_floor = os.path.basename(os.path.dirname(value("map_pgm")))
+        actions.append(Node(
+            package="slam_localization_3d", executable="floor_manager.py",
+            name="floor_manager", output="screen",
+            parameters=[sim, {
+                "maps_root": maps_root or os.path.dirname(os.path.dirname(value("map_pgm"))),
+                "initial_floor": initial_floor,
+                "filter_editor_active": enabled("filter_editor"),
+            }],
+        ))
         # Nav2 publishes relative cmd_vel; recovery motions go through the same
         # smoother, collision_monitor and cmd_vel_safety gates as the controller.
         nav_cmd = [(topic("/cmd_vel"), topic("/nav2/cmd_vel_nav"))]
@@ -504,8 +522,14 @@ def generate_launch_description():
     nav = get_package_share_directory("slam_nav")
     return LaunchDescription(
         [
-            DeclareLaunchArgument("map_pcd", description="Absolute PCD map path"),
-            DeclareLaunchArgument("map_pgm", description="Absolute Nav2 map YAML path"),
+            DeclareLaunchArgument("map_pcd", default_value=os.path.join(
+                os.getcwd(), "maps/1F/map.pcd"), description="Absolute PCD map path"),
+            DeclareLaunchArgument("map_pgm", default_value=os.path.join(
+                os.getcwd(), "maps/1F/map_2d.yaml"), description="Absolute Nav2 map YAML path"),
+            DeclareLaunchArgument(
+                "maps_root", default_value="",
+                description="Floor map directory; default is the parent of the initial map folder",
+            ),
             DeclareLaunchArgument(
                 "namespace", default_value="",
                 description="Robot namespace; also isolates TF on /<namespace>/tf",

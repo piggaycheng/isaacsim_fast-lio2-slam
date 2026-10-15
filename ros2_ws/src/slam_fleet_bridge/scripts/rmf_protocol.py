@@ -5,10 +5,11 @@ Pure functions without ROS or MQTT dependencies so they can be unit tested.
 
 import json
 import math
+import re
 import time
 
 GIMBAL_ACTIONS = ("gimbal_move", "gimbal_rotate")
-COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed") + GIMBAL_ACTIONS
+COMMAND_ACTIONS = ("navigate", "dock", "stop", "task", "proceed", "change_floor") + GIMBAL_ACTIONS
 RESULT_STATUS = {"succeeded": "completed", "aborted": "failed", "canceled": "canceled",
                  "rejected": "failed"}
 
@@ -76,12 +77,14 @@ def offline_payload(robot):
                        "timestamp": now()})
 
 
-def command_result_payload(robot, cmd_id, status, message="", location=None):
+def command_result_payload(robot, cmd_id, status, message="", location=None, level=None):
     payload = {"robot_id": robot, "cmd_id": cmd_id, "status": status, "message": message,
                "timestamp": now()}
     if location is not None:
         payload["final_location"] = {
             "x": location[0], "y": location[1], "yaw": wrap_angle(location[2])}
+    if level is not None:
+        payload["level_name"] = level
     return json.dumps(payload)
 
 
@@ -117,7 +120,7 @@ def cmd_id_of(payload):
 
 
 def parse_command(payload, robot):
-    """Return (cmd_id, action, steps) with steps a list of task_bt steps, None for stop.
+    """Return (cmd_id, action, data): task steps, floor switch data, or None.
 
     `task` is an extension to the spec: {"action": "task", "steps": [...]} runs several
     task_bt steps in order (validated by task_bt), holding after each step until
@@ -143,6 +146,22 @@ def parse_command(payload, robot):
         raise CommandError(f"unknown action {action!r}")
     if action in ("stop", "proceed"):
         return cmd_id, action, None
+    if action == "change_floor":
+        floor = command.get("floor_name")
+        if not isinstance(floor, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", floor):
+            raise CommandError("'floor_name' must be a level name, e.g. 1F or B1")
+        pose = command.get("initial_pose")
+        if not isinstance(pose, dict):
+            raise CommandError("'initial_pose' must contain target-floor base_link x, y, yaw (z optional)")
+        return cmd_id, action, {
+            "floor_name": floor,
+            "initial_pose": {
+                "x": _number(pose, "x"), "y": _number(pose, "y"),
+                # RMF is 2D: omitted z falls back to the bridge floor_base_z parameter.
+                "z": None if pose.get("z") is None else _number(pose, "z"),
+                "yaw": _number(pose, "yaw"),
+            },
+        }
     if action == "task":
         steps = command.get("steps")
         if not isinstance(steps, list) or not steps:

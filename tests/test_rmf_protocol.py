@@ -46,6 +46,31 @@ class RmfProtocolTest(unittest.TestCase):
         self.assertEqual(rmf.parse_command(command(action="task", steps=steps), "r1"),
                          (7, "task", steps))
 
+    def test_floor_switch_requires_explicit_target_floor_base_pose(self):
+        data = {"floor_name": "B1", "initial_pose": {"x": 1, "y": 2, "z": 0, "yaw": 1.57}}
+        parsed = rmf.parse_command(command(action="change_floor", **data), "r1")
+        self.assertEqual(parsed, (7, "change_floor", data))
+        planar = {"floor_name": "B1", "initial_pose": {"x": 1, "y": 2, "yaw": 0.5}}
+        parsed = rmf.parse_command(command(action="change_floor", **planar), "r1")
+        self.assertIsNone(parsed[2]["initial_pose"]["z"])
+        for invalid in (
+            {"floor_name": "../B1", "initial_pose": data["initial_pose"]},
+            {"floor_name": "B1"},
+            {"floor_name": "B1", "initial_pose": {"x": 0, "yaw": 0}},
+            {"floor_name": "B1", "initial_pose": {"x": 0, "y": 0, "z": "low", "yaw": 0}},
+            {"floor_name": "B1", "initial_pose": {"x": True, "y": 0, "z": 0, "yaw": 0}},
+            {"floor_name": "B1", "initial_pose": {"x": 0, "y": 0, "z": 0, "yaw": float("nan")}},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(rmf.CommandError):
+                rmf.parse_command(command(action="change_floor", **invalid), "r1")
+
+    def test_floor_result_and_heartbeat_report_level(self):
+        result = json.loads(rmf.command_result_payload(
+            "r1", 7, "completed", location=(1, 2, 0), level="B1"))
+        self.assertEqual(result["level_name"], "B1")
+        heartbeat = json.loads(rmf.heartbeat_payload("r1", (1, 2, 0), 100, "idle", None, "B1"))
+        self.assertEqual(heartbeat["level_name"], "B1")
+
     def test_gimbal_actions_become_one_gimbal_step(self):
         for action in ("gimbal_move", "gimbal_rotate"):
             cmd_id, parsed, steps = rmf.parse_command(

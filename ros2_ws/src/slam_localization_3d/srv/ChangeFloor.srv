@@ -1,0 +1,7 @@
+string floor_name
+geometry_msgs/PoseWithCovarianceStamped initial_pose
+---
+bool success
+string message
+string current_floor
+geometry_msgs/PoseWithCovarianceStamped final_pose

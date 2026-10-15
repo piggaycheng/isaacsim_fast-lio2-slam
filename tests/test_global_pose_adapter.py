@@ -8,6 +8,7 @@ import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
+from std_srvs.srv import SetBool
 
 SCRIPTS = (
     Path(__file__).resolve().parents[1]
@@ -99,6 +100,21 @@ class TestGlobalPoseAdapter(unittest.TestCase):
         )
         marker = self.node.accepted_publisher.publish.call_args.args[0]
         self.assertEqual((marker.frame_id, marker.stamp.sec), ("map", 10))
+
+    def test_floor_switch_hold_drops_old_corrections_and_resets_jump_gate(self):
+        self.input()
+        self.correction()
+        self.assert_count(1)
+        self.node.on_map_switch_hold(SetBool.Request(data=True), SetBool.Response())
+        self.input(10.1)
+        self.correction(10.1, x=20.0)
+        self.assert_count(1)
+        self.node.on_map_switch_hold(SetBool.Request(data=False), SetBool.Response())
+        self.correction(10.1, x=20.0)
+        self.assert_count(1)
+        self.input(10.2)
+        self.correction(10.2, x=20.0)
+        self.assert_count(2)
 
     def test_validity_and_freshness_reject_without_fake_success(self):
         self.correction()

@@ -43,6 +43,7 @@ class ScriptEntrypointsTest(unittest.TestCase):
             (maps / "map.pcd").touch()
             (maps / "map_2d.pgm").touch()
             (maps / "map_2d.yaml").write_text("image: map_2d.pgm\n")
+            shutil.copytree(maps, root / "maps/1F")
             docker = root / "docker"
             docker.mkdir()
             (docker / "ros_compose.sh").write_text(
@@ -71,12 +72,12 @@ class ScriptEntrypointsTest(unittest.TestCase):
                  ("python3 /workspace/scripts/mapping_manager.py status",)),
                 ("run_2d_localization.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "ROS launch slam_localization_2d",
-                  "map:=/workspace/maps/office/map_2d.yaml",
+                  "map:=/workspace/maps/1F/map_2d.yaml",
                   "rviz:=false", "SIMULATOR", "--headless")),
                 ("run_3d_localization.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "ROS launch slam_localization_3d",
-                  "map_pcd:=/workspace/maps/office/map.pcd",
-                  "map_pgm:=/workspace/maps/office/map_2d.yaml",
+                  "map_pcd:=/workspace/maps/1F/map.pcd",
+                  "map_pgm:=/workspace/maps/1F/map_2d.yaml",
                   "rviz:=false", "SIMULATOR", "--headless")),
                 ("run_nav.sh", ("--mode", "2d", "--headless", "--no-rviz"),
                  ("ROOT", "localization_2d.launch.py", "SIMULATOR", "--headless")),
@@ -102,6 +103,11 @@ class ScriptEntrypointsTest(unittest.TestCase):
                         self.assertIn(text, result.stdout)
                     if "ROOT" in expected:
                         self.assertIn(f"ROOT {root}\n", result.stdout)
+                    if name in ("run_nav.sh", "run_3d_localization.sh", "run_multi_nav.sh"):
+                        self.assertIn("/workspace/maps/1F/map_2d.yaml", result.stdout)
+                        if name != "run_nav.sh" or "--mode 3d" in " ".join(args):
+                            self.assertIn("/workspace/maps/1F/map.pcd", result.stdout)
+                            self.assertIn("auto_initial_pose:=false", result.stdout)
 
 
 if __name__ == "__main__":

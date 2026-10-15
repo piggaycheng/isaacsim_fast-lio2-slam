@@ -18,6 +18,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
+from std_srvs.srv import SetBool
 
 if __package__:
     from .localization_3d_pose import (
@@ -128,6 +129,8 @@ class GlobalPoseAdapter(Node):
         self.last_now = None
         self.initial_pose_received = False
         self.warned = set()
+        self.map_switch_hold = False
+        self.minimum_correction_time = None
         self.pose_publisher = self.create_publisher(
             PoseWithCovarianceStamped, "localization_3d/global_pose", 10
         )
@@ -141,6 +144,22 @@ class GlobalPoseAdapter(Node):
         self.create_subscription(Odometry, "Odometry", self.on_odometry, 10)
         self.create_subscription(PointCloud2, "cloud_registered", self.on_scan, 10)
         self.create_subscription(Odometry, "map_to_odom", self.on_correction, 10)
+        self.create_service(
+            SetBool, "localization_3d/set_map_switch_hold", self.on_map_switch_hold
+        )
+
+    def on_map_switch_hold(self, request, response):
+        self.map_switch_hold = request.data
+        self.last_correction_time = None
+        self.last_accepted_scan_time = None
+        self.last_accepted_lio = None
+        self.last_accepted_correction = None
+        self.minimum_correction_time = self.now()
+        self.initial_pose_received = True
+        self.warned.clear()
+        response.success = True
+        response.message = "Localization correction gate reset"
+        return response
 
     def reject(self, reason):
         if reason not in self.warned:
@@ -155,6 +174,7 @@ class GlobalPoseAdapter(Node):
         self.last_accepted_lio = None
         self.last_accepted_correction = None
         self.initial_pose_received = False
+        self.minimum_correction_time = None
         self.warned.clear()
         self.get_logger().warning("Simulation clock reset; waiting for fresh 3D inputs")
 
@@ -254,6 +274,11 @@ class GlobalPoseAdapter(Node):
 
     def on_correction(self, message):
         now = self.now()
+        if self.map_switch_hold or (
+            self.minimum_correction_time is not None
+            and seconds(message.header.stamp) <= self.minimum_correction_time
+        ):
+            return
         if (
             message.header.frame_id != "map"
             or message.child_frame_id not in ("", "camera_init")

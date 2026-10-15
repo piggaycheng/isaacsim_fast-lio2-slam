@@ -7,17 +7,18 @@ import rclpy
 from lifecycle_msgs.srv import GetState
 from rclpy.node import Node
 
+NAVIGATION_NODES = (
+    "planner_server", "controller_server", "behavior_server", "bt_navigator",
+    "velocity_smoother", "collision_monitor",
+)
+
 
 def main():
     rclpy.init()
     node = Node("navigation_readiness")
-    names = (
-        "planner_server", "controller_server", "behavior_server", "bt_navigator",
-        "velocity_smoother", "collision_monitor",
-    )
     clients = {
         name: node.create_client(GetState, f"{name}/get_state")
-        for name in names
+        for name in NAVIGATION_NODES
     }
     deadline = time.monotonic() + 35
     states = {}

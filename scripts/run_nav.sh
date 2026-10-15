@@ -3,7 +3,7 @@ set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode=""
-map_file="$project_dir/maps/office/map_2d.yaml"
+map_file="$project_dir/maps/1F/map_2d.yaml"
 map_pcd=""
 headless=false
 auto_jog=false
@@ -23,10 +23,10 @@ Launch Isaac Sim with exactly one localization mode.
 
 Options:
       --mode MODE      Required: 2d (AMCL), or 3d (PCD fusion and costmaps).
-  -m, --map FILE       Nav2 map YAML file (default: maps/office/map_2d.yaml).
-      --pcd FILE       3d only: PCD map (default: maps/office/map.pcd).
+  -m, --map FILE       Nav2 map YAML file (default: maps/1F/map_2d.yaml).
+      --pcd FILE       3d only: PCD map (default: map.pcd beside the map YAML).
       --manual-initial-pose
-                       3d only: set initial pose in RViz instead of Office spawn.
+                       3d only: set initial pose in RViz (required for non-Office maps).
       --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
       --static-zones   Keep all collision zones active in every direction
                        (default switches forward/reverse/rotate zone sets).

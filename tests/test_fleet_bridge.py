@@ -65,6 +65,9 @@ class FleetBridgeCancellationTest(unittest.TestCase):
         self.bridge.battery = 100.0
         self.bridge.registered = True
         self.bridge.cmd_ids = {}
+        self.bridge.floor_future = None
+        self.bridge.floor_error = False
+        self.bridge.level = "1F"
         self.bridge.get_logger = lambda: types.SimpleNamespace(
             info=lambda message: None, warning=lambda message: None, error=self.errors.append)
         self.bridge.client = types.SimpleNamespace(publish=self.publish)

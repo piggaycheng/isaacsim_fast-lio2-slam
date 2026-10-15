@@ -11,6 +11,8 @@ Topics under rmf/<fleet>/robot/<robot>/ :
                         task (extension) runs a list of task_bt steps
                         (navigate, gimbal_move, gimbal_rotate); gimbal_move / gimbal_rotate
                         (extension) run one gimbal step
+                        change_floor (extension) coordinates target-floor PGM/PCD
+                        and localization through the robot's internal service
   task_state (out)      extension: task progress (retained) on every change
   command_result (out)  completed / failed / canceled for a cmd_id
   deregister (out)      on shutdown
@@ -21,6 +23,7 @@ import json
 import math
 import queue
 import time
+from collections import OrderedDict
 
 import paho.mqtt.client as mqtt
 import rclpy
@@ -40,8 +43,8 @@ REGISTER_RETRY_S = 3.0
 
 
 class FleetBridge(Node):
-    def __init__(self):
-        super().__init__("fleet_bridge")
+    def __init__(self, **kwargs):
+        super().__init__("fleet_bridge", **kwargs)
         param = lambda name, default: self.declare_parameter(name, default).value
         host, port = param("mqtt_host", "localhost"), param("mqtt_port", 1883)
         username, password = param("mqtt_username", ""), param("mqtt_password", "")
@@ -49,7 +52,7 @@ class FleetBridge(Node):
         self.robot = self.get_namespace().strip("/")
         if not self.robot or not self.fleet:
             raise ValueError("fleet_bridge needs a robot namespace and the fleet_name parameter")
-        self.level = param("level_name", "L1")
+        self.level = param("level_name", "1F")
         self.waypoint = param("waypoint_name", "")
         self.charger, self.parking = param("default_charger", ""), param("default_parking", "")
         # robot.launch.py passes the global costmap robot_radius and cmd_vel_safety's speed caps;
@@ -61,15 +64,35 @@ class FleetBridge(Node):
         for name, value in self.specs.items():
             if not value > 0.0:
                 raise ValueError(f"fleet_bridge needs a positive {name} parameter")
+        # base_link z in every floor map when change_floor omits initial_pose.z (Nova Carter default).
+        self.floor_base_z = float(param("floor_base_z", -0.526))
         self.battery = float(param("battery", 100.0))
         heartbeat_rate = param("heartbeat_rate", 2.0)
         tick_rate = param("tick_rate", 10.0)
         self.topic = rmf.topics(self.fleet, self.robot)
         self.pose = None
+        self.pose_stamp = None
         self.registered = False
         self.last_register = -REGISTER_RETRY_S
         self.cmd_ids = {}
         self.inbox = queue.Queue()
+        self.floor_future = None
+        self.floor_cmd_id = None
+        self.floor_results = OrderedDict()
+        self.floor_error = False
+        self.floor_started = None
+        self.floor_response_overdue = False
+        self.floor_timeout = float(param("floor_switch_timeout", 90.0))
+        if not math.isfinite(self.floor_timeout) or self.floor_timeout <= 0:
+            raise ValueError("floor_switch_timeout must be finite and positive")
+        from slam_localization_3d.srv import ChangeFloor
+        from std_msgs.msg import String
+        from rclpy.qos import DurabilityPolicy, QoSProfile
+        self.floor_client = self.create_client(ChangeFloor, "navigation/change_floor")
+        self.create_subscription(
+            String, "navigation/current_floor", self.on_floor,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2, client_id=rmf.client_id(self.fleet, self.robot),
@@ -110,8 +133,94 @@ class FleetBridge(Node):
         client.subscribe([(self.topic["register_ack"], 1), (self.topic["command"], 1)])
 
     def on_odometry(self, message):
+        stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self.pose_stamp is not None and now < self.pose_stamp - 0.5:
+            self.pose_stamp = None
+        if self.pose_stamp is not None and stamp < self.pose_stamp:
+            return
         pose = message.pose.pose
         self.pose = (pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation))
+        self.pose_stamp = stamp
+
+    def on_floor(self, message):
+        self.level = message.data
+
+    def floor_result(self, cmd_id, status, message):
+        payload = rmf.command_result_payload(
+            self.robot, cmd_id, status, message, self.pose, level=self.level)
+        self.floor_results[cmd_id] = payload
+        while len(self.floor_results) > 64:
+            self.floor_results.popitem(last=False)
+        self.publish("command_result", payload)
+
+    def begin_floor_switch(self, cmd_id, command):
+        if cmd_id in self.floor_results:
+            self.publish("command_result", self.floor_results[cmd_id])
+            return
+        if self.floor_future is not None:
+            if cmd_id != self.floor_cmd_id:
+                self.floor_result(cmd_id, "failed", "Another floor switch is in progress")
+            return
+        if self.runner.active:
+            self.floor_result(cmd_id, "failed", "Finish or stop the current task before changing floor")
+            return
+        if not self.floor_client.service_is_ready():
+            self.floor_result(cmd_id, "failed", "Robot floor manager is unavailable")
+            return
+        initial = command["initial_pose"]
+        # odometry/global is 2D (z == 0); every floor map shares the base_link floor height.
+        z = initial["z"] if initial["z"] is not None else self.floor_base_z
+        from slam_localization_3d.srv import ChangeFloor
+        request = ChangeFloor.Request()
+        request.floor_name = command["floor_name"]
+        request.initial_pose.header.frame_id = "map"
+        request.initial_pose.header.stamp = self.get_clock().now().to_msg()
+        pose = request.initial_pose.pose.pose
+        pose.position.x, pose.position.y, pose.position.z = initial["x"], initial["y"], z
+        pose.orientation.z = math.sin(initial["yaw"] / 2)
+        pose.orientation.w = math.cos(initial["yaw"] / 2)
+        self.floor_cmd_id = cmd_id
+        self.floor_started = time.monotonic()
+        self.floor_response_overdue = False
+        self.floor_future = self.floor_client.call_async(request)
+        self.floor_error = False
+        self.get_logger().info(f"MQTT floor switch {cmd_id}: {request.floor_name}")
+
+    def poll_floor_switch(self):
+        future = self.floor_future
+        if future is None:
+            return
+        if not future.done():
+            if time.monotonic() - self.floor_started >= self.floor_timeout and not self.floor_response_overdue:
+                self.floor_error = True
+                self.floor_response_overdue = True
+                # Keep tracking the request; a local timeout does not cancel
+                # the robot's coordinated switch or prove that it stopped.
+                self.get_logger().error("Floor switch response overdue; blocking new commands")
+                self.floor_result(self.floor_cmd_id, "failed",
+                                  "Floor switch response timed out; outcome unknown, commands blocked")
+            return
+        error = future.exception()
+        result = None if error is not None else future.result()
+        if result is not None:
+            self.level = result.current_floor
+            if result.success:
+                pose = result.final_pose.pose.pose
+                self.pose = (pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation))
+                stamp = result.final_pose.header.stamp
+                self.pose_stamp = stamp.sec + stamp.nanosec * 1e-9
+        self.floor_error = self.floor_response_overdue or result is None or not result.success
+        if not self.floor_response_overdue:
+            self.floor_result(
+                self.floor_cmd_id, "failed" if self.floor_error else "completed",
+                str(error) if error is not None else (
+                    "Floor manager returned no response" if result is None else result.message),
+            )
+        else:
+            self.get_logger().warning("Late floor switch response received; retry with a new cmd_id")
+        self.floor_future = None
+        self.floor_cmd_id = None
 
     def on_battery(self, message):
         if math.isfinite(message.percentage):
@@ -121,7 +230,9 @@ class FleetBridge(Node):
         self.client.publish(self.topic[name], payload, qos=qos)
 
     def maybe_register(self):
-        if self.registered or self.pose is None or not self.client.is_connected():
+        if (self.registered or self.pose is None or not self.level
+                or self.floor_future is not None or self.floor_error
+                or not self.client.is_connected()):
             return
         now = time.monotonic()
         if now - self.last_register < REGISTER_RETRY_S:
@@ -157,6 +268,17 @@ class FleetBridge(Node):
         if parsed is None:
             return
         cmd_id, action, steps = parsed
+        if not self.registered and action != "change_floor":
+            self.get_logger().warning("ignoring command before register_ack")
+            return
+        if action == "change_floor":
+            self.begin_floor_switch(cmd_id, steps)
+            return
+        if self.floor_future is not None or self.floor_error:
+            self.publish("command_result", rmf.command_result_payload(
+                self.robot, cmd_id, "failed",
+                "Floor switch pending or failed; retry change_floor before sending other commands"))
+            return
         if action == "stop":
             self.runner.cancel(on_done=lambda success, message: self.publish(
                 "command_result", rmf.command_result_payload(
@@ -179,10 +301,16 @@ class FleetBridge(Node):
         cmd_id = self.cmd_ids.get(self.runner.task.goal_id) if active else None
         # Not idle (nor accepting commands) until registered.
         status = ("moving" if active else "idle") if self.registered else "error"
+        if self.floor_future is not None:
+            status, cmd_id = "moving", self.floor_cmd_id
+        if self.floor_error:
+            status = "error"
         self.publish("heartbeat", rmf.heartbeat_payload(
-            self.robot, self.pose, self.battery, status, cmd_id), qos=0)
+            self.robot, self.pose, self.battery, status, cmd_id,
+            level=self.level), qos=0)
 
     def on_tick(self):
+        self.poll_floor_switch()
         while True:
             try:
                 topic, payload = self.inbox.get_nowait()
@@ -202,10 +330,8 @@ class FleetBridge(Node):
                     self.maybe_register()
                 else:
                     self.get_logger().warning(f"registration rejected: {message}; retrying")
-            elif self.registered:
-                self.handle_command(payload)
             else:
-                self.get_logger().warning("ignoring command before register_ack")
+                self.handle_command(payload)
         self.runner.tick()
 
     def close(self):

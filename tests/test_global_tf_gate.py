@@ -11,6 +11,7 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from std_msgs.msg import Header
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException
 
 sys.path.insert(
@@ -82,6 +83,20 @@ class TestGlobalTfGate(unittest.TestCase):
         self.node.get_clock().now.return_value.to_msg.return_value.sec = 20
         self.node.on_global_odometry(odometry(20))
         self.node.broadcaster.sendTransform.assert_not_called()
+
+    def test_floor_switch_hold_requires_a_new_correction_before_tf_resumes(self):
+        self.node.on_correction(Header(frame_id="map", stamp=odometry(9).header.stamp))
+        self.node.on_map_switch_hold(SetBool.Request(data=True), SetBool.Response())
+        self.node.on_global_odometry(odometry(10))
+        self.node.broadcaster.sendTransform.assert_not_called()
+        self.node.on_map_switch_hold(SetBool.Request(data=False), SetBool.Response())
+        self.node.on_correction(Header(frame_id="map", stamp=odometry(9).header.stamp))
+        self.node.on_global_odometry(odometry(10))
+        self.node.broadcaster.sendTransform.assert_not_called()
+        self.node.get_clock().now.return_value.to_msg.return_value.sec = 11
+        self.node.on_correction(Header(frame_id="map", stamp=odometry(11).header.stamp))
+        self.node.on_global_odometry(odometry(11))
+        self.node.broadcaster.sendTransform.assert_called_once()
 
     def test_waits_for_local_tf_at_the_global_odom_stamp(self):
         self.node.tf_buffer.lookup_transform = self.real_lookup

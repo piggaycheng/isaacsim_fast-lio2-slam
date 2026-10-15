@@ -56,11 +56,22 @@ Office 原本的 `/Root/GroundPlane/CollisionPlane` 是 z=0 的無限碰撞平�
 
 按 **L** 同步切換兩個車廂的停靠樓層：地面 `z=0` 與地下 `z=-3.3 m`。進入車廂後先停車再按 L；它會切換到手動模式，先用約 2 秒關門，再以平滑加減速用 6 秒升降。移動中 E 不開門、重複 L 不反向；抵達後門保持關閉，按 E 才開啟車廂內門與停靠樓層的外門。未停靠樓層的門不會打開，內門碰撞隨車廂移動；機器人靠物理接觸隨車廂升降，不直接改寫機器人位置。重設模擬時間會恢復地面停靠、關門狀態。
 
-目前兩個電梯同步控制，沒有獨立選梯、ROS／MQTT 指令、防夾偵測或多樓層 Nav2 地圖切換；請避免停在門口，升降時不要繼續駕駛車輛。未找到預期的 Office 車廂／骨架門結構時會報錯，不會默默以替代模型取代。
+### MQTT 電梯控制（Open-RMF lift）
 
-`run_slam.sh` 固定啟用手動電梯門，不提供模式切換參數；其他 `run_*.sh` 尚未提供電梯門參數的轉傳介面。單獨執行模擬器不會自動啟動 ROS container；要同時建圖／導航，需另行啟動相應 ROS 流程。
+`--elevator-mqtt-lift NAME`（需 `--dynamic-elevator-doors --mqtt-host`，可 `--headless`）讓上位系統像控制實體電梯控制器一樣經 MQTT 控制電梯；欄位對應 Open-RMF `rmf_lift_msgs`，Open-RMF 端由 `rmf_isaacsim` 的 `mqtt_lift_adapter` 轉成 `/lift_requests`、`/lift_states`。`./scripts/run_multi_nav_online.sh --elevator-lift lift_1` 會帶上這些參數。
 
-驗證：`python3 -m unittest discover -s tests -p 'test_elevator_doors.py'` 測試控制時序、E／L 按鍵、升降互鎖及地面開口網格；`/home/yu/isaacsim-6.1.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、PhysX 門口阻擋、RTX LiDAR 量測，以及兩個車廂以物理接觸載送 Nova Carter 下樓再上樓、停靠樓層門互鎖與地下地板支撐。
+| Topic | 方向 | 內容 |
+|-------|------|------|
+| `rmf/lift/NAME/request` | 上位 → 模擬器（QoS 1） | `{"session_id":"carter1","request_type":"agv"\|"human"\|"end_session","destination_floor":"B1","door_state":"open"\|"closed"}` |
+| `rmf/lift/NAME/state` | 模擬器 → 上位（retained，2 Hz 與變化時） | `lift_name`、`available_floors`、`current_floor`、`destination_floor`、`door_state`（`closed`／`moving`／`open`）、`motion_state`（`stopped`／`up`／`down`）、`current_mode`（`human`／`agv`；斷線遺言 `offline`）、`session_id` |
+
+樓層以 `--elevator-floors`（預設 `1F:0,B1:-3.3`，名稱需與 `maps/` 樓層與 RMF level 一致）對應車廂高度。`agv` 請求取得 session，其他 session 的請求在 `end_session` 前忽略；換層時先關門、移動，抵達目的樓層停止後才依 `door_state` 開門。此模式停用自動循環。
+
+目前兩個電梯同步控制，沒有獨立選梯或防夾偵測；請避免停在門口，升降時不要繼續駕駛車輛。未找到預期的 Office 車廂／骨架門結構時會報錯，不會默默以替代模型取代。
+
+`run_slam.sh` 固定啟用手動電梯門，不提供模式切換參數；`run_multi_nav_online.sh` 提供 `--elevator-lift`，其他 `run_*.sh` 尚未提供電梯門參數的轉傳介面。單獨執行模擬器不會自動啟動 ROS container；要同時建圖／導航，需另行啟動相應 ROS 流程。
+
+驗證：`python3 -m unittest tests.test_elevator_doors tests.test_mqtt_elevator` 測試控制時序、MQTT 電梯 session／開關門順序、E／L 按鍵、升降互鎖及地面開口網格；`/home/yu/isaacsim-6.1.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、PhysX 門口阻擋、RTX LiDAR 量測，以及兩個車廂以物理接觸載送 Nova Carter 下樓再上樓、停靠樓層門互鎖與地下地板支撐。
 
 ## 套件分工
 
