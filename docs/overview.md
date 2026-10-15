@@ -19,8 +19,8 @@ flowchart LR
 | :-- | :-- | :-- |
 | ① 建圖與存圖 | `./scripts/run_slam.sh`、`./scripts/save_map.sh` | [mapping_flow.md](mapping_flow.md) |
 | ② 轉 2D 地圖 | `./scripts/pcd2pgm.py` | [mapping_flow.md](mapping_flow.md) |
-| ③ 定位 | `./scripts/run_nav.sh --mode 2d` 或 `--mode 3d` | [3d_localization.md](3d_localization.md) |
-| ④ 導航 | `./scripts/run_nav.sh --mode 3d --navigate` | [nav.md](nav.md) |
+| ③ 定位 | `./scripts/run_2d_localization.sh` 或 `./scripts/run_3d_localization.sh --global-fusion` | [3d_localization.md](3d_localization.md) |
+| ④ 導航 | `./scripts/run_nav.sh`（預設 3D 定位與導航） | [nav.md](nav.md) |
 | 多車、換車種 | `./scripts/run_multi_nav.sh` | [multi_robot.md](multi_robot.md)、[covariance_calibration.md](covariance_calibration.md) |
 
 ## 設計理念

@@ -1,18 +1,18 @@
 # Nav2 導航架構
 
-本文件說明 `./scripts/run_nav.sh --mode 3d --navigate` 的導航流程：costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈。定位如何產生 `map -> odom` 和 `odom -> base_link` 見 [`3d_localization.md`](3d_localization.md)。
+本文件說明 `./scripts/run_nav.sh`（預設 3D 模式並啟用導航）的流程：costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈。定位如何產生 `map -> odom` 和 `odom -> base_link` 見 [`3d_localization.md`](3d_localization.md)。
 
 - 只有 3D 模式有導航；`--mode 2d` 只做 AMCL 定位，不啟動 Nav2。
-- 不加 `--navigate` 時，只以 `costmap_observer` 啟動兩張 costmap 供 RViz 觀察，不啟動 planner、controller，也不發布行駛命令。
+- `run_nav.sh` 的 3D 模式一律啟用導航，舊的 `--navigate` 參數仍相容；啟動不會自動發送目標。若只要以 `costmap_observer` 觀察兩張 costmap、不啟動 planner／controller，使用 `./scripts/run_3d_localization.sh --global-fusion --costmaps`。
 - Nav2 設定在 `ros2_ws/src/slam_localization_3d/config/`，感測前處理設定在 `ros2_ws/src/slam_nav/config/`；啟動檔是 `slam_localization_3d/launch/global_fusion.launch.py`。
 
 常用指令：
 
 ```bash
-./scripts/run_nav.sh --mode 3d --navigate                 # 導航，RViz 用 2D Goal Pose 送目標
-./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0   # 在 Isaac 場景放一個地圖上沒有的箱子
-./scripts/run_nav.sh --mode 3d --navigate --filter-editor # RViz 動態標註禁行／限速區
-./scripts/run_nav.sh --mode 3d --navigate --static-zones  # 全部保護區同時生效
+./scripts/run_nav.sh                 # 3D 導航，RViz 用 2D Goal Pose 送目標
+./scripts/run_nav.sh --box 2.0,0.0   # 在 Isaac 場景放一個地圖上沒有的箱子
+./scripts/run_nav.sh --filter-editor # RViz 動態標註禁行／限速區
+./scripts/run_nav.sh --static-zones  # 全部保護區同時生效
 ```
 
 預設載入 `maps/1F`，等待初始位姿；單車可用 RViz 初始化，線上多車可用

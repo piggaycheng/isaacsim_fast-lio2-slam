@@ -50,13 +50,15 @@ class TestRunNavModes(unittest.TestCase):
                         str(RUN_NAV.parents[1] / filename), result.stderr,
                     )
 
-    def test_mode_is_required(self):
-        result = launch()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Specify --mode 2d or --mode 3d", result.stderr)
+    def test_default_mode_uses_3d_map_validation(self):
+        result = launch("--map", "missing.yaml")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PGM map YAML does not exist", result.stderr)
 
     def test_invalid_or_repeated_mode_is_rejected(self):
-        for args in (("--mode", "other"), ("--mode",), ("--mode", "2d", "--mode", "3d")):
+        for args in (("--mode", "other"), ("--mode", ""), ("--mode",),
+                     ("--mode", "2d", "--mode", "3d"),
+                     ("--mode", "3d", "--mode", "3d")):
             with self.subTest(args=args):
                 self.assertEqual(launch(*args).returncode, 2)
 
@@ -94,9 +96,11 @@ class TestRunNavModes(unittest.TestCase):
         self.assertIn("PCD map does not exist", result.stderr)
 
     def test_navigation_cannot_compete_with_auto_jog(self):
-        result = launch("--mode", "3d", "--navigate", "--auto-jog")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("--auto-jog cannot be combined with --navigate", result.stderr)
+        for args in ((), ("--mode", "3d"), ("--mode", "3d", "--navigate")):
+            with self.subTest(args=args):
+                result = launch(*args, "--auto-jog")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--auto-jog cannot be combined with --navigate", result.stderr)
 
     def test_missing_filter_values_are_rejected(self):
         for option in ("--filter-state",):

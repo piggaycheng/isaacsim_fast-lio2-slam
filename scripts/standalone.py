@@ -1,8 +1,9 @@
-#!/home/yu/isaacsim-6.1.0/python.sh
+#!/home/user/isaacsim-6.1.0/python.sh
 
 import argparse
 import math
 import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -1102,6 +1103,12 @@ try:
                     {stream.rtsp.path: stream.rtsp.active for stream in camera_runtime}
                 )
 finally:
+    # Kit's fast shutdown can terminate before Python reports a pending exception.
+    if sys.exc_info()[0] is not None:
+        simulation_exit_code = 1
+        traceback.print_exc()
+        sys.stderr.flush()
+
     from rtsp_stream import shutdown_server
 
     if elevator_lift is not None:

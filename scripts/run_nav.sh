@@ -2,7 +2,8 @@
 set -eo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mode=""
+mode="3d"
+mode_set=false
 map_file="$project_dir/maps/1F/map_2d.yaml"
 map_pcd=""
 headless=false
@@ -17,24 +18,25 @@ boxes=()
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/run_nav.sh --mode {2d|3d} [OPTIONS]
+Usage: ./scripts/run_nav.sh [--mode {2d|3d}] [OPTIONS]
 
-Launch Isaac Sim with exactly one localization mode.
+Launch Isaac Sim with 3D localization and Nav2 navigation by default.
+Navigation waits for a valid localization and an RViz goal; no automatic goal.
 
 Options:
-      --mode MODE      Required: 2d (AMCL), or 3d (PCD fusion and costmaps).
+      --mode MODE      3d (default: PCD fusion and Nav2), or 2d (AMCL only).
   -m, --map FILE       Nav2 map YAML file (default: maps/1F/map_2d.yaml).
       --pcd FILE       3d only: PCD map (default: map.pcd beside the map YAML).
       --manual-initial-pose
                        3d only: set initial pose in RViz (required for non-Office maps).
-      --navigate       3d only: enable low-speed Nav2 navigation from RViz goals.
+      --navigate       3d only: accepted for compatibility; navigation is always enabled.
       --static-zones   Keep all collision zones active in every direction
                        (default switches forward/reverse/rotate zone sets).
       --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
       --filter-state FILE
                        Persistent editor JSON (default: maps/costmap_filters/editor.json).
       --headless       Run Isaac Sim without its GUI.
-      --auto-jog       Drive Carter automatically for localization testing.
+      --auto-jog       2d only: drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle in the Isaac Sim scene at
@@ -43,20 +45,25 @@ Options:
   -h, --help           Show this help.
 
 Examples:
+  ./scripts/run_nav.sh
   ./scripts/run_nav.sh --mode 2d
-  ./scripts/run_nav.sh --mode 3d --headless --no-rviz
-  ./scripts/run_nav.sh --mode 3d --navigate --box 2.0,0.0
+  ./scripts/run_nav.sh --headless --no-rviz
+  ./scripts/run_nav.sh --box 2.0,0.0
+
+For localization/costmap observation without navigation, use:
+  ./scripts/run_3d_localization.sh --global-fusion --costmaps
 EOF
 }
 
 while (($# > 0)); do
   case "$1" in
     --mode)
-      if (($# < 2)) || [[ -n "$mode" ]]; then
+      if (($# < 2)) || [[ "$mode_set" == true ]]; then
         echo "--mode requires one value and may only be specified once" >&2
         exit 2
       fi
       mode="$2"
+      mode_set=true
       shift 2
       ;;
     -m|--map)
@@ -125,9 +132,8 @@ if [[ "$mode" == 2d ]]; then
 fi
 if [[ -n "$map_pcd" ]]; then args+=(--pcd "$map_pcd"); fi
 if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
-if [[ "$navigate" == true ]]; then args+=(--navigate); fi
 if [[ "$static_zones" == true ]]; then args+=(--static-zones); fi
 if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
 if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
-exec "$project_dir/scripts/run_3d_localization.sh" --global-fusion --costmaps \
+exec "$project_dir/scripts/run_3d_localization.sh" --global-fusion --costmaps --navigate \
   --pgm "$map_file" "${args[@]}"

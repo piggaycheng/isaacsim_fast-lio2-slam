@@ -81,8 +81,17 @@ class ScriptEntrypointsTest(unittest.TestCase):
                   "rviz:=false", "SIMULATOR", "--headless")),
                 ("run_nav.sh", ("--mode", "2d", "--headless", "--no-rviz"),
                  ("ROOT", "localization_2d.launch.py", "SIMULATOR", "--headless")),
+                ("run_nav.sh", (),
+                 ("ROOT", "global_fusion.launch.py", "costmaps:=true",
+                  "navigate:=true", "rviz:=true", "SIMULATOR",
+                  "--ros-cmd-vel")),
                 ("run_nav.sh", ("--mode", "3d", "--headless", "--no-rviz"),
-                 ("ROOT", "global_fusion.launch.py", "SIMULATOR", "--headless")),
+                 ("ROOT", "global_fusion.launch.py", "costmaps:=true",
+                  "navigate:=true", "rviz:=false", "SIMULATOR", "--headless",
+                  "--ros-cmd-vel")),
+                ("run_nav.sh", ("--navigate", "--manual-initial-pose"),
+                 ("global_fusion.launch.py", "navigate:=true",
+                  "auto_initial_pose:=false", "--ros-cmd-vel")),
                 ("run_multi_nav.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "launch slam_bringup robot.launch.py",
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
@@ -105,9 +114,13 @@ class ScriptEntrypointsTest(unittest.TestCase):
                         self.assertIn(f"ROOT {root}\n", result.stdout)
                     if name in ("run_nav.sh", "run_3d_localization.sh", "run_multi_nav.sh"):
                         self.assertIn("/workspace/maps/1F/map_2d.yaml", result.stdout)
-                        if name != "run_nav.sh" or "--mode 3d" in " ".join(args):
+                        if name != "run_nav.sh" or "--mode 2d" not in " ".join(args):
                             self.assertIn("/workspace/maps/1F/map.pcd", result.stdout)
                             self.assertIn("auto_initial_pose:=false", result.stdout)
+                        else:
+                            self.assertNotIn("global_fusion.launch.py", result.stdout)
+                            self.assertNotIn("navigate:=true", result.stdout)
+                            self.assertNotIn("--ros-cmd-vel", result.stdout)
 
 
 if __name__ == "__main__":

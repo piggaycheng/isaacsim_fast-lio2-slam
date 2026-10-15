@@ -81,18 +81,19 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 
 | 腳本 | 用途與範例 |
 |---|---|
-| `scripts/run_nav.sh` | 統一入口，必須指定 `--mode 2d` 或 `--mode 3d` |
+| `scripts/run_nav.sh` | 預設 3D 融合定位與完整 Nav2 導航；`--mode 2d` 保留 AMCL 純定位 |
 | `scripts/run_2d_localization.sh` | 2D AMCL 定位；例如 `./scripts/run_2d_localization.sh --map maps/office/map_2d.yaml` |
 | `scripts/run_3d_localization.sh` | 3D ICP 定位顯示；加 `--global-fusion` 啟動輪速／IMU／PCD 融合 |
 
 ```bash
 ./scripts/run_nav.sh --mode 2d                 # AMCL 定位，不啟動自主導航
-./scripts/run_nav.sh --mode 3d                 # PCD 融合定位與 costmap 觀察，不啟動自主導航
-./scripts/run_nav.sh --mode 3d --navigate      # 完整 Nav2 導航
+./scripts/run_nav.sh                           # 預設 3D 融合定位與完整 Nav2 導航
+./scripts/run_nav.sh --mode 3d                 # 同上，不需再加 --navigate
 ./scripts/run_3d_localization.sh              # 獨立的 3D 定位顯示
+./scripts/run_3d_localization.sh --global-fusion --costmaps # 融合與 costmap 觀察，不導航
 ```
 
-導航堆疊啟動完成後，用 RViz 的 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)。
+預設 `maps/1F` 先用 RViz 的 **2D Pose Estimate** 設定初始位置與航向；等定位收斂、導航堆疊啟動完成後，用 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。啟動不會自動發送導航目標；舊的 `--navigate` 參數仍相容。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)。
 
 導航／定位腳本預設地圖為 **`maps/1F`**，初始定位需使用 RViz 或線上模式的 MQTT `change_floor`。
 上位系統可用 `floor_name: "B1"` 與目標樓層 `base_link` 的 `initial_pose: {x, y, z, yaw}`

@@ -155,12 +155,12 @@ local_odometry:
 | :---------------------------------- | :------------------------------------------------------------------------------- |
 | `./scripts/run_3d_localization.sh`          | 獨立 3D 配準展示，不啟動融合導航                                                 |
 | `./scripts/run_nav.sh --mode 2d`            | PGM + AMCL 定位                                                                  |
-| `./scripts/run_nav.sh --mode 3d`            | PCD 融合與 costmap 觀察，不啟動自動導航                                          |
-| `./scripts/run_nav.sh --mode 3d --navigate` | 再啟動 Nav2 planner、controller 與導航，從 RViz「2D Goal Pose」發送 `/goal_pose` |
+| `./scripts/run_3d_localization.sh --global-fusion --costmaps` | PCD 融合與 costmap 觀察，不啟動自動導航 |
+| `./scripts/run_nav.sh`（或 `--mode 3d`） | 預設啟動 PCD 融合、costmap 與完整 Nav2 導航，從 RViz「2D Goal Pose」發送 `/goal_pose` |
 
-`scripts/run_nav.sh --mode 3d` 會以 `--global-fusion --costmaps` 呼叫 `scripts/run_3d_localization.sh`；若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./scripts/run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
+`scripts/run_nav.sh` 預設為 3D 模式，會以 `--global-fusion --costmaps --navigate` 呼叫 `scripts/run_3d_localization.sh`；舊的 `run_nav.sh --navigate` 仍相容。若只想觀察 3D 融合而不啟動 costmap，可直接使用 `./scripts/run_3d_localization.sh --global-fusion`。`--costmaps` 會開啟 `--obstacle-cloud`，將地面濾除後的 LiDAR 點雲發布為 `/perception/obstacles`；只有 `--obstacle-cloud` 不會啟動 costmap。
 
-加上 `--navigate` 後的 costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈見 [`nav.md`](nav.md)。導航時不能同時使用鍵盤或 auto-jog。
+導航的 costmap、路徑規劃、控制、recovery 與 `cmd_vel` 安全鏈見 [`nav.md`](nav.md)。導航時不能同時使用鍵盤或 auto-jog；`run_nav.sh` 的 3D 模式會拒絕 `--auto-jog`。
 
 ## 獨立 3D 定位模式
 
