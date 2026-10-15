@@ -137,6 +137,34 @@ mosquitto_pub -h localhost -q 1 \
 `/NAME/navigation/change_floor` service 僅供車內 fleet bridge 協調，不是上位系統的接口。
 每車 namespace／TF 隔離維持不變。
 
+### 省略 `initial_pose`：RViz 手動重新定位
+
+`change_floor` 不帶 `initial_pose`（或為 `null`）時，車端照常停車、載入目標層 PGM（RViz 立即顯示新地圖），
+接著等待操作者在 RViz 按 **2D Pose Estimate**（最多 `manual_pose_timeout` 300 秒），
+再以該位姿（`z` 為 0 時改用 `floor_base_z`）載入 PCD、等待 ICP 並恢復 Nav2。
+開始載入地圖前的 RViz 位姿會被忽略；bridge 的結果 timeout 相應延長為 90 + 300 秒。
+ICP 確認期間不要再按 2D Pose Estimate（會以未換算里程計的先驗重設定位）；
+若失敗，用新的 `cmd_id` 重送。
+
+### 不經 Open-RMF：`run_nav.sh` 手動測試
+
+`./scripts/run_nav.sh --mqtt-host localhost [--mqtt-port 1883]` 另啟動
+`floor_command_bridge.py`，只接受 `rmf/manual/robot/carter/command` 上的 `change_floor`
+（其他 action 回 `failed`，不送 register／heartbeat），結果回到 `.../command_result`：
+
+1. 啟動後在 RViz 以 2D Pose Estimate 設定 1F 位姿，以 Nav2 目標或手動把車開進電梯。
+2. Isaac Sim 視窗按 **E** 關門、**L** 換層到 B1、停妥後按 **E** 開門。
+3. 車輛靜止後發送：
+
+   ```bash
+   mosquitto_sub -h localhost -t rmf/manual/robot/carter/command_result &
+   mosquitto_pub -h localhost -q 1 -t rmf/manual/robot/carter/command \
+     -m '{"robot_id":"carter","cmd_id":1,"action":"change_floor","floor_name":"B1"}'
+   ```
+
+4. RViz 顯示 B1 地圖後，按一次 **2D Pose Estimate** 點選車在 B1 地圖上的位置與朝向。
+5. 收到 `"status": "completed"` 後即可在 RViz 下 B1 導航目標。每次換層使用新的 `cmd_id`。
+
 ## 擴充：多步任務
 
 規格之外的擴充：`command` 的 `action` 可為 `task`（多步 `navigate`／`gimbal_move`／`gimbal_rotate`），步驟之間由 adapter 以 `proceed` 放行，車端回報 `task_state`；也可直接為 `gimbal_move`／`gimbal_rotate`（單一雲台動作，用法同 `navigate`）。詳見 [多步任務文件](multi_step_task.md)。

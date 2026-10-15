@@ -383,8 +383,22 @@ def robot_nodes(context, package, nav):
                 "maps_root": maps_root or os.path.dirname(os.path.dirname(value("map_pgm"))),
                 "initial_floor": initial_floor,
                 "filter_editor_active": enabled("filter_editor"),
+                "floor_base_z": -imu_mount(profile)[2],
             }],
         ))
+        mqtt_host = value("floor_mqtt_host")
+        if mqtt_host:
+            actions.append(Node(
+                package="slam_fleet_bridge", executable="floor_command_bridge.py",
+                name="floor_command_bridge", output="screen",
+                parameters=[sim, {
+                    "mqtt_host": mqtt_host,
+                    "mqtt_port": int(value("floor_mqtt_port")),
+                    "fleet_name": value("floor_mqtt_fleet"),
+                    "robot_name": value("floor_mqtt_robot"),
+                    "floor_base_z": -imu_mount(profile)[2],
+                }],
+            ))
         # Nav2 publishes relative cmd_vel; recovery motions go through the same
         # smoother, collision_monitor and cmd_vel_safety gates as the controller.
         nav_cmd = [(topic("/cmd_vel"), topic("/nav2/cmd_vel_nav"))]
@@ -553,6 +567,14 @@ def generate_launch_description():
             DeclareLaunchArgument("obstacle_cloud", default_value="false"),
             DeclareLaunchArgument("costmaps", default_value="false"),
             DeclareLaunchArgument("navigate", default_value="false"),
+            DeclareLaunchArgument(
+                "floor_mqtt_host", default_value="",
+                description="MQTT broker for standalone change_floor commands (navigate only; "
+                            "empty disables)",
+            ),
+            DeclareLaunchArgument("floor_mqtt_port", default_value="1883"),
+            DeclareLaunchArgument("floor_mqtt_fleet", default_value="manual"),
+            DeclareLaunchArgument("floor_mqtt_robot", default_value="carter"),
             DeclareLaunchArgument(
                 "direction_zones", default_value="true",
                 description="Switch forward/reverse/rotate collision zones by command direction "

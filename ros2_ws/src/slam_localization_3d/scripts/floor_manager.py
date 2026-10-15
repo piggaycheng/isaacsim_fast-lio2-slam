@@ -45,9 +45,17 @@ class FloorManager(Node):
         self.current_floor = self.declare_parameter("initial_floor", "1F").value
         self.timeout = float(self.declare_parameter("switch_timeout", 60.0).value)
         self.service_timeout = float(self.declare_parameter("service_timeout", 10.0).value)
+        self.manual_pose_timeout = float(
+            self.declare_parameter("manual_pose_timeout", 300.0).value)
         if not all(math.isfinite(value) and value > 0
-                   for value in (self.timeout, self.service_timeout)):
-            raise ValueError("switch_timeout and service_timeout must be finite and positive")
+                   for value in (self.timeout, self.service_timeout, self.manual_pose_timeout)):
+            raise ValueError(
+                "switch_timeout, service_timeout and manual_pose_timeout must be finite and positive")
+        # base_link height in every floor map; RViz 2D Pose Estimate always sends z = 0.
+        self.floor_base_z = float(self.declare_parameter("floor_base_z", -0.526).value)
+        if not math.isfinite(self.floor_base_z):
+            raise ValueError("floor_base_z must be finite")
+        self.manual_pose = None
         self.busy = False
         self.filter_editor_active = self.declare_parameter("filter_editor_active", False).value
         self.pose = None
@@ -66,6 +74,8 @@ class FloorManager(Node):
             PoseWithCovarianceStamped, "localization_3d/global_pose", self.on_pose, 10
         )
         self.create_subscription(Odometry, "odometry/global", self.on_global_odom, 10)
+        self.create_subscription(
+            PoseWithCovarianceStamped, "initialpose", self.on_initial_pose, 10)
         self.create_subscription(Odometry, "odometry/local", self.on_local_odom, 10)
         self.service_clients = {
             "safety": self.create_client(SetBool, "navigation/set_map_switch_hold"),
@@ -104,6 +114,26 @@ class FloorManager(Node):
     def on_pose(self, message):
         if message.header.frame_id == "map" and valid_pose(message.pose.pose):
             self.pose = message
+
+    def on_initial_pose(self, message):
+        # (arrival time, pose); only poses sent after the target PGM is shown are used.
+        self.manual_pose = (time.monotonic(), message)
+
+    def manual_initial_pose(self, after):
+        if self.manual_pose is None or self.manual_pose[0] <= after:
+            return None
+        pose = copy.deepcopy(self.manual_pose[1])
+        self.manual_pose = None
+        pose.header.stamp = self.get_clock().now().to_msg()
+        position = pose.pose.pose.position
+        if position.z == 0.0:
+            position.z = self.floor_base_z
+        try:
+            validate_initial_pose(pose)
+        except ValueError as error:
+            self.get_logger().warning(f"Ignoring invalid RViz initial pose: {error}")
+            return None
+        return pose
 
     def on_global_odom(self, message):
         self.global_odom = message
@@ -239,7 +269,8 @@ class FloorManager(Node):
             self.get_logger().error(response.message)
             return response
         try:
-            validate_initial_pose(request.initial_pose)
+            if not request.manual_initial_pose:
+                validate_initial_pose(request.initial_pose)
             map_yaml, pcd = floor_maps(self.maps_root, request.floor_name)
         except (ValueError, OSError, yaml.YAMLError) as error:
             response.message = str(error)
@@ -273,17 +304,42 @@ class FloorManager(Node):
             # From here a failure may leave a partially changed map pair.
             self.current_floor = ""
             self.publish_floor()
+            # RViz poses clicked once the target map starts loading belong to that floor.
+            map_requested = time.monotonic()
             result = await self.call("map", LoadMap.Request(map_url=map_yaml), deadline)
             if result.result != LoadMap.Response.RESULT_SUCCESS:
                 raise FloorSwitchError(f"Nav2 map load failed: {result.result}")
+            initial_pose = request.initial_pose
+            if request.manual_initial_pose:
+                shown = time.monotonic()
+                self.get_logger().info(
+                    f"Floor {request.floor_name} map shown; waiting up to "
+                    f"{self.manual_pose_timeout:g} s for an RViz 2D Pose Estimate")
+                manual = []
+
+                def received():
+                    pose = self.manual_initial_pose(map_requested)
+                    if pose is not None:
+                        manual.append(pose)
+                    return bool(manual)
+
+                await self.wait_until(
+                    received, shown + self.manual_pose_timeout, "RViz 2D Pose Estimate")
+                initial_pose = manual[0]
+                # The 3D localizer also reacts to /initialpose with an odom-unaware
+                # seed; let that finish before load_map installs the proper seed.
+                settle = time.monotonic() + 1.0
+                deadline = settle + self.timeout
+                await self.wait_until(
+                    lambda: time.monotonic() >= settle, deadline, "initial pose settle")
             await self.call("pcd", LoadLocalizationMap.Request(
-                pcd_path=pcd, initial_pose=request.initial_pose,
+                pcd_path=pcd, initial_pose=initial_pose,
             ), deadline)
             self.pose = None
             await self.hold("adapter", False, deadline)
             localization_after = self.get_clock().now().nanoseconds * 1e-9
             await self.wait_until(
-                lambda: self.localized(localization_after, request.initial_pose),
+                lambda: self.localized(localization_after, initial_pose),
                 deadline, "accepted target-floor ICP pose near initial_pose",
             )
             reset = copy.deepcopy(self.pose)
@@ -315,7 +371,7 @@ class FloorManager(Node):
                 await self.call(name, ClearEntireCostmap.Request(), deadline)
             await self.wait_until(
                 lambda: self.tf_ready(tf_after) and self.localized(
-                    localization_after, request.initial_pose),
+                    localization_after, initial_pose),
                 deadline, "fresh localization after costmap restart",
             )
             # No pre-switch goal survives PAUSE; only new commands may now pass.

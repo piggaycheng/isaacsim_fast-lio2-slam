@@ -21,6 +21,8 @@ filter_state="$project_dir/maps/costmap_filters/editor.json"
 filter_state_set=false
 ros_cmd_vel=false
 local_inputs=""
+mqtt_host=""
+mqtt_port=1883
 boxes=()
 
 usage() {
@@ -58,6 +60,12 @@ Options:
       --filter-state FILE
                       Persistent editor JSON inside the project (default:
                       maps/costmap_filters/editor.json).
+      --mqtt-host HOST
+                      With --navigate, accept MQTT change_floor on
+                      rmf/manual/robot/carter/command (omit initial_pose to
+                      relocalize with RViz 2D Pose Estimate).
+      --mqtt-port PORT
+                      MQTT broker port for --mqtt-host (default: 1883).
       --static-zones  Keep all collision zones active in every direction instead
                       of switching forward/reverse/rotate zone sets.
       --local-inputs LIST
@@ -113,6 +121,14 @@ while (($# > 0)); do
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
     --static-zones) direction_zones=false; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
+    --mqtt-host|--mqtt-port)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      if [[ "$1" == --mqtt-host ]]; then mqtt_host="$2"; else mqtt_port="$2"; fi
+      shift 2
+      ;;
     --local-inputs)
       if (($# < 2)) || [[ -z "$2" ]]; then
         echo "Missing value for $1" >&2
@@ -158,6 +174,14 @@ if [[ -n "$local_inputs" && "$global_fusion" != true ]]; then
 fi
 if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
   echo "--obstacle-cloud, --costmaps and --navigate require --global-fusion" >&2
+  exit 2
+fi
+if [[ -n "$mqtt_host" && "$navigate" != true ]]; then
+  echo "--mqtt-host requires --navigate" >&2
+  exit 2
+fi
+if [[ ! "$mqtt_port" =~ ^[0-9]+$ ]] || ((mqtt_port < 1 || mqtt_port > 65535)); then
+  echo "--mqtt-port must be 1-65535" >&2
   exit 2
 fi
 if [[ ( "$navigate" == true || "$ros_cmd_vel" == true ) && "$auto_jog" == true ]]; then
@@ -215,6 +239,9 @@ if [[ "$global_fusion" == true ]]; then
     direction_zones:="$direction_zones" "${filter_args[@]}")
   if [[ -n "$local_inputs" ]]; then
     launch_args+=(local_odometry_inputs:="$local_inputs")
+  fi
+  if [[ -n "$mqtt_host" ]]; then
+    launch_args+=(floor_mqtt_host:="$mqtt_host" floor_mqtt_port:="$mqtt_port")
   fi
 fi
 start_ros launch slam_localization_3d "$launch_file" "${launch_args[@]}"

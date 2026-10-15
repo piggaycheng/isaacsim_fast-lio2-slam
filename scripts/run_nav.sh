@@ -14,6 +14,7 @@ navigate=false
 static_zones=false
 filter_editor=false
 filter_state=""
+mqtt_args=()
 boxes=()
 
 usage() {
@@ -36,6 +37,9 @@ Options:
       --filter-editor  3d only: annotate Keepout/Speed polygons live in RViz.
       --filter-state FILE
                        Persistent editor JSON (default: maps/costmap_filters/editor.json).
+      --mqtt-host HOST 3d only: switch floors by MQTT change_floor on
+                       rmf/manual/robot/carter/command (see docs/nav.md).
+      --mqtt-port PORT MQTT broker port (default: 1883).
       --headless       Run Isaac Sim without its GUI or manual elevator controls.
       --auto-jog       2d only: drive Carter automatically for localization testing.
       --no-rviz        Do not start RViz.
@@ -50,6 +54,7 @@ Examples:
   ./scripts/run_nav.sh --mode 2d
   ./scripts/run_nav.sh --headless --no-rviz
   ./scripts/run_nav.sh --box 2.0,0.0
+  ./scripts/run_nav.sh --mqtt-host localhost
 
 For localization/costmap observation without navigation, use:
   ./scripts/run_3d_localization.sh --global-fusion --costmaps
@@ -94,6 +99,14 @@ while (($# > 0)); do
       shift 2
       ;;
     --navigate) navigate=true; shift ;;
+    --mqtt-host|--mqtt-port)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      mqtt_args+=("$1" "$2")
+      shift 2
+      ;;
     --static-zones) static_zones=true; shift ;;
     --headless) headless=true; shift ;;
     --auto-jog) auto_jog=true; shift ;;
@@ -125,8 +138,8 @@ if [[ "$mode" == 2d ]]; then
   if [[ -n "$map_pcd" ||
         -n "$filter_state" || "$filter_editor" == true ||
         "$manual_initial_pose" == true || "$navigate" == true ||
-        "$static_zones" == true ]]; then
-    echo "--pcd, --manual-initial-pose, --navigate, --static-zones and costmap filters require --mode 3d" >&2
+        "$static_zones" == true || ${#mqtt_args[@]} -gt 0 ]]; then
+    echo "--pcd, --manual-initial-pose, --navigate, --static-zones, --mqtt-* and costmap filters require --mode 3d" >&2
     exit 2
   fi
   exec "$project_dir/scripts/run_2d_localization.sh" --map "$map_file" "${args[@]}"
@@ -139,5 +152,6 @@ if [[ "$manual_initial_pose" == true ]]; then args+=(--manual-initial-pose); fi
 if [[ "$static_zones" == true ]]; then args+=(--static-zones); fi
 if [[ "$filter_editor" == true ]]; then args+=(--filter-editor); fi
 if [[ -n "$filter_state" ]]; then args+=(--filter-state "$filter_state"); fi
+args+=("${mqtt_args[@]}")
 exec "$project_dir/scripts/run_3d_localization.sh" --global-fusion --costmaps --navigate \
   --pgm "$map_file" "${args[@]}"

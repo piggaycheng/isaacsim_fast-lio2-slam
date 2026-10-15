@@ -281,6 +281,57 @@ class FloorSwitchTest(unittest.TestCase):
         self.spin_until(first.done)
         self.assertTrue(first.result().success, first.result().message)
 
+    def manual_request(self):
+        return ChangeFloor.Request(floor_name="B1", manual_initial_pose=True)
+
+    def rviz_pose(self):
+        pose = PoseWithCovarianceStamped()
+        pose.header.frame_id = "map"
+        pose.pose.pose.position.x = 4.0
+        pose.pose.pose.orientation.w = 1.0
+        return pose
+
+    def test_manual_pose_waits_for_rviz_estimate_after_map_is_shown(self):
+        rviz = self.peer.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)
+        self.spin_until(lambda: self.peer.count_subscribers(rviz.topic_name) > 0)
+        future = self.client.call_async(self.manual_request())
+        self.spin_until(lambda: "map" in [event[0] for event in self.events])
+        self.assertNotIn("pcd", [event[0] for event in self.events])
+        rviz.publish(self.rviz_pose())
+        self.spin_until(future.done, timeout=10.0)
+        result = future.result()
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(result.current_floor, "B1")
+        self.assertFalse(any(self.holds.values()))
+        position = self.target.pose.pose.position
+        self.assertEqual((position.x, position.z), (4.0, self.node.floor_base_z))
+
+    def test_manual_pose_sent_before_map_is_shown_is_ignored(self):
+        rviz = self.peer.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)
+        self.spin_until(lambda: self.peer.count_subscribers(rviz.topic_name) > 0)
+        rviz.publish(self.rviz_pose())
+        self.spin_until(lambda: self.node.manual_pose is not None)
+        self.node.manual_pose_timeout = 0.5
+        result = self.switch(self.manual_request())
+        self.assertFalse(result.success)
+        self.assertIn("RViz 2D Pose Estimate", result.message)
+        self.assertNotIn("pcd", [event[0] for event in self.events])
+        self.assertTrue(self.holds["safety"])
+
+    def test_command_fills_manual_or_explicit_change_floor_request(self):
+        import rmf_protocol
+        stamp = self.peer.get_clock().now().to_msg()
+        manual = rmf_protocol.fill_change_floor_request(
+            ChangeFloor.Request(), {"floor_name": "B1", "initial_pose": None}, -0.5, stamp)
+        self.assertTrue(manual.manual_initial_pose)
+        explicit = rmf_protocol.fill_change_floor_request(
+            ChangeFloor.Request(),
+            {"floor_name": "B1", "initial_pose": {"x": 1.0, "y": 2.0, "z": None, "yaw": 0.0}},
+            -0.5, stamp)
+        self.assertFalse(explicit.manual_initial_pose)
+        self.assertEqual(explicit.initial_pose.pose.pose.position.z, -0.5)
+        self.assertEqual(explicit.initial_pose.pose.pose.orientation.w, 1.0)
+
     def test_first_pose_can_bootstrap_before_navigation_manager_exists(self):
         self.peer.destroy_service(self.services[3])
         self.spin_until(lambda: not self.node.service_clients["nav"].service_is_ready())
@@ -359,6 +410,54 @@ class FloorSwitchTest(unittest.TestCase):
         finally:
             probe.disconnect()
             probe.loop_stop()
+
+    @unittest.skipUnless(os.environ.get("FLOOR_TEST_MQTT_HOST"), "opt-in MQTT integration")
+    def test_standalone_mqtt_floor_command_waits_for_rviz_pose(self):
+        import paho.mqtt.client as mqtt
+        from floor_command_bridge import FloorCommandBridge
+        fleet = f"floor-tests-{self.namespace}"
+        bridge = FloorCommandBridge(namespace=self.namespace, parameter_overrides=[
+            Parameter("mqtt_host", value=os.environ["FLOOR_TEST_MQTT_HOST"]),
+            Parameter("fleet_name", value=fleet),
+            Parameter("robot_name", value=self.namespace),
+        ])
+        self.extra_nodes.append(bridge)
+        self.executor.add_node(bridge)
+        rviz = self.peer.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)
+        self.spin_until(lambda: self.peer.count_subscribers(rviz.topic_name) > 0)
+        received = queue.Queue()
+        probe = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        probe.on_message = lambda client, userdata, message: received.put(json.loads(message.payload))
+        subscribed = []
+        probe.on_subscribe = lambda *args: subscribed.append(True)
+        probe.connect(os.environ["FLOOR_TEST_MQTT_HOST"], 1883)
+        probe.loop_start()
+        base = f"rmf/{fleet}/robot/{self.namespace}"
+        try:
+            probe.subscribe(base + "/command_result", qos=1)
+            self.spin_until(lambda: bool(subscribed) and bridge.client.is_connected())
+            self.spin_until(bridge.floor_client.service_is_ready)
+            probe.publish(base + "/command", json.dumps({
+                "robot_id": self.namespace, "cmd_id": 1, "action": "navigate",
+                "target": {"x": 1, "y": 2, "yaw": 0},
+            }), qos=1).wait_for_publish(2)
+            self.spin_until(lambda: not received.empty())
+            self.assertIn("Only change_floor", received.get_nowait()["message"])
+            probe.publish(base + "/command", json.dumps({
+                "robot_id": self.namespace, "cmd_id": 2, "action": "change_floor",
+                "floor_name": "B1",
+            }), qos=1).wait_for_publish(2)
+            self.spin_until(lambda: "map" in [event[0] for event in self.events])
+            rviz.publish(self.rviz_pose())
+            self.spin_until(lambda: not received.empty(), timeout=10.0)
+            result = received.get_nowait()
+            self.assertEqual((result["cmd_id"], result["status"], result["level_name"]),
+                             (2, "completed", "B1"), result)
+            self.assertEqual(self.target.pose.pose.position.x, 4.0)
+        finally:
+            probe.disconnect()
+            probe.loop_stop()
+
 
 
 class InstalledFloorSurfaceTest(unittest.TestCase):

@@ -83,8 +83,12 @@ class FleetBridge(Node):
         self.floor_started = None
         self.floor_response_overdue = False
         self.floor_timeout = float(param("floor_switch_timeout", 90.0))
-        if not math.isfinite(self.floor_timeout) or self.floor_timeout <= 0:
-            raise ValueError("floor_switch_timeout must be finite and positive")
+        # Extra wait for an operator's RViz 2D Pose Estimate (change_floor without initial_pose).
+        self.manual_pose_timeout = float(param("manual_pose_timeout", 300.0))
+        if not all(math.isfinite(value) and value > 0
+                   for value in (self.floor_timeout, self.manual_pose_timeout)):
+            raise ValueError("floor_switch_timeout and manual_pose_timeout must be finite and positive")
+        self.floor_deadline = self.floor_timeout
         from slam_localization_3d.srv import ChangeFloor
         from std_msgs.msg import String
         from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -168,31 +172,26 @@ class FleetBridge(Node):
         if not self.floor_client.service_is_ready():
             self.floor_result(cmd_id, "failed", "Robot floor manager is unavailable")
             return
-        initial = command["initial_pose"]
-        # odometry/global is 2D (z == 0); every floor map shares the base_link floor height.
-        z = initial["z"] if initial["z"] is not None else self.floor_base_z
         from slam_localization_3d.srv import ChangeFloor
-        request = ChangeFloor.Request()
-        request.floor_name = command["floor_name"]
-        request.initial_pose.header.frame_id = "map"
-        request.initial_pose.header.stamp = self.get_clock().now().to_msg()
-        pose = request.initial_pose.pose.pose
-        pose.position.x, pose.position.y, pose.position.z = initial["x"], initial["y"], z
-        pose.orientation.z = math.sin(initial["yaw"] / 2)
-        pose.orientation.w = math.cos(initial["yaw"] / 2)
+        request = rmf.fill_change_floor_request(
+            ChangeFloor.Request(), command, self.floor_base_z, self.get_clock().now().to_msg())
+        self.floor_deadline = self.floor_timeout + (
+            self.manual_pose_timeout if request.manual_initial_pose else 0.0)
         self.floor_cmd_id = cmd_id
         self.floor_started = time.monotonic()
         self.floor_response_overdue = False
         self.floor_future = self.floor_client.call_async(request)
         self.floor_error = False
-        self.get_logger().info(f"MQTT floor switch {cmd_id}: {request.floor_name}")
+        self.get_logger().info(
+            f"MQTT floor switch {cmd_id}: {request.floor_name}"
+            + (" (waiting for RViz 2D Pose Estimate)" if request.manual_initial_pose else ""))
 
     def poll_floor_switch(self):
         future = self.floor_future
         if future is None:
             return
         if not future.done():
-            if time.monotonic() - self.floor_started >= self.floor_timeout and not self.floor_response_overdue:
+            if time.monotonic() - self.floor_started >= self.floor_deadline and not self.floor_response_overdue:
                 self.floor_error = True
                 self.floor_response_overdue = True
                 # Keep tracking the request; a local timeout does not cancel

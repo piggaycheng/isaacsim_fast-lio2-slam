@@ -13,10 +13,12 @@
 ./scripts/run_nav.sh --box 2.0,0.0   # 在 Isaac 場景放一個地圖上沒有的箱子
 ./scripts/run_nav.sh --filter-editor # RViz 動態標註禁行／限速區
 ./scripts/run_nav.sh --static-zones  # 全部保護區同時生效
+./scripts/run_nav.sh --mqtt-host localhost  # 手動搭電梯後以 MQTT 換層、RViz 重新定位
 ```
 
 預設載入 `maps/1F`，等待初始位姿；單車可用 RViz 初始化，線上多車可用
-[MQTT `change_floor`](online.md#mqtt-換樓層與初始定位) 初始化及切換樓層。
+[MQTT `change_floor`](online.md#mqtt-換樓層與初始定位) 初始化及切換樓層；
+單車手動換層步驟見 [`run_nav.sh` 手動測試](online.md#不經-open-rmfrun_navsh-手動測試)。
 明確指定 `--map maps/office/map_2d.yaml` 時，`global_pose_adapter` 才會依 Office 生成點自動送出初始位姿；
 log 出現 `navigator active` 後即可送目標。
 

@@ -55,7 +55,7 @@ class RmfProtocolTest(unittest.TestCase):
         self.assertIsNone(parsed[2]["initial_pose"]["z"])
         for invalid in (
             {"floor_name": "../B1", "initial_pose": data["initial_pose"]},
-            {"floor_name": "B1"},
+            {"floor_name": "B1", "initial_pose": "elevator"},
             {"floor_name": "B1", "initial_pose": {"x": 0, "yaw": 0}},
             {"floor_name": "B1", "initial_pose": {"x": 0, "y": 0, "z": "low", "yaw": 0}},
             {"floor_name": "B1", "initial_pose": {"x": True, "y": 0, "z": 0, "yaw": 0}},
@@ -63,6 +63,11 @@ class RmfProtocolTest(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(rmf.CommandError):
                 rmf.parse_command(command(action="change_floor", **invalid), "r1")
+
+    def test_floor_switch_without_initial_pose_requests_manual_relocalization(self):
+        for data in ({"floor_name": "B1"}, {"floor_name": "B1", "initial_pose": None}):
+            parsed = rmf.parse_command(command(action="change_floor", **data), "r1")
+            self.assertEqual(parsed, (7, "change_floor", {"floor_name": "B1", "initial_pose": None}))
 
     def test_floor_result_and_heartbeat_report_level(self):
         result = json.loads(rmf.command_result_payload(

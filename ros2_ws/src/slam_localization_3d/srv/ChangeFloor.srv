@@ -1,5 +1,7 @@
 string floor_name
 geometry_msgs/PoseWithCovarianceStamped initial_pose
+# Ignore initial_pose: load the floor's PGM, then wait for an RViz 2D Pose Estimate.
+bool manual_initial_pose
 ---
 bool success
 string message

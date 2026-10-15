@@ -104,6 +104,9 @@ class ScriptEntrypointsTest(unittest.TestCase):
                  ("global_fusion.launch.py", "navigate:=true",
                   "auto_initial_pose:=false", "--ros-cmd-vel",
                   "--dynamic-elevator-doors --elevator-door-mode manual")),
+                ("run_nav.sh", ("--mqtt-host", "localhost", "--mqtt-port", "1884"),
+                 ("global_fusion.launch.py", "navigate:=true",
+                  "floor_mqtt_host:=localhost", "floor_mqtt_port:=1884")),
                 ("run_multi_nav.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "launch slam_bringup robot.launch.py",
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
@@ -126,6 +129,8 @@ class ScriptEntrypointsTest(unittest.TestCase):
                             ("--headless" in args or "--mode 2d" in " ".join(args))):
                         self.assertNotIn("--dynamic-elevator-doors", result.stdout)
                         self.assertNotIn("--elevator-door-mode", result.stdout)
+                    if "--mqtt-host" not in args:
+                        self.assertNotIn("floor_mqtt_host", result.stdout)
                     if name == "run_3d_localization.sh" and "--dynamic-elevator-doors" not in args:
                         self.assertNotIn("--dynamic-elevator-doors", result.stdout)
                     if "ROOT" in expected:

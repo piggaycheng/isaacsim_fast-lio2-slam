@@ -88,6 +88,24 @@ def command_result_payload(robot, cmd_id, status, message="", location=None, lev
     return json.dumps(payload)
 
 
+def fill_change_floor_request(request, data, floor_base_z, stamp):
+    """Fill a slam_localization_3d/ChangeFloor request from parse_command's change_floor data."""
+    request.floor_name = data["floor_name"]
+    initial = data["initial_pose"]
+    request.manual_initial_pose = initial is None
+    if initial is None:
+        return request
+    request.initial_pose.header.frame_id = "map"
+    request.initial_pose.header.stamp = stamp
+    pose = request.initial_pose.pose.pose
+    # odometry/global is 2D (z == 0); every floor map shares the base_link floor height.
+    pose.position.x, pose.position.y = initial["x"], initial["y"]
+    pose.position.z = initial["z"] if initial["z"] is not None else floor_base_z
+    pose.orientation.z = math.sin(initial["yaw"] / 2)
+    pose.orientation.w = math.cos(initial["yaw"] / 2)
+    return request
+
+
 def parse_ack(payload, robot):
     """Return (status, message) for a register_ack addressed to `robot`, else None.
 
@@ -151,6 +169,9 @@ def parse_command(payload, robot):
         if not isinstance(floor, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", floor):
             raise CommandError("'floor_name' must be a level name, e.g. 1F or B1")
         pose = command.get("initial_pose")
+        if pose is None:
+            # Manual relocalization: the robot shows the floor map and waits for RViz.
+            return cmd_id, action, {"floor_name": floor, "initial_pose": None}
         if not isinstance(pose, dict):
             raise CommandError("'initial_pose' must contain target-floor base_link x, y, yaw (z optional)")
         return cmd_id, action, {
