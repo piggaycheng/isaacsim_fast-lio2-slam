@@ -165,6 +165,12 @@ ICP 確認期間不要再按 2D Pose Estimate（會以未換算里程計的先�
 4. RViz 顯示 B1 地圖後，按一次 **2D Pose Estimate** 點選車在 B1 地圖上的位置與朝向。
 5. 收到 `"status": "completed"` 後即可在 RViz 下 B1 導航目標。每次換層使用新的 `cmd_id`。
 
+RViz 左側的 **Floor** 面板可取代第 3 步：選擇（或輸入）樓層後按 **Switch floor (MQTT)**，
+面板發布 `navigation/floor_request`，`floor_command_bridge` 以時間戳為 `cmd_id`
+把同樣的 `change_floor` 發到 broker，再由自己訂閱收下執行，因此仍走完整 MQTT 路徑。
+面板顯示目前樓層及 `navigation/floor_command_status`（送出、等待 2D Pose Estimate、完成／失敗）；
+未加 `--mqtt-host` 時按鈕會提示 bridge 未啟動。樓層清單存於 RViz 設定的 `Floors`。
+
 ## 擴充：多步任務
 
 規格之外的擴充：`command` 的 `action` 可為 `task`（多步 `navigate`／`gimbal_move`／`gimbal_rotate`），步驟之間由 adapter 以 `proceed` 放行，車端回報 `task_state`；也可直接為 `gimbal_move`／`gimbal_rotate`（單一雲台動作，用法同 `navigate`）。詳見 [多步任務文件](multi_step_task.md)。

@@ -4,11 +4,13 @@
 Listens on rmf/<fleet_name>/robot/<robot_name>/command for the same change_floor payload
 as fleet_bridge_node and answers on .../command_result. Other actions are rejected; no
 register or heartbeat is sent. Omitting initial_pose shows the floor's map and waits for
-an RViz 2D Pose Estimate.
+an RViz 2D Pose Estimate. The RViz Floor panel publishes navigation/floor_request, which is
+sent to the broker as such a command, and follows navigation/floor_command_status.
 """
 
 from collections import OrderedDict
 import math
+import json
 import queue
 import time
 
@@ -48,6 +50,10 @@ class FloorCommandBridge(Node):
         self.overdue = False
         self.results = OrderedDict()
         self.inbox = queue.Queue()
+        self.next_cmd_id = int(time.time() * 1000)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.status_pub = self.create_publisher(String, "navigation/floor_command_status", latched)
+        self.create_subscription(String, "navigation/floor_request", self.on_floor_request, 1)
         self.floor_client = self.create_client(ChangeFloor, "navigation/change_floor")
         self.create_subscription(
             String, "navigation/current_floor", lambda message: setattr(self, "level", message.data),
@@ -73,6 +79,21 @@ class FloorCommandBridge(Node):
             return
         client.subscribe(self.topic["command"], 1)
 
+    def status(self, text):
+        self.status_pub.publish(String(data=text))
+
+    def on_floor_request(self, message):
+        floor = message.data.strip()
+        if not self.client.is_connected():
+            self.status(f"{floor}: MQTT broker is not connected")
+            return
+        self.next_cmd_id = max(self.next_cmd_id + 1, int(time.time() * 1000))
+        self.client.publish(self.topic["command"], json.dumps({
+            "robot_id": self.robot, "cmd_id": self.next_cmd_id, "action": "change_floor",
+            "floor_name": floor,
+        }), qos=1)
+        self.status(f"Sent change_floor {floor} (cmd {self.next_cmd_id}) via MQTT")
+
     def result(self, cmd_id, status, message, cache=True):
         payload = rmf.command_result_payload(self.robot, cmd_id, status, message, level=self.level)
         if cache:
@@ -81,6 +102,7 @@ class FloorCommandBridge(Node):
                 self.results.popitem(last=False)
         self.client.publish(self.topic["command_result"], payload, qos=1)
         self.get_logger().info(f"change_floor {cmd_id} {status}: {message}")
+        self.status(f"cmd {cmd_id} {status}: {message}")
 
     def on_command(self, payload):
         try:
@@ -116,6 +138,10 @@ class FloorCommandBridge(Node):
             self.manual_pose_timeout if request.manual_initial_pose else 0.0)
         self.overdue = False
         self.future = self.floor_client.call_async(request)
+        self.status(
+            f"Switching to {request.floor_name} (cmd {cmd_id}); when the map appears, "
+            "click 2D Pose Estimate" if request.manual_initial_pose
+            else f"Switching to {request.floor_name} (cmd {cmd_id})")
         self.get_logger().info(
             f"MQTT floor switch {cmd_id}: {request.floor_name}"
             + (" (set the pose with RViz 2D Pose Estimate)" if request.manual_initial_pose else ""))

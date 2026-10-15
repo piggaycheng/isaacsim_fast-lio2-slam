@@ -3,6 +3,11 @@ Panels:
     Name: Displays
   - Class: rviz_common/Tool Properties
     Name: Tool Properties
+  - Class: slam_localization_3d/FloorPanel
+    Name: Floor
+    Floors:
+      - 1F
+      - B1
 Visualization Manager:
   Class: ""
   Displays:

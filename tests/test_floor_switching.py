@@ -454,6 +454,24 @@ class FloorSwitchTest(unittest.TestCase):
             self.assertEqual((result["cmd_id"], result["status"], result["level_name"]),
                              (2, "completed", "B1"), result)
             self.assertEqual(self.target.pose.pose.position.x, 4.0)
+            # RViz Floor panel: ROS request -> MQTT command -> same bridge -> status topic.
+            from rclpy.qos import DurabilityPolicy, QoSProfile
+            from std_msgs.msg import String
+            statuses = []
+            self.peer.create_subscription(
+                String, "navigation/floor_command_status", lambda m: statuses.append(m.data),
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            panel = self.peer.create_publisher(String, "navigation/floor_request", 1)
+            self.spin_until(lambda: self.peer.count_subscribers(panel.topic_name) > 0)
+            maps = sum(event[0] == "map" for event in self.events)
+            panel.publish(String(data="1F"))
+            self.spin_until(lambda: sum(event[0] == "map" for event in self.events) > maps)
+            rviz.publish(self.rviz_pose())
+            self.spin_until(lambda: not received.empty(), timeout=10.0)
+            result = received.get_nowait()
+            self.assertEqual((result["status"], result["level_name"]), ("completed", "1F"), result)
+            self.spin_until(lambda: statuses and "completed" in statuses[-1])
+            self.assertTrue(any("2D Pose Estimate" in text for text in statuses), statuses)
         finally:
             probe.disconnect()
             probe.loop_stop()
