@@ -14,8 +14,9 @@ robot_type:= and initial_*:=.
 
 import os
 import sys
+from pathlib import Path
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -24,8 +25,12 @@ from launch_ros.actions import Node
 
 LOCALIZATION = get_package_share_directory("slam_localization_3d")
 sys.path.insert(0, os.path.join(LOCALIZATION, "launch"))
-from robot_fleet import imu_mount, initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
+from robot_fleet import body_pose, imu_mount, initial_pose, load_robot_profile, parse_robot_spec, rotation_radius  # noqa: E402
 from robot_namespace import load_parameters  # noqa: E402
+
+sys.path.insert(0, os.path.join(
+    get_package_prefix("slam_localization_3d"), "lib", "slam_localization_3d"))
+from fleet_ground_truth import FloorReference  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
@@ -37,6 +42,20 @@ def robot_stack(context, package):
     spec = parse_robot_spec(LaunchConfiguration("robot").perform(context))
     profile = load_robot_profile(spec.robot_type)
     pose = initial_pose(spec, profile)
+    if LaunchConfiguration("auto_initial_pose").perform(context).lower() == "true":
+        map_yaml = Path(LaunchConfiguration("map_pgm").perform(context))
+        session = map_yaml.parent / "session.json"
+        if map_yaml.parent.name != "office" or session.exists():
+            try:
+                if Path(LaunchConfiguration("map_pcd").perform(context)).parent != map_yaml.parent:
+                    raise ValueError("Automatic initialization requires PCD and YAML in the same floor directory")
+                reference = FloorReference.load(map_yaml.parent.name, session)
+                pose = reference.initial_body_pose(body_pose(spec, profile))
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                raise ValueError(
+                    f"Cannot derive automatic initial pose from {session}: {error}. "
+                    "Use --manual-initial-pose (auto_initial_pose:=false) to initialize manually."
+                ) from error
     arguments = {name: LaunchConfiguration(name) for name in FORWARDED}
     arguments.update(
         namespace=spec.name, robot_type=spec.robot_type,
@@ -109,7 +128,8 @@ def generate_launch_description():
             os.getcwd(), "maps/1F/map_2d.yaml"), description="Absolute Nav2 map YAML path"),
         DeclareLaunchArgument("maps_root", default_value=""),
         DeclareLaunchArgument("rviz", default_value="false"),
-        DeclareLaunchArgument("auto_initial_pose", default_value="false"),
+        DeclareLaunchArgument("auto_initial_pose", default_value="false",
+                              description="Send one spawn/session-derived prior after LIO and ICP are ready"),
         DeclareLaunchArgument("obstacle_cloud", default_value="true"),
         DeclareLaunchArgument("costmaps", default_value="true"),
         DeclareLaunchArgument("navigate", default_value="true"),

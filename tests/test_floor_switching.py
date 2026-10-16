@@ -24,9 +24,11 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from robot_localization.srv import SetPose
 from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap, PrepareFloorChange
 from std_srvs.srv import SetBool
+from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -388,9 +390,14 @@ class FloorSwitchTest(unittest.TestCase):
 
     def test_manual_pose_waits_for_rviz_estimate_after_map_is_shown(self):
         rviz = self.peer.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)
+        floors = []
+        subscription = self.peer.create_subscription(
+            String, "navigation/initial_pose_floor", lambda msg: floors.append(msg.data),
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.spin_until(lambda: self.peer.count_subscribers(rviz.topic_name) > 0)
         future = self.client.call_async(self.manual_request())
-        self.spin_until(lambda: "map" in [event[0] for event in self.events])
+        self.spin_until(lambda: "B1" in floors)
+        self.assertIn("map", [event[0] for event in self.events])
         self.assertNotIn("pcd", [event[0] for event in self.events])
         rviz.publish(self.rviz_pose())
         self.spin_until(future.done, timeout=10.0)
@@ -400,6 +407,8 @@ class FloorSwitchTest(unittest.TestCase):
         self.assertFalse(any(self.holds.values()))
         position = self.target.pose.pose.position
         self.assertEqual((position.x, position.z), (4.0, self.node.floor_base_z))
+        self.spin_until(lambda: floors[-1] == "")
+        self.peer.destroy_subscription(subscription)
 
     def test_manual_pose_sent_before_map_is_shown_is_ignored(self):
         rviz = self.peer.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)

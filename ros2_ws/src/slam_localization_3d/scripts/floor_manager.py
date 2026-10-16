@@ -71,6 +71,11 @@ class FloorManager(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self.publish_floor()
+        self.initial_pose_floor_publisher = self.create_publisher(
+            String, "navigation/initial_pose_floor",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self.initial_pose_floor_publisher.publish(String(data=""))
         self.state_publisher = self.create_publisher(
             String, "navigation/floor_transition_state",
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
@@ -402,6 +407,7 @@ class FloorManager(Node):
             initial_pose = request.initial_pose
             if request.manual_initial_pose:
                 shown = time.monotonic()
+                self.initial_pose_floor_publisher.publish(String(data=request.floor_name))
                 self.get_logger().info(
                     f"Floor {request.floor_name} map shown; waiting up to "
                     f"{self.manual_pose_timeout:g} s for an RViz 2D Pose Estimate")
@@ -416,6 +422,7 @@ class FloorManager(Node):
                 await self.wait_until(
                     received, shown + self.manual_pose_timeout, "RViz 2D Pose Estimate")
                 initial_pose = manual[0]
+                self.initial_pose_floor_publisher.publish(String(data=""))
                 deadline = time.monotonic() + self.timeout
             target_pose = initial_pose.pose.pose
             self.get_logger().info(
@@ -485,6 +492,7 @@ class FloorManager(Node):
             self.get_logger().error(response.message)
             await self.hold_after_failure(response)
         finally:
+            self.initial_pose_floor_publisher.publish(String(data=""))
             response.current_floor = self.current_floor
             self.busy = False
         return response

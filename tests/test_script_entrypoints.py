@@ -44,6 +44,7 @@ class ScriptEntrypointsTest(unittest.TestCase):
             (maps / "map_2d.pgm").touch()
             (maps / "map_2d.yaml").write_text("image: map_2d.pgm\n")
             shutil.copytree(maps, root / "maps/1F")
+            (root / "maps/1F/session.json").write_text("{}")
             docker = root / "docker"
             docker.mkdir()
             (docker / "ros_compose.sh").write_text(
@@ -112,6 +113,18 @@ class ScriptEntrypointsTest(unittest.TestCase):
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
                   "SIMULATOR", "--headless", "--robot carter1@0,0,0",
                   "--robot carter2:carter_v1@3.5,0,0")),
+                ("run_multi_nav.sh", ("--headless",),
+                 ("fleet_rviz.launch.py", "robots:=carter1@0,0,0;carter2:carter_v1@3.5,0,0",
+                  "maps_root:=/workspace/maps", "floors:=1F;B1", "initial_floor:=1F",
+                  "auto_initial_pose:=true", "simulation_reference:=false")),
+                ("run_multi_nav_online.sh", ("--no-ceiling-cameras", "--mqtt-host", "localhost"),
+                 ("fleet_rviz.launch.py", "robots:=carter1#fleet1@0,0,0;carter2:carter_v1#fleet2@3.5,0,0",
+                  "maps_root:=/workspace/maps", "floors:=1F;B1", "initial_floor:=1F",
+                  "mqtt_host:=localhost", "auto_initial_pose:=true", "simulation_reference:=false")),
+                ("run_multi_nav.sh", ("--manual-initial-pose",),
+                 ("auto_initial_pose:=false", "simulation_reference:=true")),
+                ("run_multi_nav_online.sh", ("--manual-initial-pose", "--no-ceiling-cameras"),
+                 ("auto_initial_pose:=false", "simulation_reference:=true")),
                 ("save_map.sh", ("--voxel-size", "0.05"),
                  ("save_map_resolution 0.05",
                   "file_path: '/workspace/maps/office'")),
@@ -139,11 +152,20 @@ class ScriptEntrypointsTest(unittest.TestCase):
                         self.assertIn("/workspace/maps/1F/map_2d.yaml", result.stdout)
                         if name != "run_nav.sh" or "--mode 2d" not in " ".join(args):
                             self.assertIn("/workspace/maps/1F/map.pcd", result.stdout)
-                            self.assertIn("auto_initial_pose:=false", result.stdout)
+                            expected_auto = ("true" if name == "run_multi_nav.sh"
+                                             and "--manual-initial-pose" not in args else "false")
+                            self.assertIn(f"auto_initial_pose:={expected_auto}", result.stdout)
                         else:
                             self.assertNotIn("global_fusion.launch.py", result.stdout)
                             self.assertNotIn("navigate:=true", result.stdout)
                             self.assertNotIn("--ros-cmd-vel", result.stdout)
+
+            (root / "maps/1F/session.json").unlink()
+            for name in ("run_multi_nav.sh", "run_multi_nav_online.sh"):
+                result = subprocess.run([str(scripts / name)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("use --manual-initial-pose", result.stderr)
+                self.assertNotIn("ROOT", result.stdout)
 
 
 if __name__ == "__main__":

@@ -22,13 +22,13 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(rviz_common REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
+find_package(std_msgs REQUIRED)
 
 add_library(fleet_panel SHARED src/fleet_panel.cpp)
 target_link_libraries(fleet_panel Qt5::Widgets)
-ament_target_dependencies(fleet_panel rviz_common pluginlib)
+ament_target_dependencies(fleet_panel rviz_common pluginlib rclcpp std_msgs)
 pluginlib_export_plugin_description_file(rviz_common fleet_plugins.xml)
 install(TARGETS fleet_panel LIBRARY DESTINATION lib)
-find_package(std_msgs REQUIRED)
 add_library(floor_panel SHARED src/floor_panel.cpp)
 target_link_libraries(floor_panel Qt5::Widgets)
 ament_target_dependencies(floor_panel rviz_common pluginlib rclcpp std_msgs)
@@ -67,6 +67,7 @@ install(PROGRAMS scripts/localization_3d_pose.py
   scripts/covariance_calibration.py
   scripts/covariance_drive.py
   scripts/fleet_relay.py
+  scripts/fleet_ground_truth.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES scripts/xyz_cloud.py scripts/costmap_zone_geometry.py
@@ -77,9 +78,11 @@ install(DIRECTORY config launch
 
 if(BUILD_TESTING)
   find_package(Qt5 REQUIRED COMPONENTS Test)
+  find_package(visualization_msgs REQUIRED)
   add_executable(test_fleet_panel test/test_fleet_panel.cpp)
   target_link_libraries(test_fleet_panel Qt5::Widgets Qt5::Test)
-  ament_target_dependencies(test_fleet_panel rviz_common rclcpp geometry_msgs)
+  ament_target_dependencies(test_fleet_panel
+    rviz_common rclcpp geometry_msgs nav_msgs std_msgs visualization_msgs)
   add_executable(test_floor_panel test/test_floor_panel.cpp)
   target_link_libraries(test_floor_panel Qt5::Widgets Qt5::Test)
   ament_target_dependencies(test_floor_panel rviz_common rclcpp std_msgs)

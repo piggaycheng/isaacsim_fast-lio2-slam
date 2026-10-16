@@ -50,6 +50,44 @@ flowchart LR
 
 ## 送導航目標
 
+### 顯示樓層
+
+Fleet Control 面板的 **Display floor (monitoring only)** 選單切換監控樓層。
+兩個多車啟動腳本皆預設載入 `maps/1F/map_2d.yaml` 與 `maps/B1/map_2d.yaml`
+所指定的 PGM，初始顯示 1F；不會自動加入 `office` 等其他地圖。
+使用 `--map` 自訂起始地圖時，從該地圖上一層目錄取得 1F／B1，並包含起始樓層。
+即使該層沒有車，也能顯示底圖。
+這只切換 RViz 畫面，**不會發送 MQTT 換層指令、改變車端地圖或移動電梯**。
+
+每層底圖由 Fleet RViz 容器內獨立的 map server 發布：
+`/fleet/maps/floor_N/map`（N 對應選單順序，從 0 開始）。
+只顯示樓層符合選單且 `floor_transition_state` 為 `idle` 的車輛群組；
+其他樓層、尚未確認樓層、準備／換圖中及失敗的車輛疊圖會隱藏。
+切回時恢復原本的顯示開關，並清除舊的導航顯示快取。
+這是單層本地 `map` 座標顯示，不會將兩層疊在一起。
+
+導航目標與初始位姿工具僅對顯示樓層上的選中車輛開放；切換樓層會取消尚未完成的拖曳。
+手動換圖正在等待位姿時，車端會透過 `navigation/initial_pose_floor` 告知可設定初始位姿的目標樓層；
+選中該樓層後只開放 **Set initial pose**，導航保持停用。
+若顯示「waiting for floor manager」，需確認該車的導航堆疊已啟動。
+
+單獨啟動監控：
+
+```bash
+ros2 launch slam_localization_3d fleet_rviz.launch.py \
+  robots:="carter1;carter2" maps_root:=/workspace/maps initial_floor:=1F \
+  floors:="1F;B1"
+```
+
+`floors` 可在直接使用 launch 時指定其他監控樓層；缺少指定樓層的 YAML 會明確報錯。
+
+修改面板後需重新編譯 `slam_localization_3d` 並重開 Fleet RViz。
+驗證：`python3 -m unittest tests.test_fleet_floor_config`、
+ROS 環境中的 `python3 -m unittest tests.test_fleet_floor_launch`，
+以及 `./tests/run_fleet_panel.sh`（實際 RViz 操作測試）。
+
+### 選擇車輛與目標
+
 在 RViz 的 **Fleet Control** 面板選擇車輛，按 **Set navigation goal**，在地圖上按住左鍵拖曳設定目標與航向。**Set initial pose** 用來重設選中車輛的定位。工具列的 **2D Goal Pose／2D Pose Estimate** 也會使用目前選中的車輛。
 
 或直接指定車輛的 action：
@@ -61,10 +99,52 @@ ros2 action send_goal /carter2/navigate_to_pose nav2_msgs/action/NavigateToPose 
 
 ## 初始位姿
 
-預設載入 `maps/1F`，需由 RViz 或 [MQTT `change_floor`](nav_change_map.md) 提供初始位姿；
-不會把 Isaac world 的生成位置直接當作獨立建圖的 1F 座標。只有明確使用
-`--map maps/office/map_2d.yaml` 時，才預設以生成位姿自動初始化
-（`--manual-initial-pose` 改由 RViz 設定）。`robot_fleet.initial_pose()` 把每台車的 body 位姿換算到錄製地圖的參考車 body frame，作為 `map → camera_init` 的猜測值，再由 ICP 修正。`global_localization_xyz.py` 覆寫上游的初始化函式，讓 ICP 失敗後的重試仍從該猜測值開始。
+### Headless 模擬真值參考標記
+
+多車腳本使用 `--manual-initial-pose` 時，在 Fleet RViz 顯示**黃色箭頭與 `車名 [SIM REF ~]` 標籤**，
+位於 **Displays → Simulation reference (approximate)**，可自行取消勾選。
+這組標記不需要車端先定位成功，也不受正式車輛疊圖隱藏影響；
+選好車輛及樓層後，可依黃色箭頭大致位置與朝向，用 **Set initial pose** 拖曳設定先驗。
+仍須等待 ICP 成功，並確認掃描與地圖對齊，才能相信正式的定位箭頭。
+收到某台車有效的 `/NAME/initialpose` 後，立即清除該車的參考箭頭與標籤，
+本次監控程序內不再出現；其他尚未設定的車輛繼續顯示。自動初始化模式不啟動參考標記節點，
+也不顯示黃色箭頭；正式定位箭頭不受影響。
+
+`fleet_ground_truth.py` 訂閱各車 `/NAME/isaac/ground_truth/odom`，
+使用各層 `session.json` 的初始 LIO 位姿、Isaac chassis 位姿與建圖車 IMU 外參，
+先依各車出生位置及朝向，將相對出生點的 odometry 換算為共同座標，
+再換算至該層地圖、投影為平面箭頭。不能因 topic 標示 `isaac_world` 就省略出生點轉換。
+兩個多車腳本會自動傳入完整 robot specs；若手動啟動 Fleet RViz，只提供車名而沒有
+`@X,Y,YAW`，該車參考標記會停用並記錄警告，避免誤畫在共同原點。
+樓層由真值高度與建圖參考高度判斷（預設容許差 0.75 m），不依賴尚未初始化的定位結果；
+高度不符合、同時符合多層或超過 2 秒未收到真值時，移除該車參考標記。
+切換顯示樓層時只顯示對應層的參考標記。
+
+**`SIM REF ~` 只是近似參考，不是已校正的地圖真值，也不代表定位成功。**
+建圖後的 PGO／地圖誤差仍可能造成偏差。
+此節點只發布 `/fleet/maps/floor_N/simulation_reference`，不發布 TF、initial pose、
+導航目標或定位觀測，也不會把 ground truth 融合進 EKF／ICP。
+缺少或損壞 `session.json` 的樓層會記錄警告並停用參考標記，不會直接拿 world 座標當 map 座標。
+ROS 環境中的驗證：`python3 -m unittest tests.test_fleet_ground_truth tests.test_fleet_floor_launch`。
+
+### 定位初始化
+
+`run_multi_nav.sh` 與 `run_multi_nav_online.sh` **預設自動為每台車發送一次初始位姿**，
+在 `--headless --no-rviz` 下也有效，不需要逐車拉 pose。
+`robot.launch.py` 使用各車出生位置、朝向與 IMU 外參，透過起始樓層的 `session.json`
+換算成 `map → camera_init` 猜測；不會直接把 Isaac world 座標當成 1F 地圖座標。
+`global_pose_adapter.py` 等待有效的新鮮 LIO odometry 以及 ICP 的 `global_localization`
+訂閱者就緒，再發送各車 `/NAME/initialpose`（`map → base_link`）。
+已收到手動 pose 時不覆蓋；換樓層時不重新發送出生位置。
+這只是近似先驗，仍須等待 ICP 成功及掃描對齊，不能視為定位已完成。
+
+加上 `--manual-initial-pose` 可關閉自動初始化，改用 RViz。
+非 Office 地圖缺少或損壞 `session.json` 時會明確報錯，需修復紀錄或改用手動模式；
+自動模式要求 PCD 與 YAML 位於同一樓層目錄。
+舊 `office` 地圖沒有 session 時沿用 `robot_fleet.initial_pose()` 的生成位姿換算。
+`global_localization_xyz.py` 讓 ICP 失敗後的重試仍從目前猜測值開始。
+
+ROS 驗證：`python3 -m unittest tests.test_robot_initial_pose tests.test_global_pose_adapter tests.test_fleet_ground_truth`。
 
 ## 部署到真車
 

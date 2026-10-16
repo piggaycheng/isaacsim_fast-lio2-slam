@@ -26,6 +26,7 @@ Launch Isaac Sim with several robots. Each robot runs its own 3D localization
 and Nav2 stack in its own container (Compose project isaacsim-fastlio2-NAME),
 under /NAME (topics, actions and the TF tree /NAME/tf), like separate robots.
 One fleet RViz (container isaacsim-fastlio2-fleet-rviz) shows all robots.
+Its floor selector loads the 1F and B1 PGM maps by default, initially displaying 1F.
 
 Same as run_multi_nav.sh, plus the outbound connections: the camera list is published
 to MQTT, cameras are switched on/off over MQTT, and RTSP streams go to MediaMTX.
@@ -40,7 +41,8 @@ Options:
   -m, --map FILE       Nav2 map YAML file (default: maps/1F/map_2d.yaml).
       --pcd FILE       PCD map (default: map.pcd beside the map YAML).
       --manual-initial-pose
-                       Set each initial pose in RViz instead of the spawn pose.
+                       Disable automatic spawn/session-derived initial poses;
+                       show reference arrows until each manual pose is set.
       --no-rviz        Do not start the fleet RViz.
       --headless       Run Isaac Sim without its GUI (default).
       --gui            Run Isaac Sim with its GUI.
@@ -146,11 +148,13 @@ if [[ ! -f "$map_pgm" ]]; then
   echo "PGM map YAML does not exist: $map_pgm" >&2
   exit 1
 fi
-if [[ "$map_pcd" != "$project_dir/maps/office/map.pcd" ||
-      "$map_pgm" != "$project_dir/maps/office/map_2d.yaml" ]]; then
-  # Spawn poses equal map poses only for the Office maps.
-  auto_initial_pose=false
+if [[ "$auto_initial_pose" == true && "$(basename "$(dirname "$map_pgm")")" != office &&
+      ! -f "$(dirname "$map_pgm")/session.json" ]]; then
+  echo "Automatic initial poses require $(dirname "$map_pgm")/session.json; use --manual-initial-pose." >&2
+  exit 1
 fi
+simulation_reference=false
+if [[ "$auto_initial_pose" == false ]]; then simulation_reference=true; fi
 require_ros_workspace
 set -u
 
@@ -171,7 +175,11 @@ for robot in "${robots[@]}"; do
 done
 if [[ "$rviz" == true ]]; then
   start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
-    "robots:=$(IFS=';'; printf '%s' "${names[*]}")"
+    "robots:=$(IFS=';'; printf '%s' "${robots[*]}")" \
+    maps_root:="$(container_path "$(dirname "$(dirname "$map_pgm")")")" \
+    "floors:=1F;B1" \
+    simulation_reference:="$simulation_reference" \
+    initial_floor:="$(basename "$(dirname "$map_pgm")")"
 fi
 if [[ "$ceiling_cameras" == true ]]; then
   # One gimbal action server + MQTT bridge per ceiling camera.

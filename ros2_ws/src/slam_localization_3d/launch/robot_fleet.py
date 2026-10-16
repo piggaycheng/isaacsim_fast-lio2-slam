@@ -431,21 +431,44 @@ def _topic(value, reliability="Reliable", durability="Volatile"):
             "Reliability Policy": reliability, "Value": value}
 
 
-def fleet_rviz(names):
+def fleet_floor_maps(maps_root, initial_floor, floors=None):
+    root = Path(maps_root)
+    if not root.is_dir():
+        raise ValueError(f"Fleet maps_root is not a directory: {root}")
+    maps = {path.parent.name: path for path in sorted(root.glob("*/map_2d.yaml"))}
+    if initial_floor not in maps:
+        raise ValueError(f"Fleet initial floor {initial_floor!r} has no map_2d.yaml in {root}")
+    requested = list(maps) if floors is None else list(floors)
+    if not requested or len(set(requested)) != len(requested) or not all(requested):
+        raise ValueError("Fleet monitoring floors must be unique, nonempty names")
+    names = [initial_floor] + [name for name in requested if name != initial_floor]
+    for name in names:
+        if name not in maps:
+            raise ValueError(f"Fleet floor {name!r} has no map_2d.yaml in {root}")
+    return [(name, maps[name]) for name in names]
+
+
+def fleet_rviz(names, floors=("1F", "B1"), simulation_reference=True):
     """One RViz config showing every robot; TF comes merged from fleet_relay.py.
 
-    Map-frame topics are read straight from /<ns>/...; robot-frame topics from
-    the /fleet/<ns>/... relay. A panel selects the robot for shared pose tools.
+    The panel selects an independent monitoring map and hides robots on other
+    floors. Robot navigation maps and pose tools remain in their local map frame.
     """
     names = [normalize_namespace(name) for name in names]
     if not names or not all(names):
         raise ValueError("fleet RViz needs robot names")
+    floors = list(floors)
+    if not floors or len(set(floors)) != len(floors) or not all(floors):
+        raise ValueError("fleet RViz needs unique, nonempty floor names")
     displays = [
         {"Class": "rviz_default_plugins/Grid", "Enabled": True, "Name": "Grid",
          "Plane": "XY", "Reference Frame": "<Fixed Frame>"},
         {"Alpha": 0.7, "Class": "rviz_default_plugins/Map", "Color Scheme": "map",
          "Enabled": True, "Name": "Map",
-         "Topic": _topic(f"/{names[0]}/map", durability="Transient Local")},
+         "Topic": _topic("/fleet/maps/floor_0/map", durability="Transient Local")},
+        {"Class": "rviz_default_plugins/MarkerArray", "Enabled": simulation_reference,
+         "Name": "Simulation reference (approximate)",
+         "Topic": _topic("/fleet/maps/floor_0/simulation_reference", durability="Transient Local")},
         {"Class": "rviz_default_plugins/TF", "Enabled": False, "Frame Timeout": 5, "Name": "TF",
          "Show Arrows": False, "Show Axes": True, "Show Names": True},
     ]
@@ -503,7 +526,8 @@ def fleet_rviz(names):
         "Panels": [{"Class": "rviz_common/Displays", "Name": "Displays"},
                    {"Class": "rviz_common/Tool Properties", "Name": "Tool Properties"},
                    {"Class": "slam_localization_3d/FleetPanel", "Name": "Fleet Control",
-                    "Robots": names, "Selected Robot": names[0]}],
+                    "Robots": names, "Selected Robot": names[0],
+                    "Floors": floors, "Selected Floor": floors[0]}],
         "Visualization Manager": {
             "Class": "", "Displays": displays, "Enabled": True,
             "Global Options": {"Background Color": "48; 48; 48", "Fixed Frame": "map",
