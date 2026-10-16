@@ -38,8 +38,14 @@ def wrap_angle(angle):
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
+def _encode(payload, session_id):
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return json.dumps(payload)
+
+
 def register_payload(fleet, robot, pose, level, waypoint="", specs=None, charger="", parking="",
-                     timestamp=None):
+                     timestamp=None, session_id=None):
     location = {"x": pose[0], "y": pose[1], "yaw": wrap_angle(pose[2]), "level_name": level}
     if waypoint:
         location["waypoint_name"] = waypoint
@@ -53,10 +59,11 @@ def register_payload(fleet, robot, pose, level, waypoint="", specs=None, charger
         payload["default_charger"] = charger
     if parking:
         payload["default_parking"] = parking
-    return json.dumps(payload)
+    return _encode(payload, session_id)
 
 
-def heartbeat_payload(robot, pose, battery, status, cmd_id, level=None):
+def heartbeat_payload(robot, pose, battery, status, cmd_id, level=None, session_id=None,
+                      localization_ready=None):
     payload = {
         "robot_id": robot, "x": pose[0], "y": pose[1], "yaw": wrap_angle(pose[2]),
         "battery": min(100.0, max(0.0, float(battery))), "status": status,
@@ -64,21 +71,24 @@ def heartbeat_payload(robot, pose, battery, status, cmd_id, level=None):
     }
     if level:
         payload["level_name"] = level
-    return json.dumps(payload)
+    if localization_ready is not None:
+        payload["localization_ready"] = localization_ready
+    return _encode(payload, session_id)
 
 
-def deregister_payload(fleet, robot, reason):
-    return json.dumps({"robot_id": robot, "fleet_name": fleet, "reason": reason,
-                       "timestamp": now()})
+def deregister_payload(fleet, robot, reason, session_id=None):
+    return _encode({"robot_id": robot, "fleet_name": fleet, "reason": reason,
+                    "timestamp": now()}, session_id)
 
 
-def offline_payload(robot):
-    return json.dumps({"robot_id": robot, "status": "offline",
-                       "reason": "Unexpected connection loss (LWT triggered)",
-                       "timestamp": now()})
+def offline_payload(robot, session_id=None):
+    return _encode({"robot_id": robot, "status": "offline",
+                    "reason": "Unexpected connection loss (LWT triggered)",
+                    "timestamp": now()}, session_id)
 
 
-def command_result_payload(robot, cmd_id, status, message="", location=None, level=None):
+def command_result_payload(robot, cmd_id, status, message="", location=None, level=None,
+                           session_id=None):
     payload = {"robot_id": robot, "cmd_id": cmd_id, "status": status, "message": message,
                "timestamp": now()}
     if location is not None:
@@ -86,7 +96,7 @@ def command_result_payload(robot, cmd_id, status, message="", location=None, lev
             "x": location[0], "y": location[1], "yaw": wrap_angle(location[2])}
     if level is not None:
         payload["level_name"] = level
-    return json.dumps(payload)
+    return _encode(payload, session_id)
 
 
 def fill_change_floor_request(request, data, floor_base_z, stamp):
@@ -107,7 +117,7 @@ def fill_change_floor_request(request, data, floor_base_z, stamp):
     return request
 
 
-def parse_ack(payload, robot):
+def parse_ack(payload, robot, session_id=None):
     """Return (status, message) for a register_ack addressed to `robot`, else None.
 
     status is the ack's own: "success", "error" or "require_register".
@@ -117,6 +127,8 @@ def parse_ack(payload, robot):
     except (ValueError, TypeError):
         return None
     if not isinstance(ack, dict) or ack.get("robot_id") != robot:
+        return None
+    if session_id is not None and ack.get("session_id") != session_id:
         return None
     message = ack.get("message") or ack.get("error_code") or ""
     return ack.get("status"), str(message)
@@ -138,7 +150,7 @@ def cmd_id_of(payload):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def parse_command(payload, robot):
+def parse_command(payload, robot, session_id=None):
     """Return (cmd_id, action, data): task steps, floor switch data, or None.
 
     `task` is an extension to the spec: {"action": "task", "steps": [...]} runs several
@@ -156,6 +168,8 @@ def parse_command(payload, robot):
     if not isinstance(command, dict):
         raise CommandError("command must be a JSON object")
     if command.get("robot_id", robot) != robot:
+        return None
+    if session_id is not None and command.get("session_id") != session_id:
         return None
     cmd_id = command.get("cmd_id")
     if isinstance(cmd_id, bool) or not isinstance(cmd_id, int):

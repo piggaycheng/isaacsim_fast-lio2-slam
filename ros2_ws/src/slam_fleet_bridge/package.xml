@@ -17,6 +17,8 @@
   <exec_depend>slam_sensor_control</exec_depend>
   <exec_depend>slam_localization_3d</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

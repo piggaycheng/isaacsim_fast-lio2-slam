@@ -116,6 +116,31 @@ class RmfProtocolTest(unittest.TestCase):
             ("require_register", "m"))
         self.assertIsNone(rmf.parse_ack('{"robot_id":"r2","status":"success"}', "r1"))
 
+    def test_session_identity_is_in_all_uplink_payloads(self):
+        payloads = [
+            rmf.register_payload("f", "r1", (0, 0, 0), "1F", session_id="boot-a"),
+            rmf.heartbeat_payload("r1", (0, 0, 0), 100, "idle", None,
+                                  session_id="boot-a", localization_ready=True),
+            rmf.command_result_payload("r1", 1, "completed", session_id="boot-a"),
+            rmf.deregister_payload("f", "r1", "Shutdown", session_id="boot-a"),
+            rmf.offline_payload("r1", session_id="boot-a"),
+        ]
+        self.assertTrue(all(json.loads(payload)["session_id"] == "boot-a" for payload in payloads))
+        self.assertTrue(json.loads(payloads[1])["localization_ready"])
+        self.assertIsNone(json.loads(payloads[1])["current_cmd_id"])
+
+    def test_session_aware_parsers_reject_missing_and_foreign_ids(self):
+        for session_id in (None, "boot-old"):
+            ack = json.dumps({"robot_id": "r1", "session_id": session_id, "status": "success"})
+            cmd = command(session_id=session_id, action="stop")
+            self.assertIsNone(rmf.parse_ack(ack, "r1", "boot-a"))
+            self.assertIsNone(rmf.parse_command(cmd, "r1", "boot-a"))
+        self.assertEqual(rmf.parse_command(
+            command(session_id="boot-a", action="stop"), "r1", "boot-a"), (7, "stop", None))
+        self.assertEqual(rmf.parse_ack(json.dumps({
+            "robot_id": "r1", "session_id": "boot-a", "status": "success"}),
+            "r1", "boot-a"), ("success", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
