@@ -46,6 +46,17 @@ public:
     nav2_util::declare_parameter_if_not_declared(
       node, name + ".path_alignment_tolerance", rclcpp::ParameterValue(5.0 * M_PI / 180.0));
     node->get_parameter(name + ".path_alignment_tolerance", path_alignment_tolerance_);
+    nav2_util::declare_parameter_if_not_declared(
+      node, name + ".rotate_to_heading_gain", rclcpp::ParameterValue(1.5));
+    node->get_parameter(name + ".rotate_to_heading_gain", rotate_to_heading_gain_);
+    nav2_util::declare_parameter_if_not_declared(
+      node, name + ".rotate_to_heading_min_angular_vel", rclcpp::ParameterValue(0.15));
+    node->get_parameter(
+      name + ".rotate_to_heading_min_angular_vel", rotate_to_heading_min_angular_vel_);
+    if (!(rotate_to_heading_gain_ > 0.0) || !(rotate_to_heading_min_angular_vel_ > 0.0)) {
+      throw std::invalid_argument(
+              "rotate_to_heading_gain and rotate_to_heading_min_angular_vel must be positive");
+    }
     if (!validHeadingAngles(path_alignment_tolerance_, rotate_to_heading_min_angle_)) {
       throw std::invalid_argument(
               "Heading thresholds must satisfy 0 < path_alignment_tolerance <= "
@@ -203,6 +214,11 @@ private:
     double linear_vel = 0.0;
     double angular_vel = 0.0;
     rotateToHeading(linear_vel, angular_vel, heading_error, velocity);
+    // Upstream rotates at a constant speed and overshoots the narrow alignment
+    // window under control latency, hunting left and right; slow down near zero.
+    const double speed_limit = std::max(
+      rotate_to_heading_min_angular_vel_, rotate_to_heading_gain_ * std::abs(heading_error));
+    angular_vel = std::clamp(angular_vel, -speed_limit, speed_limit);
 
     if (use_collision_detection_ &&
       isCollisionImminent(pose, linear_vel, angular_vel, distance))
@@ -235,6 +251,8 @@ private:
   geometry_msgs::msg::PoseStamped goal_;
   double latch_release_distance_{0.5};
   double path_alignment_tolerance_{5.0 * M_PI / 180.0};
+  double rotate_to_heading_gain_{1.5};
+  double rotate_to_heading_min_angular_vel_{0.15};
   bool latched_{false};
   bool aligning_path_{true};
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr heading_parameters_handler_;

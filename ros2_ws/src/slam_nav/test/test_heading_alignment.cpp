@@ -40,6 +40,7 @@ protected:
       rclcpp::NodeOptions().parameter_overrides({
         {"FollowPath.desired_linear_vel", 0.75},
         {"FollowPath.lookahead_dist", 0.8},
+        {"FollowPath.rotate_to_heading_angular_vel", 0.5},
         {"FollowPath.rotate_to_heading_min_angle", radians(45)},
         {"FollowPath.path_alignment_tolerance", radians(5)},
         {"goal_checker.xy_goal_tolerance", 0.15},
@@ -230,6 +231,30 @@ TEST_F(HeadingAlignmentTest, LeavingFinalHeadingLatchRequiresInitialAlignmentAga
   expectRotation(command(0.0), 1.0);
   setRobotPose(1.4, 0.5, 0.0);
   expectRotation(command(0.0), -1.0);
+}
+
+TEST_F(HeadingAlignmentTest, RotationSlowsDownNearTargetHeading)
+{
+  geometry_msgs::msg::Twist turning;
+  turning.angular.z = 0.5;
+  setPath(6.0);
+  const double near = controller_.computeVelocityCommands(
+    robot_pose_, turning, &goal_checker_).twist.angular.z;
+  EXPECT_NEAR(near, 1.5 * radians(6.0), 1e-6);
+  setPath(60.0);
+  const double far = controller_.computeVelocityCommands(
+    robot_pose_, turning, &goal_checker_).twist.angular.z;
+  EXPECT_NEAR(far, 0.5, 1e-6);
+}
+
+TEST_F(HeadingAlignmentTest, RotationKeepsMinimumSpeed)
+{
+  geometry_msgs::msg::Twist turning;
+  turning.angular.z = -0.5;
+  setPath(-5.5);
+  EXPECT_NEAR(
+    controller_.computeVelocityCommands(robot_pose_, turning, &goal_checker_).twist.angular.z,
+    -0.15, 1e-6);
 }
 
 TEST_F(HeadingAlignmentTest, PathAlignmentStillChecksCollisions)

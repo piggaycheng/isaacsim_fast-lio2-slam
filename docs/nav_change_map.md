@@ -121,9 +121,14 @@ QoS 1，**不要 retain**。換圖指令送出後仍需完成上述第 6、7 步
 新的準備指令會重新確認停車，準備與換圖不能並行。
 完整 fleet bridge 若仍有執行中的任務，會拒絕準備指令，上位應先 `stop` 並等待舊任務結束。
 
-此接口**只處理車端，不控制或互鎖電梯**。上位／操作者應自行遵守先準備、後移動電梯的順序。
-目前 `rmf_isaacsim` 既有的抵達後換圖邏輯不會因此自動新增搭梯前準備；
-自動搭梯整合需要由上位在適當時機額外發送此指令。本次車端功能亦可直接由 RViz 手動使用。
+此接口**只處理車端，不直接控制或互鎖電梯**。手動操作仍須遵守先準備、後移動電梯的順序。
+`rmf_isaacsim` 的 MQTT fleet adapter 會等待進入車廂的導航指令回報對應
+`command_result (completed)`，再自動發送 `prepare_floor_change`；
+準備指令也回 `completed` 後，才通知 RMF 完成進梯，允許電梯關門與升降。
+電梯車廂點位不以 heartbeat 座標接近判定到點；
+即使目前位置已在車廂目標附近，也不跳過車端導航完成確認。
+（一般點位才會在 heartbeat 距目標 0.25 m、0.2 rad 內直接完成，讓車子不必在中途點對準朝向。）
+此 RMF 順序控制不會鎖住 Isaac Sim 的手動 E／L 按鍵。
 
 ### `change_floor`：抵達後換圖與重定位
 
@@ -160,7 +165,11 @@ mosquitto_pub -h localhost -q 1 \
 換圖期間不得移動或模擬傳送車輛，初始位姿不會繞過定位品質檢查。
 
 `rmf_isaacsim` 的 MQTT fleet adapter 已實作：RMF 乘電梯（`--elevator-lift lift_1`）
-抵達目的樓層開門後，以路網 `levels[].transform` 換算電梯車廂位姿，再發送只帶 x/y/yaw 的 `change_floor`。
+抵達目的樓層開門後發送只帶 x/y/yaw 的 `change_floor`。`initial_pose` 取自 `prepare_floor_change`
+結果 `final_location`（凍結定位當下的實際位姿；單車 bridge 沒有此欄位時改用進梯導航結果的位姿），
+先以出發樓層 `levels[].transform` 轉回 RMF 建築座標，再以目的樓層 transform 轉到目的地圖；
+yaw 同步加上兩層 rotation 差。若換算結果距 RMF 車廂點超過 1.5 m，改用車廂點位置但保留換算後的 yaw；
+沒有記錄位姿時退回 RMF 車廂點位姿。
 電梯通訊見 [isaac_bridge.md](isaac_bridge.md)。Office 電梯位置與 B1 transform 取自 Isaac 參考位姿，
 未經實車校正，可能有公分級誤差。
 

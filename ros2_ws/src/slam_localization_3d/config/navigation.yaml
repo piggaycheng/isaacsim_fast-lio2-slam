@@ -39,6 +39,10 @@ controller_server:
       min_approach_linear_velocity: 0.04
       approach_velocity_scaling_dist: 0.5
       rotate_to_heading_angular_vel: 0.5
+      # In-place rotation speed = clamp(gain * |heading error|, min, rotate_to_heading_angular_vel);
+      # a constant 0.5 rad/s overshoots the 5° alignment window and hunts left/right.
+      rotate_to_heading_gain: 1.5
+      rotate_to_heading_min_angular_vel: 0.15
       use_rotate_to_heading: true
       path_alignment_tolerance: 0.08726646259971647
       rotate_to_heading_min_angle: 0.7853981633974483

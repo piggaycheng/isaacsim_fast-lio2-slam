@@ -162,6 +162,11 @@ Keepout 是軟體限制，collision monitor 不讀 mask。Speed 只限制 RPP �
 | :-- | :-- | :-- |
 | `path_alignment_tolerance` | 0.08726646259971647 rad（5°） | 起步或重新對準時，車頭與路徑前視點方向的誤差縮小至此範圍才前進 |
 | `rotate_to_heading_min_angle` | 0.7853981633974483 rad（45°） | 行進中超過此誤差才切回原地對準，再轉到 5° 以內才繼續 |
+| `rotate_to_heading_gain` | 1.5 | 原地旋轉角速度 = `clamp(gain × |誤差|, min, rotate_to_heading_angular_vel)`，接近目標時減速 |
+| `rotate_to_heading_min_angular_vel` | 0.15 rad/s | 原地旋轉最低角速度，避免小誤差時轉不動 |
+
+上游 RPP 原地旋轉固定 0.5 rad/s，控制延遲下會衝過 5° 對準窗與終點朝向，左右來回微調；
+起步對準與終點朝向鎖定都改用上述比例減速。
 
 同一目標的重新規劃或障礙停車不重設對準狀態；新目標、控制器重新啟用或離開終點
 鎖定範圍時重新要求起步對準。目標變更沿用既有的 0.1 m／0.1 rad 判斷，忽略路徑
