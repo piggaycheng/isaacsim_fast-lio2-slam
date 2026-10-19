@@ -23,7 +23,6 @@ struct LidarPoint
   float z;
   float intensity;
   uint64_t timestamp;
-  uint32_t emitter_id;
   uint32_t channel_id;
 };
 
@@ -61,7 +60,7 @@ private:
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr message)
   {
     constexpr const char * required_fields[] = {
-      "x", "y", "z", "intensity", "timestamp", "emitter_id", "channel_id"
+      "x", "y", "z", "intensity", "timestamp", "channel_id"
     };
     for (const char * field : required_fields) {
       if (!hasField(*message, field)) {
@@ -77,7 +76,6 @@ private:
     sensor_msgs::PointCloud2ConstIterator<float> z(*message, "z");
     sensor_msgs::PointCloud2ConstIterator<float> intensity(*message, "intensity");
     sensor_msgs::PointCloud2ConstIterator<uint32_t> timestamp(*message, "timestamp");
-    sensor_msgs::PointCloud2ConstIterator<uint32_t> emitter_id(*message, "emitter_id");
     sensor_msgs::PointCloud2ConstIterator<uint32_t> channel_id(*message, "channel_id");
 
     std::vector<LidarPoint> points;
@@ -86,7 +84,7 @@ private:
 
     const size_t point_count = message->width * message->height;
     for (size_t index = 0; index < point_count;
-      ++index, ++x, ++y, ++z, ++intensity, ++timestamp, ++emitter_id, ++channel_id)
+      ++index, ++x, ++y, ++z, ++intensity, ++timestamp, ++channel_id)
     {
       if (!std::isfinite(*x) || !std::isfinite(*y) || !std::isfinite(*z)) {
         continue;
@@ -97,7 +95,7 @@ private:
         static_cast<uint64_t>(timestamp[0]);
       scan_start_timestamp = std::min(scan_start_timestamp, point_timestamp);
       points.push_back(
-        {*x, *y, *z, *intensity, point_timestamp, *emitter_id, *channel_id});
+        {*x, *y, *z, *intensity, point_timestamp, *channel_id});
     }
 
     if (points.empty()) {

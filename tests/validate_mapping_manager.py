@@ -79,18 +79,17 @@ def validate():
                     for name, offset in (("x", 0), ("y", 4), ("z", 8), ("intensity", 12))
                 ] + [
                     PointField(name="timestamp", offset=16, datatype=PointField.UINT32, count=2),
-                    PointField(name="emitter_id", offset=24, datatype=PointField.UINT32, count=1),
-                    PointField(name="channel_id", offset=28, datatype=PointField.UINT32, count=1),
+                    PointField(name="channel_id", offset=24, datatype=PointField.UINT32, count=1),
                 ]
-                cloud.point_step = 32
+                cloud.point_step = 28
                 cloud.row_step = cloud.point_step * cloud.width
                 cloud.is_dense = True
                 chunks = []
                 for index, (x, y, z) in enumerate(walls):
                     timestamp = stamp_ns - 100_000_000 + index * 99_000_000 // len(walls)
                     chunks.append(struct.pack(
-                        "<ffffQII", x * room_scale[0], y * room_scale[0], z,
-                        0.5, timestamp, index % 32, index % 32,
+                        "<ffffQI", x * room_scale[0], y * room_scale[0], z,
+                        0.5, timestamp, index % 32,
                     ))
                 cloud.data = b"".join(chunks)
                 lidar_pub.publish(cloud)

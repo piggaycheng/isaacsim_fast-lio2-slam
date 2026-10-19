@@ -840,7 +840,7 @@ def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
         frameId="lidar_link",
         outputIntensity=True,
         outputTimestamp=True,
-        outputEmitterId=True,
+        outputEmitterId=False,
         outputChannelId=True,
     )
     sim_robot.lidar_sensor = lidar_sensor
