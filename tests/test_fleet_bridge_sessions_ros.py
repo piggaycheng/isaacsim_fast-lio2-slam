@@ -29,8 +29,8 @@ from fleet_bridge_node import FleetBridge  # noqa: E402
 
 
 @unittest.skipUnless(
-    os.environ.get("ROS_DOMAIN_ID") not in (None, "", "0"),
-    "Run action integration tests in an isolated nonzero ROS_DOMAIN_ID",
+    os.environ.get("ROS_DOMAIN_ID") not in (None, "", "0", "10"),
+    "Run action integration tests in an isolated ROS_DOMAIN_ID other than 0 or 10",
 )
 class FleetBridgeSessionsRosTest(unittest.TestCase):
     @classmethod

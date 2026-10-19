@@ -6,7 +6,28 @@ project_dir="$(cd "$project_dir" && pwd -P)"
 workspace_dir="$project_dir/ros2_ws"
 # The host-side Isaac bridge and container nodes must use the same UDP-only profile.
 export FASTRTPS_DEFAULT_PROFILES_FILE="$project_dir/docker/fastdds_udp.xml"
+# Keep the default Humble graph off domain 0, where other ROS distros may run.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-10}"
 ros_logs_pid=""
+
+# Linux silently caps the UDP buffers requested by the profile. Small buffers drop
+# point clouds and DDS discovery, which can lose lifecycle service responses and
+# leave Nav2 bringup waiting forever.
+warn_small_dds_buffers() {
+  local sysctl_dir="${1:-/proc/sys/net/core}" wanted limit value
+  wanted="$(sed -n 's:.*<receiveBufferSize>\([0-9]*\)</receiveBufferSize>.*:\1:p' \
+    "$FASTRTPS_DEFAULT_PROFILES_FILE")"
+  [[ -n "$wanted" ]] || return 0
+  for limit in rmem_max wmem_max; do
+    value="$(cat "$sysctl_dir/$limit" 2>/dev/null)" || continue
+    if (( value < wanted )); then
+      echo "WARNING: net.core.$limit=$value is below the Fast DDS UDP buffer ($wanted);" \
+        "run: sudo sysctl -w net.core.rmem_max=$wanted net.core.wmem_max=$wanted" >&2
+      return 0
+    fi
+  done
+}
+warn_small_dds_buffers
 
 ros_compose() {
   HOST_UID="$(id -u)" HOST_GID="$(id -g)" \

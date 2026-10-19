@@ -157,7 +157,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
   map_pcd:=... map_pgm:=...
 ```
 
-監控端執行 `fleet_rviz.launch.py robots:="carter1;carter2"`。各車需使用相同的 `ROS_DOMAIN_ID`，且感測驅動需發佈到 `/NAME/...` 下對應的 topic。
+監控端執行 `fleet_rviz.launch.py robots:="carter1;carter2"`。各車需使用相同的 `ROS_DOMAIN_ID`（本專案預設 10）且感測驅動需發佈到 `/NAME/...` 下對應的 topic。
 
 ## 新增車種
 
@@ -191,7 +191,7 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 
 整合時須注意：
 
-- **網路**：外部程式與本專案使用相同的 `ROS_DOMAIN_ID`、`ROS_LOCALHOST_ONLY` 與 RMW；container 為 host network，主機上的程式可直接看到 topic。ROS 版本須與 Humble 的介面相容。
+- **網路**：外部程式與本專案使用相同的 `ROS_DOMAIN_ID`（預設 10）、`ROS_LOCALHOST_ONLY` 與 RMW；container 為 host network，主機上的程式可直接看到 topic。ROS 版本須與 Humble 的介面相容；Jazzy 等不相容版本請改用 MQTT 介面並放在其他 domain。
 - **座標**：`map` 與 Isaac world 對齊，nav graph 直接使用 Isaac 座標，不需換算。
 - **逐段下單**：Nav2 只追蹤單一目標，不會執行外部系統的時間預約。要讓外部系統的協調生效，fleet adapter 須照計畫把路徑點逐段送給 Nav2，需要等待時不送下一段或取消目前目標，並持續回報位姿。兩點之間由 Nav2 自行規劃，路徑點要夠密才不會偏離計畫車道。
 - **保護區比車體大**：預設方向切換模式下，前進／倒車 Surround 的前、後、左右邊界都裁到旋轉圓半徑以內（Nova Carter 0.81 m、Carter v1 0.71 m，即 `register` 送出的 `footprint_radius`），但矩形四角仍超出這個圓（`--static-zones` 則用完整範本：Nova Carter x −1.35–0.80 m、y ±0.75 m；Carter v1 x −1.10–0.80 m、y ±0.81 m）。外部系統的車輛 profile（vicinity）與車道間距仍須留有餘量，否則兩車在外部系統認為安全的間距下通過，仍可能觸發對方的保護區而停車，與計畫不一致。

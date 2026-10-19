@@ -43,6 +43,15 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 
 啟動腳本與 ROS container 使用 `docker/fastdds_udp.xml`，讓主機 Isaac Sim bridge 與容器透過 UDP 通訊，避開 Fast DDS 共享記憶體埠鎖卡住、程序仍在卻收不到感測器資料的情況。修改此設定後須完整重啟啟動腳本（含 Isaac Sim 與 ROS container）才會生效，不需重建 image 或 workspace；不要在其他 DDS 程序仍執行時刪除共用的 `/dev/shm/fastrtps*`。
 
+UDP 點雲與 DDS discovery 需要較大的 socket buffer。Linux 預設上限約 200 KB，容易丟包（`/proc/net/snmp` 的 `RcvbufErrors` 持續增加），多車啟動時可能使 lifecycle 服務回應遺失，Nav2 停在 `map_server` inactive 等狀態不再前進；啟動腳本偵測到上限不足時會顯示警告。請在主機執行一次以下指令，並完整重啟啟動腳本：
+
+```bash
+echo -e 'net.core.rmem_max=8388608\nnet.core.wmem_max=8388608' | sudo tee /etc/sysctl.d/60-fastdds-udp.conf
+sudo sysctl --system
+```
+
+本專案預設使用 `ROS_DOMAIN_ID=10`（由啟動腳本同時套用到 Isaac Sim 與 container，可在 shell 設定 `ROS_DOMAIN_ID` 覆寫）；主機上手動執行的 ROS 工具也需設成相同 domain。同一台主機上的其他 ROS 系統（例如以 MQTT 對接的 Open-RMF，或不同 ROS 版本）應使用其他 domain，避免 Humble／Jazzy 的 discovery 訊息不相容（`sequence size exceeds remaining buffer`）並增加 discovery 負載。
+
 ### 建圖與存圖
 
 ```bash

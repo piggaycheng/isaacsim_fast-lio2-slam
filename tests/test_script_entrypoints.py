@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,42 @@ class ScriptEntrypointsTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, str(ROOT / "docker/fastdds_udp.xml"))
+
+    def test_ros_helper_defaults_to_nonzero_ros_domain_and_keeps_override(self):
+        for env_domain, expected in ((None, "10"), ("42", "42")):
+            with self.subTest(env_domain=env_domain):
+                env = {k: v for k, v in os.environ.items() if k != "ROS_DOMAIN_ID"}
+                if env_domain:
+                    env["ROS_DOMAIN_ID"] = env_domain
+                result = subprocess.run(
+                    ["bash", "-c",
+                     'project_dir="$1"; source "$project_dir/docker/ros_compose.sh" '
+                     '2>/dev/null; bash -c \'printf "%s" "$ROS_DOMAIN_ID"\'',
+                     "bash", str(ROOT)],
+                    capture_output=True, text=True, check=False, env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
+    def test_ros_helper_warns_when_kernel_caps_dds_udp_buffers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            limits = Path(directory)
+            (limits / "wmem_max").write_text("8388608\n")
+            for rmem_max, warned in (("212992", True), ("8388608", False)):
+                with self.subTest(rmem_max=rmem_max):
+                    (limits / "rmem_max").write_text(rmem_max + "\n")
+                    result = subprocess.run(
+                        ["bash", "-c",
+                         'project_dir="$1"; source "$project_dir/docker/ros_compose.sh" '
+                         '2>/dev/null; warn_small_dds_buffers "$2"',
+                         "bash", str(ROOT), directory],
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual("net.core.rmem_max=212992" in result.stderr, warned)
+                    self.assertEqual(
+                        "sysctl -w net.core.rmem_max=8388608" in result.stderr, warned
+                    )
 
     def test_session_cli_rejects_invalid_usage_and_missing_container(self):
         with tempfile.TemporaryDirectory() as directory:

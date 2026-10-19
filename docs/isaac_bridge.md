@@ -7,7 +7,7 @@ Isaac Sim（`scripts/standalone.py`）在主機執行，ROS 2 Humble 節點（FA
 - `docker/Dockerfile` 安裝所有 apt／pip 依賴（GTSAM、Nav2、`robot_localization`、`pointcloud_to_laserscan`、`pcl_ros`、Open3D…），並由 submodule 建置 Livox-SDK2 與 Sophus。
 - 專案目錄掛載到 `/workspace`，修改 `ros2_ws/src` 只需重新 `docker compose run --rm ros build`（額外參數會傳給 `colcon build`），只有依賴變更才需重建 image。image 使用者預設 UID/GID 1000，不同時以 `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build` 建置。
 - 每個 `run_*.sh` 先驗證參數，以 `docker compose up` 啟動 `ros` service 並追蹤 log，再在主機啟動 `scripts/standalone.py`；Isaac Sim 結束或按 Ctrl+C 時停止 container。
-- container 使用 host network 與 IPC，DDS（含共享記憶體）可直接連到 Isaac Sim 的 ROS 2 bridge；`ROS_DOMAIN_ID`、`ROS_LOCALHOST_ONLY`、`RMW_IMPLEMENTATION` 從目前 shell 傳入。地圖、PCD 與輸出路徑必須在專案目錄內，因為只有它被掛載。
+- container 使用 host network 與 IPC，DDS 可直接連到 Isaac Sim 的 ROS 2 bridge（Fast DDS 設定見 README）；`ROS_DOMAIN_ID`（未設定時為 10）、`ROS_LOCALHOST_ONLY`、`RMW_IMPLEMENTATION` 從目前 shell 傳入。地圖、PCD 與輸出路徑必須在專案目錄內，因為只有它被掛載。
 - 在 container 內執行其他 ROS 指令：
 
 ```bash
