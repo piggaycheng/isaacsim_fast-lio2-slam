@@ -14,8 +14,7 @@ services:
     init: true
     stop_signal: SIGINT
     stop_grace_period: 20s
-    # Host networking and IPC let Isaac Sim's ROS 2 bridge on the host reach
-    # these nodes over DDS, including Fast DDS shared-memory transport.
+    # DDS uses host-network UDP; shared-memory port locks can stall after restarts.
     network_mode: host
     ipc: host
     gpus: all
@@ -24,6 +23,7 @@ services:
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
       ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
       RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      FASTRTPS_DEFAULT_PROFILES_FILE: /workspace/docker/fastdds_udp.xml
       ROS_LAUNCH_ARGS: ${ROS_LAUNCH_ARGS:-}
       DISPLAY: ${DISPLAY:-}
       XAUTHORITY: /tmp/.Xauthority

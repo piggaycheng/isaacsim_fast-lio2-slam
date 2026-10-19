@@ -4,6 +4,8 @@
 
 project_dir="$(cd "$project_dir" && pwd -P)"
 workspace_dir="$project_dir/ros2_ws"
+# The host-side Isaac bridge and container nodes must use the same UDP-only profile.
+export FASTRTPS_DEFAULT_PROFILES_FILE="$project_dir/docker/fastdds_udp.xml"
 ros_logs_pid=""
 
 ros_compose() {

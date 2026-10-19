@@ -9,6 +9,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScriptEntrypointsTest(unittest.TestCase):
+    def test_ros_helper_exports_transport_profile_to_simulator_children(self):
+        result = subprocess.run(
+            ["bash", "-c",
+             'project_dir="$1"; source "$project_dir/docker/ros_compose.sh"; '
+             'bash -c \'test -r "$FASTRTPS_DEFAULT_PROFILES_FILE" && '
+             'printf "%s" "$FASTRTPS_DEFAULT_PROFILES_FILE"\'',
+             "bash", str(ROOT)],
+            cwd="/tmp", capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, str(ROOT / "docker/fastdds_udp.xml"))
+
     def test_session_cli_rejects_invalid_usage_and_missing_container(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

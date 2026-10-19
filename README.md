@@ -41,6 +41,8 @@ docker compose run --rm ros build --packages-select slam_localization_3d
 
 專案級啟動腳本與 Python 工具集中在 `scripts/`；ROS 套件、`docker/` 與 `tests/` 內的腳本維持原位。以下指令皆在**專案根目錄**執行，地圖等資料仍放在 `maps/`。一般啟動腳本會自動啟動 ROS container、RViz 與 Isaac Sim，按 **Ctrl+C** 結束並清理 container。除多車模式外，不要同時啟動多套建圖／定位／導航腳本。
 
+啟動腳本與 ROS container 使用 `docker/fastdds_udp.xml`，讓主機 Isaac Sim bridge 與容器透過 UDP 通訊，避開 Fast DDS 共享記憶體埠鎖卡住、程序仍在卻收不到感測器資料的情況。修改此設定後須完整重啟啟動腳本（含 Isaac Sim 與 ROS container）才會生效，不需重建 image 或 workspace；不要在其他 DDS 程序仍執行時刪除共用的 `/dev/shm/fastrtps*`。
+
 ### 建圖與存圖
 
 ```bash
