@@ -13,11 +13,11 @@ GROUND_PLANE = "/Root/GroundPlane/CollisionPlane"
 # Office 6.1's two shafts extend behind the ground-floor doors at x=-15.
 # Interior sensors per cabin, world XY at ground level: shaft centres are 3 m apart in y.
 CABIN_SENSOR_YS = (-4.5, -1.5)
-# Camera and light: world x and height above the cabin floor. The camera sits by the door and
-# starts looking at the cabin centre (CABIN_CENTER_X, height CABIN_CENTER_Z).
-CABIN_CAMERA_POSITION = (-15.5, 2.0)
+# Camera and light: world x and height above the cabin floor. The camera sits at the top of the
+# back wall and starts looking at the door (CABIN_DOOR_X, height CABIN_DOOR_Z).
+CABIN_CAMERA_POSITION = (-16.8, 2.3)
 CABIN_LIGHT_POSITION = (-16.2, 2.2)
-CABIN_CENTER = (-16.2, 1.0)
+CABIN_DOOR = (-15.0, 0.0)
 CABIN_LIGHT_INTENSITY = 20000.0
 SHAFT_HOLES = ((-17.0, -2.5, -15.0, -0.5), (-17.0, -5.5, -15.0, -3.5))
 
@@ -128,7 +128,7 @@ class ElevatorDoors:
                     # The gimbal (pan/tilt/camera prims) is built under this root by the simulator.
                     self.camera_roots.append(str(root.GetPath()))
                     self.camera_eyes.append((x, y, z))
-                    self.camera_targets.append((CABIN_CENTER[0], y, CABIN_CENTER[1]))
+                    self.camera_targets.append((CABIN_DOOR[0], y, CABIN_DOOR[1]))
                 else:
                     light = UsdLux.SphereLight.Define(self.stage, f"{root.GetPath()}/light")
                     light.CreateRadiusAttr(0.1)
