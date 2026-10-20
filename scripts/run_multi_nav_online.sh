@@ -53,7 +53,7 @@ Options:
                        CAMERA is a prim path relative to the robot (e.g.
                        chassis_link/sensors/front_owl/camera). Repeatable.
       --no-ceiling-cameras
-                       Do not offer the 4 ceiling cameras
+                       Do not offer the ceiling cameras
                        (rtsp://HOST:8554/ceiling_cams/ceiling_cam_N). Each sits on a
                        pan/tilt gimbal: MQTT slam/gimbal/ceiling_cams/ceiling_cam_N/command.
       --camera-resolution WxH, --camera-fps N

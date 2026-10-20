@@ -48,6 +48,15 @@ OVERVIEW_CAMERA_CUT_HEIGHT = 2.6
 CEILING_CAMERA_POSITIONS = [(-14.0, 10.0), (4.5, 10.0), (4.5, -10.0), (-14.0, -10.0)]
 CEILING_CAMERA_HEIGHT = 2.9
 CEILING_CAMERA_TARGET = (0.0, 0.0, 0.0)
+# B1 cameras above nav-graph waypoints wp_7, wp_8, wp_9 and wp_14 (B1 floor is z=-3.3).
+# They start looking at the floor below the centre of those four points.
+B1_CAMERA_POSITIONS = [(-13.46, -12.88), (-8.36, -12.56), (-8.24, 0.55), (-13.28, 0.76)]
+B1_CAMERA_HEIGHT = -1.0
+B1_CAMERA_TARGET = (
+    sum(x for x, _ in B1_CAMERA_POSITIONS) / len(B1_CAMERA_POSITIONS),
+    sum(y for _, y in B1_CAMERA_POSITIONS) / len(B1_CAMERA_POSITIONS),
+    -3.3,
+)
 CEILING_CAMERA_ROOT = "/World/CeilingCameras"
 # Ceiling cameras sit on kinematic pan/tilt gimbals in ROS namespace /ceiling_cams/ceiling_cam_N.
 CEILING_CAMERA_NAMESPACE = "ceiling_cams"
@@ -518,11 +527,13 @@ class CeilingGimbal:
     y axis (positive looks down). ROS: <namespace>/gimbal/joint_command and joint_states.
     """
 
-    def __init__(self, stage, name: str, eye, target):
+    def __init__(self, stage, name: str, eye, target, root: str | None = None):
         self.namespace = f"{CEILING_CAMERA_NAMESPACE}/{name}"
         self.graph_path = f"/World/Gimbal_ROS2_{CEILING_CAMERA_NAMESPACE}_{name}"
-        root = f"{CEILING_CAMERA_ROOT}/{name}"
-        UsdGeom.Xform.Define(stage, root).AddTranslateOp().Set(Gf.Vec3d(*eye))
+        if root is None:
+            root = f"{CEILING_CAMERA_ROOT}/{name}"
+            UsdGeom.Xform.Define(stage, root).AddTranslateOp().Set(Gf.Vec3d(*eye))
+        # Otherwise root is an existing prim at eye (e.g. riding an elevator cabin).
         self.pan_op = UsdGeom.Xform.Define(stage, f"{root}/gimbal_pan").AddRotateZOp()
         tilt_path = f"{root}/gimbal_pan/gimbal_tilt"
         self.tilt_op = UsdGeom.Xform.Define(stage, tilt_path).AddRotateYOp()
@@ -564,12 +575,19 @@ class CeilingGimbal:
 def create_ceiling_cameras(stage) -> list[CameraStream]:
     """Add the ceiling cameras on kinematic gimbals, all streams off until MQTT enables them."""
     streams = []
-    for index, (x, y) in enumerate(CEILING_CAMERA_POSITIONS, start=1):
+    placements = [((x, y, CEILING_CAMERA_HEIGHT), CEILING_CAMERA_TARGET, None, "Ceiling camera")
+                  for x, y in CEILING_CAMERA_POSITIONS]
+    placements += [((x, y, B1_CAMERA_HEIGHT), B1_CAMERA_TARGET, None, "B1 camera")
+                   for x, y in B1_CAMERA_POSITIONS]
+    if elevator_doors is not None:
+        placements += [(eye, target, root, "Elevator camera") for eye, target, root in zip(
+            elevator_doors.camera_eyes, elevator_doors.camera_targets, elevator_doors.camera_roots)]
+    for index, (eye, target, root, label) in enumerate(placements, start=1):
         name = f"ceiling_cam_{index}"
-        gimbal = CeilingGimbal(stage, name, (x, y, CEILING_CAMERA_HEIGHT), CEILING_CAMERA_TARGET)
+        gimbal = CeilingGimbal(stage, name, eye, target, root)
         ceiling_gimbals.append(gimbal)
         streams.append(create_camera_stream(
-            gimbal.camera_path, name, CEILING_CAMERA_NAMESPACE, f"Ceiling camera {index}",
+            gimbal.camera_path, name, CEILING_CAMERA_NAMESPACE, f"{label} {index}",
             gimbal.namespace,
         ))
         print(f"Ceiling camera {index} gimbal: ROS /{gimbal.namespace}/gimbal/joint_command")

@@ -39,8 +39,8 @@ def gimbals(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument("count", default_value="4",
-                              description="Number of ceiling cameras (ceiling_cam_1..N)"),
+        DeclareLaunchArgument("count", default_value="10",
+                              description="Number of gimbal cameras (ceiling_cam_1..N): 4 Office, 4 B1, 2 elevator"),
         DeclareLaunchArgument("tilt_limits_deg", default_value="-90,90",
                               description="Must match the simulator's ceiling gimbal limits"),
         DeclareLaunchArgument("mqtt_host", default_value="",
