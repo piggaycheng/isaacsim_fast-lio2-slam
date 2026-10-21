@@ -11,14 +11,12 @@ CABIN_SOURCE = "/Root/BP_Elevator_162/SM_Elevator"
 DOOR_ROOT = "/World/DynamicElevatorDoors"
 GROUND_PLANE = "/Root/GroundPlane/CollisionPlane"
 # Office 6.1's two shafts extend behind the ground-floor doors at x=-15.
-# Interior sensors per cabin, world XY at ground level: shaft centres are 3 m apart in y.
+# Interior camera per cabin, world XY at ground level: shaft centres are 3 m apart in y.
 CABIN_SENSOR_YS = (-4.5, -1.5)
-# Camera and light: world x and height above the cabin floor. The camera sits at the top of the
-# back wall and starts looking at the door (CABIN_DOOR_X, height CABIN_DOOR_Z).
+# Camera: world x and height above the cabin floor. It sits at the top of the back wall and
+# starts looking at the door (CABIN_DOOR_X, height CABIN_DOOR_Z).
 CABIN_CAMERA_POSITION = (-16.8, 2.3)
-CABIN_LIGHT_POSITION = (-16.2, 2.2)
 CABIN_DOOR = (-15.0, 0.0)
-CABIN_LIGHT_INTENSITY = 20000.0
 SHAFT_HOLES = ((-17.0, -2.5, -15.0, -0.5), (-17.0, -5.5, -15.0, -3.5))
 
 
@@ -113,26 +111,21 @@ class ElevatorDoors:
         print("Elevator cabins ready at ground level; L switches between z=0 and z=-3.3 m", flush=True)
 
     def _create_cabin_sensors(self):
-        """Add a camera and a light inside each cabin; they ride with it via _apply."""
-        from pxr import Gf, UsdGeom, UsdLux
+        """Add a camera inside each cabin; it rides with the cabin via _apply."""
+        from pxr import Gf, UsdGeom
 
         for index, y in enumerate(CABIN_SENSOR_YS):
-            for name, (x, z) in (("camera", CABIN_CAMERA_POSITION), ("light", CABIN_LIGHT_POSITION)):
-                matrix = Gf.Matrix4d(1.0)
-                matrix.SetTranslateOnly(Gf.Vec3d(x, y, z))
-                root = UsdGeom.Xform.Define(self.stage, f"{DOOR_ROOT}/Cabin{index}_{name}")
-                op = UsdGeom.Xformable(root.GetPrim()).MakeMatrixXform()
-                op.Set(matrix)
-                self.cabin_sensors.append((op, matrix))
-                if name == "camera":
-                    # The gimbal (pan/tilt/camera prims) is built under this root by the simulator.
-                    self.camera_roots.append(str(root.GetPath()))
-                    self.camera_eyes.append((x, y, z))
-                    self.camera_targets.append((CABIN_DOOR[0], y, CABIN_DOOR[1]))
-                else:
-                    light = UsdLux.SphereLight.Define(self.stage, f"{root.GetPath()}/light")
-                    light.CreateRadiusAttr(0.1)
-                    light.CreateIntensityAttr(CABIN_LIGHT_INTENSITY)
+            x, z = CABIN_CAMERA_POSITION
+            matrix = Gf.Matrix4d(1.0)
+            matrix.SetTranslateOnly(Gf.Vec3d(x, y, z))
+            root = UsdGeom.Xform.Define(self.stage, f"{DOOR_ROOT}/Cabin{index}_camera")
+            op = UsdGeom.Xformable(root.GetPrim()).MakeMatrixXform()
+            op.Set(matrix)
+            self.cabin_sensors.append((op, matrix))
+            # The gimbal (pan/tilt/camera prims) is built under this root by the simulator.
+            self.camera_roots.append(str(root.GetPath()))
+            self.camera_eyes.append((x, y, z))
+            self.camera_targets.append((CABIN_DOOR[0], y, CABIN_DOOR[1]))
 
     def _open_shafts(self):
         from pxr import Gf, Usd, UsdGeom, UsdPhysics
