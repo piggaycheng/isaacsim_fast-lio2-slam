@@ -15,7 +15,7 @@ docker compose run --rm ros ros2 topic list                               # 獨�
 docker compose exec ros /workspace/docker/entrypoint.sh ros2 topic list   # run 腳本執行中
 ```
 
-- **tf2 修補**：apt 的 `ros-humble-tf2` 低於 0.25.24 時，Dockerfile 會建置上游 tf2 0.25.24 並只替換 image 內的 `libtf2.so`。舊版 tf2 在 TF listener 與 costmap message filter 之間有 lock-order 死鎖（ros2/geometry2#990），數分鐘後 Nav2 伺服器的 TF buffer 會凍結，出現 `Transform data too old` 與旋轉的 local costmap。apt 版本含修正後，重建 image 會自動略過替換。
+- **tf2 版本要求**：Dockerfile 直接透過 apt 安裝 `ros-humble-tf2`，不再下載 geometry2 原始碼編譯或替換 `libtf2.so`。安裝後會檢查版本至少為 0.25.24（包含 `0.25.24-1` 與更新版本），不足時建置會失敗。舊版 tf2 在 TF listener 與 costmap message filter 之間有 lock-order 死鎖（ros2/geometry2#990），數分鐘後 Nav2 伺服器的 TF buffer 會凍結，出現 `Transform data too old` 與旋轉的 local costmap。
 
 ## Isaac Sim → FAST-LIO 資料
 

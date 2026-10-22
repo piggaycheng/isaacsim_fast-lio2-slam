@@ -4,7 +4,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG USERNAME=ros
 ARG USER_UID=1000
 ARG USER_GID=1000
-ARG TF2_FIXED_VERSION=0.25.24
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -44,24 +43,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-rosbag2 \
       ros-humble-rviz2 \
       ros-humble-tf-transformations \
+      ros-humble-tf2 \
       ros-humble-tf2-geometry-msgs \
       ros-humble-tf2-sensor-msgs \
     && rm -rf /var/lib/apt/lists/*
 
 # tf2 < 0.25.24 can deadlock the TF listener against a MessageFilter's
 # waitForTransform (ros2/geometry2#990), freezing Nav2 TF after minutes.
-RUN installed="$(dpkg-query -W -f='${Version}' ros-humble-tf2)"; \
-    if dpkg --compare-versions "$installed" ge "$TF2_FIXED_VERSION"; then \
+RUN installed="$(dpkg-query -W -f='${Version}' ros-humble-tf2)" \
+    && if dpkg --compare-versions "$installed" ge 0.25.24; then \
       echo "System tf2 $installed already contains the deadlock fix"; \
     else \
-      source /opt/ros/humble/setup.bash \
-      && curl -fsSL "https://github.com/ros2/geometry2/archive/refs/tags/$TF2_FIXED_VERSION.tar.gz" \
-        | tar -xz -C /tmp \
-      && cmake -S "/tmp/geometry2-$TF2_FIXED_VERSION/tf2" -B /tmp/tf2-build \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-      && cmake --build /tmp/tf2-build --target tf2 -j"$(nproc)" \
-      && install -m 0644 /tmp/tf2-build/libtf2.so /opt/ros/humble/lib/libtf2.so \
-      && rm -rf /tmp/geometry2-* /tmp/tf2-build; \
+      echo "ros-humble-tf2 >= 0.25.24 is required; apt installed $installed" >&2; \
+      exit 1; \
     fi
 
 RUN pip3 install --no-cache-dir \
