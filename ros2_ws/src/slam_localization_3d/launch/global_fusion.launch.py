@@ -4,7 +4,7 @@ import tempfile
 
 import yaml
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, RegisterEventHandler,
@@ -25,6 +25,10 @@ from robot_namespace import (  # noqa: E402
     RobotParameterFile, load_parameters, local_odometry_file, namespaced_rviz_file,
     robot_parameter_file,
 )
+
+sys.path.insert(0, os.path.join(
+    get_package_prefix("slam_localization_3d"), "lib", "slam_localization_3d"))
+from floor_maps import fleet_mask_topics  # noqa: E402
 
 
 def robot_namespace(context):
@@ -67,17 +71,30 @@ def sensor_transforms(context):
 
 
 def configure_filters(context, observation_config):
-    editor = LaunchConfiguration("filter_editor", default="false").perform(context).lower() == "true"
-    if not editor:
+    def flag(name):
+        return LaunchConfiguration(name, default="false").perform(context).lower() == "true"
+
+    editor, fleet = flag("filter_editor"), flag("fleet_filters")
+    if not editor and not fleet:
         return [SetLaunchConfiguration("costmap_config", observation_config)]
-    if LaunchConfiguration("costmaps").perform(context).lower() != "true":
+    if editor and fleet:
+        raise ValueError("filter_editor and fleet_filters are mutually exclusive")
+    if not flag("costmaps"):
         raise ValueError("Costmap filter editor requires costmaps:=true")
-    config = load_parameters(observation_config, robot_type(context))
     namespace = robot_namespace(context)
-    mask_topics = [
-        namespaced_topic(namespace, f"/costmap_filters/{kind}_mask")
-        for kind in ("keepout", "speed")
-    ]
+    if fleet:
+        if not flag("navigate"):
+            # floor_manager points the filters at the current floor's fleet masks.
+            raise ValueError("fleet_filters requires navigate:=true")
+        initial_floor = os.path.basename(os.path.dirname(
+            LaunchConfiguration("map_pgm").perform(context)))
+        mask_topics = fleet_mask_topics(initial_floor)
+    else:
+        mask_topics = [
+            namespaced_topic(namespace, f"/costmap_filters/{kind}_mask")
+            for kind in ("keepout", "speed")
+        ]
+    config = load_parameters(observation_config, robot_type(context))
     for name in ("global_costmap", "local_costmap"):
         parameters = config[name][name]["ros__parameters"]
         parameters["filters"] = []
@@ -109,6 +126,17 @@ def configure_filters(context, observation_config):
         directory.cleanup()
         return []
 
+    actions = [
+        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
+        SetLaunchConfiguration("costmap_config", filename),
+        SetLaunchConfiguration(
+            "filter_mask_topics", yaml.safe_dump(mask_topics, default_flow_style=True).strip(),
+        ),
+    ]
+    if fleet:
+        return actions + [LogInfo(msg=(
+            f"Costmap filters follow the fleet zone editor of the current floor "
+            f"(initially {', '.join(mask_topics)})"))]
     editor_node = Node(
         package="slam_localization_3d", executable="costmap_filter_editor.py",
         name="costmap_filter_editor", output="screen",
@@ -117,12 +145,7 @@ def configure_filters(context, observation_config):
             "state_file": LaunchConfiguration("filter_state"),
         }],
     )
-    return [
-        RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
-        SetLaunchConfiguration("costmap_config", filename),
-        SetLaunchConfiguration(
-            "filter_mask_topics", yaml.safe_dump(mask_topics, default_flow_style=True).strip(),
-        ),
+    return actions + [
         editor_node,
         RegisterEventHandler(OnProcessExit(
             target_action=editor_node,
@@ -383,6 +406,7 @@ def robot_nodes(context, package, nav):
                 "maps_root": maps_root or os.path.dirname(os.path.dirname(value("map_pgm"))),
                 "initial_floor": initial_floor,
                 "filter_editor_active": enabled("filter_editor"),
+                "fleet_filters": enabled("fleet_filters"),
                 "floor_base_z": -imu_mount(profile)[2],
             }],
         ))
@@ -586,6 +610,11 @@ def generate_launch_description():
                 "filter_state",
                 default_value=os.path.join(os.getcwd(), "maps/costmap_filters/editor.json"),
                 description="Persistent JSON zone state for the RViz editor",
+            ),
+            DeclareLaunchArgument(
+                "fleet_filters", default_value="false",
+                description="Apply Keepout/Speed zones served per floor by fleet_rviz.launch.py "
+                            "filter_editor:=true (/fleet/zones/floor_FLOOR); requires navigate",
             ),
             OpaqueFunction(function=push_robot_namespace),
             SetLaunchConfiguration("filter_mask_topics", '[""]'),

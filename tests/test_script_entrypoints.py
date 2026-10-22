@@ -170,13 +170,25 @@ class ScriptEntrypointsTest(unittest.TestCase):
                  ("fleet_rviz.launch.py", "robots:=carter1#fleet1@0,0,0;carter2:carter_v1#fleet2@3.5,0,0",
                   "maps_root:=/workspace/maps", "floors:=1F;B1", "initial_floor:=1F",
                   "mqtt_host:=localhost", "auto_initial_pose:=true", "simulation_reference:=false")),
+                ("run_multi_nav.sh", ("--headless", "--no-rviz", "--filter-editor"),
+                 ("robot.launch.py robot:=carter1@0,0,0", "fleet_filters:=true",
+                  "fleet_rviz.launch.py rviz:=false filter_editor:=true "
+                  "filter_state_dir:=/workspace/maps/costmap_filters/fleet")),
+                ("run_multi_nav_online.sh",
+                 ("--no-ceiling-cameras", "--mqtt-host", "localhost",
+                  "--filter-editor", "--filter-state-dir", "zones"),
+                 ("fleet_filters:=true", "fleet_rviz.launch.py rviz:=true filter_editor:=true "
+                  "filter_state_dir:=/workspace/zones")),
                 ("run_multi_nav.sh", ("--manual-initial-pose",),
                  ("auto_initial_pose:=false", "simulation_reference:=true")),
                 ("run_multi_nav_online.sh", ("--manual-initial-pose", "--no-ceiling-cameras"),
                  ("auto_initial_pose:=false", "simulation_reference:=true")),
                 ("run_multi_nav_lift_online.sh", ("--no-ceiling-cameras", "--mqtt-host", "localhost"),
-                 ("fleet_rviz.launch.py", "mqtt_host:=localhost",
-                  "--dynamic-elevator-doors --elevator-mqtt-lift lift_1")),
+                 ("fleet_rviz.launch.py", "mqtt_host:=localhost", "fleet_filters:=true",
+                  "filter_editor:=true", "--dynamic-elevator-doors --elevator-mqtt-lift lift_1")),
+                ("run_multi_nav_lift_online.sh",
+                 ("--no-ceiling-cameras", "--mqtt-host", "localhost", "--no-filter-editor"),
+                 ("fleet_filters:=false", "filter_editor:=false")),
                 ("save_map.sh", ("--voxel-size", "0.05"),
                  ("save_map_resolution 0.05",
                   "file_path: '/workspace/maps/office'")),
@@ -196,6 +208,12 @@ class ScriptEntrypointsTest(unittest.TestCase):
                         self.assertNotIn("--elevator-door-mode", result.stdout)
                     if "--mqtt-host" not in args:
                         self.assertNotIn("floor_mqtt_host", result.stdout)
+                    if (name.startswith("run_multi_nav") and "--filter-editor" not in args
+                            and (name != "run_multi_nav_lift_online.sh"
+                                 or "--no-filter-editor" in args)):
+                        self.assertNotIn("fleet_filters:=true", result.stdout)
+                        if "--no-rviz" in args:
+                            self.assertNotIn("fleet_rviz.launch.py", result.stdout)
                     if name == "run_3d_localization.sh" and "--dynamic-elevator-doors" not in args:
                         self.assertNotIn("--dynamic-elevator-doors", result.stdout)
                     if "ROOT" in expected:

@@ -6,6 +6,22 @@ import re
 
 import yaml
 
+FILTER_KINDS = ("keepout", "speed")
+
+
+def fleet_zone_namespace(floor):
+    """Namespace of the fleet RViz costmap filter editor serving one floor."""
+    # Topic tokens cannot start with a digit or contain '-', hence the prefix and check.
+    if not re.fullmatch(r"[A-Za-z0-9_]+", floor or ""):
+        raise ValueError(
+            f"Fleet costmap filters need floor names of letters, digits and _, got {floor!r}")
+    return f"/fleet/zones/floor_{floor}"
+
+
+def fleet_mask_topics(floor):
+    namespace = fleet_zone_namespace(floor)
+    return [f"{namespace}/costmap_filters/{kind}_mask" for kind in FILTER_KINDS]
+
 
 def floor_maps(root, floor):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", floor):

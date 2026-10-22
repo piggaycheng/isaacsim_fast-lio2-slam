@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(
     Path(__file__).resolve().parents[1] / "ros2_ws/src/slam_localization_3d/scripts"
 ))
-from floor_maps import floor_maps
+from floor_maps import fleet_mask_topics, fleet_zone_namespace, floor_maps
 
 
 class FloorMapsTest(unittest.TestCase):
@@ -34,3 +34,12 @@ class FloorMapsTest(unittest.TestCase):
             (floor / "map_2d.yaml").write_text("image: missing.pgm\n")
             with self.assertRaisesRegex(ValueError, "Missing map image"):
                 floor_maps(directory, "B1")
+
+    def test_fleet_zone_topics_are_valid_ros_names_or_rejected(self):
+        self.assertEqual(fleet_mask_topics("1F"), [
+            "/fleet/zones/floor_1F/costmap_filters/keepout_mask",
+            "/fleet/zones/floor_1F/costmap_filters/speed_mask",
+        ])
+        for name in ("B-1", "", "../1F", "1F/x"):
+            with self.subTest(floor=name), self.assertRaisesRegex(ValueError, "floor names"):
+                fleet_zone_namespace(name)

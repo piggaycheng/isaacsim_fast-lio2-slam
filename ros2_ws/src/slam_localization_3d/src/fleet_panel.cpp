@@ -289,6 +289,18 @@ private:
           topic->setValue(value);
         }
       }
+      if (name == "Costmap zone editor" &&
+        display->getClassId() == "rviz_default_plugins/InteractiveMarkers" &&
+        !floors_->currentText().isEmpty())
+      {
+        // Matches floor_maps.fleet_zone_namespace(); one editor serves each floor.
+        auto * property = display->subProp("Interactive Markers Namespace");
+        const auto value = zoneNamespace() + "/costmap_filter_editor";
+        if (property->getValue().toString() != value) {
+          display->reset();
+          property->setValue(value);
+        }
+      }
       if (robots_->findText(name) < 0 ||
         !dynamic_cast<rviz_common::DisplayGroup *>(display))
       {
@@ -328,8 +340,20 @@ private:
     return nullptr;
   }
 
+  QString zoneNamespace() const
+  {
+    return "/fleet/zones/floor_" + floors_->currentText();
+  }
+
   void updateTopics()
   {
+    if (auto * point = findTool("PublishPoint"); point && !floors_->currentText().isEmpty()) {
+      const auto value = zoneNamespace() + "/clicked_point";
+      auto * topic = point->getPropertyContainer()->subProp("Topic");
+      if (topic->getValue().toString() != value) {
+        topic->setValue(value);
+      }
+    }
     const auto robot = robots_->currentText();
     auto * goal = findTool("SetGoal");
     auto * pose = findTool("SetInitialPose");

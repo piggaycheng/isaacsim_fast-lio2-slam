@@ -19,12 +19,13 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.msg import Transition
 from lifecycle_msgs.srv import ChangeState, GetState
+from nav2_msgs.msg import CostmapFilterInfo
 from nav2_msgs.srv import ClearEntireCostmap, LoadMap, ManageLifecycleNodes
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from robot_localization.srv import SetPose
 from slam_localization_3d.srv import ChangeFloor, LoadLocalizationMap, PrepareFloorChange
 from std_srvs.srv import SetBool
@@ -56,10 +57,12 @@ class FloorSwitchTest(unittest.TestCase):
             (path / "map_2d.pgm").write_bytes(b"P5\n1 1\n255\n\xfe")
             (path / "map_2d.yaml").write_text("image: map_2d.pgm\n")
         self.namespace = f"floor_test_{uuid.uuid4().hex[:8]}"
+        self.fleet_filters = self._testMethodName.startswith("test_fleet_filters")
         self.node = FloorManager(namespace=self.namespace, parameter_overrides=[
             Parameter("maps_root", value=self.directory.name),
             Parameter("switch_timeout", value=2.5),
             Parameter("service_timeout", value=0.8),
+            Parameter("fleet_filters", value=self.fleet_filters),
         ])
         self.peer = Node("floor_peers", namespace=self.namespace)
         self.executor = SingleThreadedExecutor()
@@ -240,6 +243,52 @@ class FloorSwitchTest(unittest.TestCase):
         self.assertLess(kinds.index("pcd"), kinds.index("ekf"))
         self.assertLess(kinds.index("ekf"), kinds.index("clear"))
         self.assertEqual(self.events[-1], ("safety", False))
+
+    def test_fleet_filters_follow_floor_and_require_target_masks(self):
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                             reliability=ReliabilityPolicy.RELIABLE)
+        infos = {}
+        for kind in ("keepout", "speed"):
+            self.peer.create_subscription(
+                CostmapFilterInfo, f"costmap_filters/{kind}_info",
+                lambda message, kind=kind: (infos.__setitem__(kind, message),
+                                            self.events.append(("info", message.filter_mask_topic))),
+                latched)
+        self.spin_until(lambda: len(infos) == 2)
+        self.assertEqual(infos["keepout"].type, 0)
+        self.assertEqual(infos["speed"].type, 1)
+        self.assertEqual(infos["keepout"].filter_mask_topic,
+                         "/fleet/zones/floor_1F/costmap_filters/keepout_mask")
+        self.assertEqual(infos["speed"].filter_mask_topic,
+                         "/fleet/zones/floor_1F/costmap_filters/speed_mask")
+
+        result = self.switch()
+        self.assertFalse(result.success)
+        self.assertIn("/fleet/zones/floor_B1/costmap_filters/keepout_mask", result.message)
+        self.assertTrue(self.holds["safety"])
+        self.assertNotIn("map", [event[0] for event in self.events])
+        self.assertIn("floor_1F", infos["keepout"].filter_mask_topic)
+
+        mask = OccupancyGrid()
+        mask.header.frame_id = "map"
+        mask.info.width = mask.info.height = 1
+        mask.data = [0]
+        publishers = [self.peer.create_publisher(
+            OccupancyGrid, f"/fleet/zones/floor_B1/costmap_filters/{kind}_mask", latched)
+            for kind in ("keepout", "speed")]
+        for publisher in publishers:
+            publisher.publish(mask)
+        self.events.clear()
+        result = self.switch()
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(infos["keepout"].filter_mask_topic,
+                         "/fleet/zones/floor_B1/costmap_filters/keepout_mask")
+        self.assertEqual(infos["speed"].filter_mask_topic,
+                         "/fleet/zones/floor_B1/costmap_filters/speed_mask")
+        kinds = [event[0] for event in self.events]
+        # Zones change only after the target map loads and before Nav2 resumes.
+        self.assertLess(kinds.index("map"), kinds.index("info"))
+        self.assertLess(kinds.index("info"), kinds.index("clear"))
 
     def prepare(self):
         future = self.prepare_client.call_async(PrepareFloorChange.Request())

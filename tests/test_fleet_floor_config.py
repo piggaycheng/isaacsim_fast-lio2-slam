@@ -78,6 +78,23 @@ class FleetFloorConfigTest(unittest.TestCase):
             with self.subTest(floors=floors), self.assertRaises(ValueError):
                 fleet_rviz(["carter1"], floors)
 
+    def test_zone_editor_follows_first_floor_and_is_optional(self):
+        config = fleet_rviz(["carter1"], ["B1", "1F"],
+                            zone_namespaces=["/fleet/zones/floor_B1", "/fleet/zones/floor_1F"])
+        manager = config["Visualization Manager"]
+        editor = next(display for display in manager["Displays"]
+                      if display["Name"] == "Costmap zone editor")
+        self.assertEqual(editor["Interactive Markers Namespace"],
+                         "/fleet/zones/floor_B1/costmap_filter_editor")
+        point = next(tool for tool in manager["Tools"]
+                     if tool["Class"] == "rviz_default_plugins/PublishPoint")
+        self.assertEqual(point["Topic"]["Value"], "/fleet/zones/floor_B1/clicked_point")
+        plain = fleet_rviz(["carter1"], ["B1", "1F"])["Visualization Manager"]
+        self.assertNotIn("Costmap zone editor", [d["Name"] for d in plain["Displays"]])
+        self.assertNotIn("rviz_default_plugins/PublishPoint", [t["Class"] for t in plain["Tools"]])
+        with self.assertRaisesRegex(ValueError, "one costmap zone namespace per floor"):
+            fleet_rviz(["carter1"], ["B1", "1F"], zone_namespaces=["/fleet/zones/floor_B1"])
+
 
 if __name__ == "__main__":
     unittest.main()

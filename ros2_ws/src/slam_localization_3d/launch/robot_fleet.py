@@ -448,11 +448,13 @@ def fleet_floor_maps(maps_root, initial_floor, floors=None):
     return [(name, maps[name]) for name in names]
 
 
-def fleet_rviz(names, floors=("1F", "B1"), simulation_reference=True):
+def fleet_rviz(names, floors=("1F", "B1"), simulation_reference=True, zone_namespaces=None):
     """One RViz config showing every robot; TF comes merged from fleet_relay.py.
 
     The panel selects an independent monitoring map and hides robots on other
     floors. Robot navigation maps and pose tools remain in their local map frame.
+    zone_namespaces (one per floor) adds the shared costmap filter editor; the
+    panel points its markers and Publish Point tool at the displayed floor.
     """
     names = [normalize_namespace(name) for name in names]
     if not names or not all(names):
@@ -474,6 +476,16 @@ def fleet_rviz(names, floors=("1F", "B1"), simulation_reference=True):
     ]
     tools = [{"Class": f"rviz_default_plugins/{name}"}
              for name in ("Interact", "MoveCamera", "Select")]
+    if zone_namespaces is not None:
+        zone_namespaces = list(zone_namespaces)
+        if len(zone_namespaces) != len(floors):
+            raise ValueError("fleet RViz needs one costmap zone namespace per floor")
+        displays.append({
+            "Class": "rviz_default_plugins/InteractiveMarkers", "Enabled": True,
+            "Name": "Costmap zone editor", "Show Descriptions": True,
+            "Interactive Markers Namespace": f"{zone_namespaces[0]}/costmap_filter_editor"})
+        tools.append({"Class": "rviz_default_plugins/PublishPoint", "Single click": False,
+                      "Topic": _topic(f"{zone_namespaces[0]}/clicked_point")})
     for index, name in enumerate(names):
         color = FLEET_COLORS[index % len(FLEET_COLORS)]
         displays.append({

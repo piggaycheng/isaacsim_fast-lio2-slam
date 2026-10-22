@@ -144,6 +144,8 @@ global／local inflation 半徑仍為 1.1／0.9 m；inflation 是障礙代價梯
 
 重疊禁行區取聯集，重疊限速區取較低百分比；Speed mask 的 0 表示不限速，非零為 RPP 目標線速度的百分比。更新即時生效，不需重啟 Nav2。每次成功更新先原子寫入 `maps/costmap_filters/editor.json`（`--filter-state FILE` 可指定其他檔案），下次啟動自動還原；狀態檔含地圖指紋，與目前地圖不符、損壞或無法保存時會報錯。頂點須在地圖內，多邊形不能自交、重複頂點或面積為零；被拒絕的更新不會覆蓋既有區域，狀態見 `/costmap_filters/editor_status`。
 
+多車時改用每層共用的區域，見[多車文件](multi_robot.md#共用禁行限速區)。
+
 Keepout 是軟體限制，collision monitor 不讀 mask。Speed 只限制 RPP 路徑跟隨線速度，**不限制原地旋轉、BackUp、手動或直接送入速度 topic 的命令**，也不是進入邊界前的硬性煞車；限速區需提前擴大。Binary filter 尚未實作。
 
 ## 規劃、控制與避障

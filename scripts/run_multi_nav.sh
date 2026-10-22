@@ -9,6 +9,8 @@ rviz=true
 auto_initial_pose=true
 robots=()
 boxes=()
+filter_editor=false
+filter_state_dir=""
 
 usage() {
   cat <<'EOF'
@@ -32,6 +34,16 @@ Options:
                        Disable automatic spawn/session-derived initial poses;
                        show reference arrows until each manual pose is set.
       --no-rviz        Do not start the fleet RViz.
+      --filter-editor  Shared Keepout/Speed zones per floor: annotate them in the
+                       fleet RViz; every robot applies the zones of its current
+                       floor and floor switches wait for that floor's zones. With
+                       --no-rviz the saved zones are still served (no editing).
+      --no-filter-editor
+                       Disable shared zones (default unless run via
+                       run_multi_nav_lift_online.sh).
+      --filter-state-dir DIR
+                       Zone state directory, one FLOOR.json per floor
+                       (default: maps/costmap_filters/fleet).
       --headless       Run Isaac Sim without its GUI.
       --box X,Y[,SX,SY,SZ]
                        Place a static box obstacle at Office map X,Y (m).
@@ -62,6 +74,9 @@ while (($# > 0)); do
     --pcd) value "$@"; map_pcd="$2"; shift 2 ;;
     --manual-initial-pose) auto_initial_pose=false; shift ;;
     --no-rviz) rviz=false; shift ;;
+    --filter-editor) filter_editor=true; shift ;;
+    --no-filter-editor) filter_editor=false; shift ;;
+    --filter-state-dir) value "$@"; filter_state_dir="$2"; shift 2 ;;
     --headless) headless=true; shift ;;
     --box) value "$@"; boxes+=(--box "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -108,6 +123,13 @@ if [[ "$auto_initial_pose" == true && "$(basename "$(dirname "$map_pgm")")" != o
   echo "Automatic initial poses require $(dirname "$map_pgm")/session.json; use --manual-initial-pose." >&2
   exit 1
 fi
+if [[ -n "$filter_state_dir" && "$filter_editor" != true ]]; then
+  echo "--filter-state-dir requires --filter-editor" >&2
+  exit 2
+fi
+if [[ -z "$filter_state_dir" ]]; then filter_state_dir="$project_dir/maps/costmap_filters/fleet"; fi
+if [[ "$filter_state_dir" != /* ]]; then filter_state_dir="$project_dir/$filter_state_dir"; fi
+filter_state_dir="$(container_path "$filter_state_dir")"
 simulation_reference=false
 if [[ "$auto_initial_pose" == false ]]; then simulation_reference=true; fi
 require_ros_workspace
@@ -121,10 +143,16 @@ for robot in "${robots[@]}"; do
   names+=("$name")
   start_ros_container "$name" launch slam_bringup robot.launch.py "robot:=$robot" \
     map_pcd:="$(container_path "$map_pcd")" map_pgm:="$(container_path "$map_pgm")" \
-    rviz:=false auto_initial_pose:="$auto_initial_pose"
+    rviz:=false auto_initial_pose:="$auto_initial_pose" fleet_filters:="$filter_editor"
 done
-if [[ "$rviz" == true ]]; then
+fleet_args=(rviz:="$rviz" filter_editor:="$filter_editor")
+if [[ "$filter_editor" == true ]]; then
+  fleet_args+=(filter_state_dir:="$filter_state_dir")
+fi
+# Zone editors run beside the fleet RViz; robots wait for their masks.
+if [[ "$rviz" == true || "$filter_editor" == true ]]; then
   start_ros_container fleet-rviz launch slam_localization_3d fleet_rviz.launch.py \
+    "${fleet_args[@]}" \
     "robots:=$(IFS=';'; printf '%s' "${robots[*]}")" \
     maps_root:="$(container_path "$(dirname "$(dirname "$map_pgm")")")" \
     "floors:=1F;B1" \

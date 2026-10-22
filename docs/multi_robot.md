@@ -86,6 +86,33 @@ ros2 launch slam_localization_3d fleet_rviz.launch.py \
 ROS 環境中的 `python3 -m unittest tests.test_fleet_floor_launch`，
 以及 `./tests/run_fleet_panel.sh`（實際 RViz 操作測試）。
 
+### 共用禁行／限速區
+
+```bash
+./scripts/run_multi_nav.sh --filter-editor                         # 也適用 run_multi_nav_online.sh
+./scripts/run_multi_nav.sh --filter-editor --filter-state-dir DIR  # 預設 maps/costmap_filters/fleet
+```
+
+`run_multi_nav_lift_online.sh` 預設啟用，加 `--no-filter-editor` 可關閉；其他多車腳本預設不啟用。
+
+每個監控樓層一份區域，所有車共用：Fleet RViz 容器為每層執行一個
+`costmap_filter_editor.py`（namespace `/fleet/zones/floor_<樓層>`，
+以該層 `/fleet/maps/floor_N/map` 為底圖），狀態存於 `DIR/<樓層>.json`。
+操作方式與單車相同（見[導航文件](nav.md#costmap-filters禁行區與限速區)）：
+Fleet Control 面板選擇顯示樓層後，**Publish Point** 與 **Costmap zone editor** 會自動切到該層。
+更新即時套用到該層所有車，不需重啟。
+
+車端（`fleet_filters:=true`）的 `floor_manager` 透過 `/NAME/costmap_filters/{keepout,speed}_info`
+將 Keepout／Speed filter 指向目前樓層的 mask；換層時會在停車後等待目標樓層的 mask，
+目標地圖載入後才切換，之後才恢復導航。若等不到 mask，換層失敗並保持停車（與其他換層失敗相同）。
+啟動時，各車的 costmap 也會等待初始樓層的 mask。
+
+- 樓層名稱只能包含英數字與底線（ROS topic 限制），例如 `B-1` 會報錯。
+- `--no-rviz --filter-editor` 仍會啟動 Fleet RViz 容器（不開 RViz），只提供已保存的區域，無法編輯。
+- 任一樓層 editor 異常結束會停止整個 Fleet RViz launch。
+- 單車的 `filter_editor` 不能與 `fleet_filters` 同時使用。
+- 真車：車端加 `fleet_filters:=true`（需 `navigate:=true`），監控端加 `fleet_rviz.launch.py filter_editor:=true [filter_state_dir:=DIR]`。
+
 ### 選擇車輛與目標
 
 在 RViz 的 **Fleet Control** 面板選擇車輛，按 **Set navigation goal**，在地圖上按住左鍵拖曳設定目標與航向。**Set initial pose** 用來重設選中車輛的定位。工具列的 **2D Goal Pose／2D Pose Estimate** 也會使用目前選中的車輛。
@@ -203,6 +230,6 @@ ros2 launch slam_localization_3d global_fusion.launch.py \
 
 - 車輛之間沒有協調：彼此只當作 LiDAR 障礙物，沒有路權或交通管理，單獨使用時對向可能互相卡住；需由上述外部派車系統協調。
 - 鍵盤操控已停用，多車使用 ROS `cmd_vel`。
-- `filter_editor`（Keepout／Speed）與單車 validation 場景仍只支援單車。
+- 單車 validation 場景仍只支援單車；多車禁行／限速區只能每層共用（見[共用禁行／限速區](#共用禁行限速區)），不支援每車各自的區域。
 - Fleet RViz 不顯示 local costmap。
 - 兩台以上時模擬速度約為即時的 0.8 倍，更多車輛的效能未驗證。

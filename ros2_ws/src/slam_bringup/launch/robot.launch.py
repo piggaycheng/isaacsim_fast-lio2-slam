@@ -34,7 +34,7 @@ from fleet_ground_truth import FloorReference  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
-    "direction_zones", "local_odometry_inputs", "maps_root",
+    "direction_zones", "local_odometry_inputs", "maps_root", "fleet_filters",
 )
 
 
@@ -134,6 +134,11 @@ def generate_launch_description():
         DeclareLaunchArgument("costmaps", default_value="true"),
         DeclareLaunchArgument("navigate", default_value="true"),
         DeclareLaunchArgument("direction_zones", default_value="true"),
+        DeclareLaunchArgument(
+            "fleet_filters", default_value="false",
+            description="Apply the fleet RViz editor's per-floor Keepout/Speed zones "
+                        "(fleet_rviz.launch.py filter_editor:=true must serve them)",
+        ),
         DeclareLaunchArgument(
             "local_odometry_inputs", default_value="",
             description="Comma-separated local_ekf inputs (wheel, imu, lio); empty uses the profile",

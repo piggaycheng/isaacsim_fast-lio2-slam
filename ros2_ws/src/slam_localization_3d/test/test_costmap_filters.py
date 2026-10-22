@@ -199,6 +199,33 @@ class FilterConfigurationTest(unittest.TestCase):
         self.assertEqual(context.launch_configurations["costmap_config"],
                          str(PACKAGE / "config/observation_costmaps.yaml"))
 
+    def test_fleet_filters_use_floor_masks_without_local_editor(self):
+        context = filter_context()
+        context.launch_configurations.update(
+            fleet_filters="true", navigate="true", map_pgm="/maps/B1/map_2d.yaml")
+        actions = configure(context)
+        self.assertFalse(any(isinstance(action, Node) for action in actions))
+        self.assertEqual(yaml.safe_load(context.launch_configurations["filter_mask_topics"]), [
+            "/fleet/zones/floor_B1/costmap_filters/keepout_mask",
+            "/fleet/zones/floor_B1/costmap_filters/speed_mask",
+        ])
+        config = yaml.safe_load(Path(context.launch_configurations["costmap_config"]).read_text())
+        local = config["local_costmap"]["local_costmap"]["ros__parameters"]
+        self.assertEqual(local["speed_filter"]["filter_info_topic"], "/costmap_filters/speed_info")
+        for overrides, error in ((dict(navigate="false"), "navigate"),
+                                 (dict(filter_editor="true"), "mutually exclusive")):
+            with self.subTest(overrides=overrides):
+                invalid = filter_context()
+                invalid.launch_configurations.update({
+                    "fleet_filters": "true", "navigate": "true",
+                    "map_pgm": "/maps/B1/map_2d.yaml", **overrides})
+                with self.assertRaisesRegex(ValueError, error):
+                    configure(invalid)
+        for action in actions:
+            if isinstance(action, RegisterEventHandler) and action.event_handler.matches(Shutdown()):
+                for cleanup in action.event_handler.handle(Shutdown(), context):
+                    cleanup.execute(context)
+
     def test_editor_requires_costmaps(self):
         context = filter_context(editor=True)
         context.launch_configurations["costmaps"] = "false"

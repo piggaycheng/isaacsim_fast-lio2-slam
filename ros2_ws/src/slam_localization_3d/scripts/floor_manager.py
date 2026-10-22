@@ -12,12 +12,13 @@ from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
+from nav2_msgs.msg import CostmapFilterInfo
 from nav2_msgs.srv import ClearEntireCostmap, LoadMap, ManageLifecycleNodes
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.task import Future
 from rclpy.time import Time
 from robot_localization.srv import SetPose
@@ -26,7 +27,7 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from floor_maps import floor_maps, validate_initial_pose
+from floor_maps import FILTER_KINDS, fleet_mask_topics, floor_maps, validate_initial_pose
 from global_tf_gate import yaw_of
 from localization_3d_pose import seconds, valid_pose
 from wait_for_navigation import NAVIGATION_NODES
@@ -59,6 +60,23 @@ class FloorManager(Node):
         self.busy = False
         self.transition_state = "idle"
         self.filter_editor_active = self.declare_parameter("filter_editor_active", False).value
+        # Shared per-floor zones from the fleet editor; costmaps follow our info topics.
+        self.fleet_filters = self.declare_parameter("fleet_filters", False).value
+        self.filter_qos = QoSProfile(
+            depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE)
+        self.filter_masks = {}
+        self.filter_info_publishers = {}
+        if self.fleet_filters:
+            if self.filter_editor_active:
+                raise ValueError("fleet_filters and filter_editor_active are mutually exclusive")
+            self.watch_filter_masks(self.current_floor)
+            self.filter_info_publishers = {
+                kind: self.create_publisher(
+                    CostmapFilterInfo, f"costmap_filters/{kind}_info", self.filter_qos)
+                for kind in FILTER_KINDS
+            }
+            self.publish_filter_info(self.current_floor)
         self.pose = None
         self.global_odom = None
         self.local_odom = None
@@ -123,6 +141,38 @@ class FloorManager(Node):
 
     def observe_navigation(self):
         self.navigation_seen |= self.service_clients["nav"].service_is_ready()
+
+    def watch_filter_masks(self, floor):
+        """Subscribe once to a floor's fleet masks; returns whether both arrived."""
+        if floor not in self.filter_masks:
+            received = {topic: False for topic in fleet_mask_topics(floor)}
+
+            def on_mask(message, topic, received=received):
+                received[topic] = (
+                    message.header.frame_id == "map"
+                    and message.info.width > 0 and message.info.height > 0)
+
+            self.filter_masks[floor] = (received, [
+                self.create_subscription(
+                    OccupancyGrid, topic,
+                    lambda message, topic=topic: on_mask(message, topic), self.filter_qos)
+                for topic in received
+            ])
+        return all(self.filter_masks[floor][0].values())
+
+    def publish_filter_info(self, floor):
+        stamp = self.get_clock().now().to_msg()
+        for (kind, publisher), topic in zip(
+                self.filter_info_publishers.items(), fleet_mask_topics(floor)):
+            info = CostmapFilterInfo()
+            info.header.frame_id = "map"
+            info.header.stamp = stamp
+            # nav2_costmap_2d: 0 = keepout, 1 = speed limit in percent.
+            info.type = 0 if kind == "keepout" else 1
+            info.filter_mask_topic = topic
+            info.base, info.multiplier = 0.0, 1.0
+            publisher.publish(info)
+        self.get_logger().info(f"Costmap filters now use floor {floor} fleet zones")
 
     def publish_floor(self):
         self.floor_publisher.publish(String(data=self.current_floor))
@@ -387,6 +437,8 @@ class FloorManager(Node):
             if not request.manual_initial_pose:
                 validate_initial_pose(request.initial_pose)
             map_yaml, pcd = floor_maps(self.maps_root, request.floor_name)
+            if self.fleet_filters:
+                self.watch_filter_masks(request.floor_name)
         except (ValueError, OSError, yaml.YAMLError) as error:
             response.message = str(error)
             self.get_logger().error(f"Floor switch rejected: {error}")
@@ -396,6 +448,14 @@ class FloorManager(Node):
         deadline = time.monotonic() + self.timeout
         try:
             navigation_ready = await self.stop_for_floor_change(deadline)
+            if self.fleet_filters:
+                # Never resume on a floor whose keepout zones are not being served.
+                await self.wait_until(
+                    lambda: self.watch_filter_masks(request.floor_name),
+                    min(deadline, time.monotonic() + self.service_timeout),
+                    f"fleet costmap filter masks of floor {request.floor_name} "
+                    f"({', '.join(fleet_mask_topics(request.floor_name))}); "
+                    "is fleet_rviz.launch.py running with filter_editor:=true for this floor?")
             # From here a failure may leave a partially changed map pair.
             self.current_floor = ""
             self.publish_floor()
@@ -404,6 +464,8 @@ class FloorManager(Node):
             result = await self.call("map", LoadMap.Request(map_url=map_yaml), deadline)
             if result.result != LoadMap.Response.RESULT_SUCCESS:
                 raise FloorSwitchError(f"Nav2 map load failed: {result.result}")
+            if self.fleet_filters:
+                self.publish_filter_info(request.floor_name)
             initial_pose = request.initial_pose
             if request.manual_initial_pose:
                 shown = time.monotonic()

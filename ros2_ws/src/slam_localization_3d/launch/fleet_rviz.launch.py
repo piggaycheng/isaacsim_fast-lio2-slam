@@ -3,6 +3,8 @@
 robots:="carter1;carter2" (names or NAME[:TYPE][#FLEET]@X,Y[,YAW] specs, ";"-separated). fleet_relay
 merges each /<ns>/tf into /fleet/tf as <ns>/<frame>; RViz reads that tree.
 Fleet Control panel selects the robot for the shared goal and initial-pose tools.
+filter_editor:=true runs one costmap filter editor per floor under /fleet/zones/floor_FLOOR;
+robots launched with fleet_filters:=true apply the zones of their current floor.
 """
 
 import os
@@ -10,13 +12,22 @@ import sys
 import tempfile
 
 import yaml
+from ament_index_python.packages import get_package_prefix
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import fleet_floor_maps, fleet_rviz, normalize_namespace, parse_robot_spec  # noqa: E402
+
+sys.path.insert(0, os.path.join(
+    get_package_prefix("slam_localization_3d"), "lib", "slam_localization_3d"))
+from floor_maps import fleet_zone_namespace  # noqa: E402
 
 TF_REMAPS = [("/tf", "/fleet/tf"), ("/tf_static", "/fleet/tf_static")]
 
@@ -42,10 +53,13 @@ def fleet_nodes(context):
         LaunchConfiguration("initial_floor").perform(context),
         floors=[name.strip() for name in LaunchConfiguration("floors").perform(context).split(";")],
     )
+    filter_editor = LaunchConfiguration("filter_editor").perform(context).lower() == "true"
+    zone_namespaces = [fleet_zone_namespace(name) for name, _ in maps] if filter_editor else None
     handle = tempfile.NamedTemporaryFile(
         "w", prefix="fleet_", suffix=".rviz", delete=False)
     with handle:
-        yaml.safe_dump(fleet_rviz(names, [name for name, _ in maps], simulation_reference),
+        yaml.safe_dump(fleet_rviz(names, [name for name, _ in maps], simulation_reference,
+                                  zone_namespaces),
                        handle, sort_keys=False)
     sim_time = {"use_sim_time": LaunchConfiguration("use_sim_time")}
     actions = [
@@ -74,6 +88,28 @@ def fleet_nodes(context):
             namespace=f"/fleet/maps/floor_{index}", name="lifecycle_manager", output="screen",
             parameters=[sim_time, {"autostart": True, "node_names": ["map_server"]}],
         ))
+    if filter_editor:
+        state_dir = LaunchConfiguration("filter_state_dir").perform(context)
+        for index, (floor, _) in enumerate(maps):
+            editor = Node(
+                package="slam_localization_3d", executable="costmap_filter_editor.py",
+                namespace=zone_namespaces[index], name="costmap_filter_editor", output="screen",
+                parameters=[sim_time, {"state_file": os.path.join(state_dir, f"{floor}.json")}],
+                remappings=[("map", f"/fleet/maps/floor_{index}/map")],
+            )
+            actions += [
+                LogInfo(msg=f"Floor {floor} costmap zones: {zone_namespaces[index]} "
+                            f"(state {os.path.join(state_dir, floor + '.json')})"),
+                editor,
+                RegisterEventHandler(OnProcessExit(
+                    target_action=editor,
+                    on_exit=lambda event, context, floor=floor: [] if context.is_shutdown else [
+                        LogInfo(msg=f"ERROR: Floor {floor} costmap filter editor exited; "
+                                    "robots cannot switch to this floor"),
+                        EmitEvent(event=Shutdown(reason="Costmap filter editor exited")),
+                    ],
+                )),
+            ]
     if LaunchConfiguration("rviz").perform(context).lower() == "true":
         actions.append(Node(
             package="rviz2", executable="rviz2", name="fleet_rviz", output="screen",
@@ -94,5 +130,11 @@ def generate_launch_description():
                               description="false runs only the relay and monitoring maps"),
         DeclareLaunchArgument("simulation_reference", default_value="true",
                               description="Show reference arrows until each robot receives initialpose"),
+        DeclareLaunchArgument("filter_editor", default_value="false",
+                              description="Serve and edit shared per-floor Keepout/Speed zones"),
+        DeclareLaunchArgument(
+            "filter_state_dir",
+            default_value=os.path.join(os.getcwd(), "maps/costmap_filters/fleet"),
+            description="Directory of FLOOR.json zone states for filter_editor"),
         OpaqueFunction(function=fleet_nodes),
     ])
