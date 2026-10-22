@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import math
+from collections import deque
 
 import rclpy
 from nav_msgs.msg import Odometry
+from rclpy.clock import Clock
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -54,6 +56,16 @@ class GlobalTfGate(Node):
             or not 0 <= self.tf_future_tolerance <= 0.5
         ):
             raise ValueError("tf_future_tolerance must be between 0 and 0.5 seconds")
+        self.tf_wait_timeout = self.declare_parameter("tf_wait_timeout", 0.5).value
+        if (
+            type(self.tf_wait_timeout) not in (int, float)
+            or not math.isfinite(self.tf_wait_timeout)
+            or self.tf_wait_timeout <= 0
+        ):
+            raise ValueError("tf_wait_timeout must be positive")
+        # Global odometry waiting for the local odom -> base_link TF at the same stamp.
+        self.pending = deque(maxlen=64)
+        self.last_tf_error = None
         self.last_correction = None
         self.map_switch_hold = False
         self.minimum_correction_time = None
@@ -69,10 +81,14 @@ class GlobalTfGate(Node):
             Odometry, "odometry/global", self.on_global_odometry, 10
         )
         self.create_service(SetBool, "global_tf_gate/set_map_switch_hold", self.on_map_switch_hold)
+        # Retry on wall time: the simulator may run slower than real time, so the
+        # local EKF's next TF can arrive many wall-clock milliseconds later.
+        self.create_timer(0.01, self.flush_pending, clock=Clock())
 
     def on_map_switch_hold(self, request, response):
         self.map_switch_hold = request.data
         self.last_correction = None
+        self.pending.clear()
         self.minimum_correction_time = seconds(self.get_clock().now().to_msg())
         response.success = True
         response.message = "Global TF gate reset"
@@ -118,20 +134,49 @@ class GlobalTfGate(Node):
                 self.get_logger().warning("3D correction stale; withholding map -> odom TF")
                 self.warned_stale = True
             return
-        try:
-            local = self.tf_buffer.lookup_transform(
-                "odom", "base_link", Time.from_msg(message.header.stamp),
-                timeout=Duration(seconds=0.1),
-            )
-        except TransformException as error:
-            if (
-                self.last_tf_warning is None
-                or now < self.last_tf_warning
-                or now - self.last_tf_warning >= 5
-            ):
-                self.get_logger().warning(f"No synchronized local odometry TF: {error}")
-                self.last_tf_warning = now
+        self.pending.append(message)
+        self.flush_pending()
+
+    def flush_pending(self):
+        if not self.pending:
             return
+        if self.map_switch_hold or self.last_correction is None:
+            self.pending.clear()
+            return
+        now = seconds(self.get_clock().now().to_msg())
+        # Publish the newest global pose whose local TF is available; older ones are superseded.
+        for index in range(len(self.pending) - 1, -1, -1):
+            message = self.pending[index]
+            try:
+                local = self.tf_buffer.lookup_transform(
+                    "odom", "base_link", Time.from_msg(message.header.stamp)
+                )
+            except TransformException as error:
+                self.last_tf_error = error
+                continue
+            for _ in range(index + 1):
+                self.pending.popleft()
+            self.publish(message, local)
+            break
+        expired = False
+        while self.pending and not (
+            now - self.tf_wait_timeout
+            <= seconds(self.pending[0].header.stamp)
+            <= now + 0.5
+        ):
+            self.pending.popleft()
+            expired = True
+        if expired and (
+            self.last_tf_warning is None
+            or now < self.last_tf_warning
+            or now - self.last_tf_warning >= 5
+        ):
+            self.get_logger().warning(
+                f"No synchronized local odometry TF: {self.last_tf_error}"
+            )
+            self.last_tf_warning = now
+
+    def publish(self, message, local):
         if (
             not all(
                 math.isfinite(value)
@@ -171,7 +216,7 @@ class GlobalTfGate(Node):
 def main():
     rclpy.init()
     node = GlobalTfGate()
-    # Keep the TF subscriber responsive while an odometry callback waits for its stamp.
+    # Keep the TF subscriber responsive alongside the gate callbacks.
     executor = MultiThreadedExecutor(num_threads=2)
     try:
         rclpy.spin(node, executor=executor)

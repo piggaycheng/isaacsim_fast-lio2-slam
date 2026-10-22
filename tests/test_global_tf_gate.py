@@ -1,6 +1,5 @@
 import math
 import sys
-import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -69,7 +68,7 @@ class TestGlobalTfGate(unittest.TestCase):
         lookup = self.node.tf_buffer.lookup_transform.call_args
         self.assertEqual(lookup.args[:2], ("odom", "base_link"))
         self.assertEqual(lookup.args[2].nanoseconds, 10_000_000_000)
-        self.assertAlmostEqual(lookup.kwargs["timeout"].nanoseconds / 1e9, 0.1)
+        self.assertNotIn("timeout", lookup.kwargs)
 
     def test_stale_or_not_yet_corrected_global_output_does_not_publish_tf(self):
         self.node.on_global_odometry(odometry(10))
@@ -98,29 +97,41 @@ class TestGlobalTfGate(unittest.TestCase):
         self.node.on_global_odometry(odometry(11))
         self.node.broadcaster.sendTransform.assert_called_once()
 
-    def test_waits_for_local_tf_at_the_global_odom_stamp(self):
-        self.node.tf_buffer.lookup_transform = self.real_lookup
-        header = Header(frame_id="map")
-        header.stamp.sec = 9
-        self.node.on_correction(header)
+    def local_tf(self, sec, nanosec=0):
         local = TransformStamped()
         local.header.frame_id = "odom"
-        local.header.stamp.sec = 10
+        local.header.stamp.sec = sec
+        local.header.stamp.nanosec = nanosec
         local.child_frame_id = "base_link"
         local.transform.translation.x = 2.0
         local.transform.rotation.w = 1.0
-        delayed = threading.Timer(
-            0.02, self.node.tf_buffer.set_transform, args=(local, "test")
-        )
-        delayed.start()
-        try:
-            self.node.on_global_odometry(odometry(10))
-        finally:
-            delayed.join()
+        return local
+
+    def test_waits_for_late_local_tf_without_blocking(self):
+        self.node.tf_buffer.lookup_transform = self.real_lookup
+        self.node.on_correction(Header(frame_id="map", stamp=odometry(9).header.stamp))
+        self.node.tf_buffer.set_transform(self.local_tf(9, 983_333_333), "test")
+        self.node.on_global_odometry(odometry(10))
+        self.node.broadcaster.sendTransform.assert_not_called()
+        self.node.tf_buffer.set_transform(self.local_tf(10), "test")
+        self.node.flush_pending()
         transform = self.node.broadcaster.sendTransform.call_args.args[0]
         self.assertEqual((transform.header.stamp.sec, transform.header.stamp.nanosec),
                          (10, 100_000_000))
         self.assertAlmostEqual(transform.transform.translation.x, 3.0)
+        self.assertFalse(self.node.pending)
+
+    def test_warns_only_after_local_tf_wait_timeout(self):
+        self.node.tf_buffer.lookup_transform = self.real_lookup
+        self.node.get_logger = Mock()
+        self.node.on_correction(Header(frame_id="map", stamp=odometry(9).header.stamp))
+        self.node.on_global_odometry(odometry(10))
+        self.node.get_logger().warning.assert_not_called()
+        self.node.get_clock().now.return_value.to_msg.return_value.sec = 11
+        self.node.flush_pending()
+        self.node.get_logger().warning.assert_called_once()
+        self.assertFalse(self.node.pending)
+        self.node.broadcaster.sendTransform.assert_not_called()
 
     def test_future_tf_window_covers_next_local_odom_stamp(self):
         header = Header(frame_id="map")
