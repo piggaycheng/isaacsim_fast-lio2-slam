@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import yaml
 from launch import LaunchContext
+from launch.utilities import perform_substitutions
+from launch_ros.parameter_descriptions import ParameterFile
 from launch.actions import DeclareLaunchArgument, SetLaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 
@@ -338,42 +340,103 @@ class LaunchNamespaceTest(unittest.TestCase):
         self.assertEqual(FUSION.push_robot_namespace(context), [])
         self.assertNotIn("ros_remaps", context.launch_configurations)
 
-    def test_navigation_node_construction_with_rectangular_costmaps_for_both_robots(self):
+    def fusion_nodes(self, namespace, kind, **configurations):
         package = get_package_share_directory("slam_localization_3d")
         nav = get_package_share_directory("slam_nav")
+        context = self.context(namespace)
+        context.launch_configurations.update(
+            robot_type=kind, costmaps="true", navigate="true", obstacle_cloud="true",
+            rviz="false", map_pcd="/workspace/maps/office/map.pcd",
+            map_pgm="/workspace/maps/office/map_2d.yaml",
+        )
+        for action in FUSION.generate_launch_description().entities:
+            if isinstance(action, (DeclareLaunchArgument, SetLaunchConfiguration)):
+                action.execute(context)
+        context.launch_configurations.update(configurations)
+        filter_actions = FUSION.configure_filters(
+            context, str(CONFIG / "observation_costmaps.yaml"))
+        for action in filter_actions:
+            if isinstance(action, SetLaunchConfiguration):
+                action.execute(context)
+        factory = tempfile.TemporaryDirectory
+
+        def directory(**kwargs):
+            result = factory(**kwargs)
+            self.addCleanup(result.cleanup)
+            return result
+
+        with patch.object(FUSION.tempfile, "TemporaryDirectory", side_effect=directory):
+            zone_actions = FUSION.configure_surround(
+                context, *(str(CONFIG / name) for name in
+                           ("collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml")),
+            )
+        for action in zone_actions:
+            if isinstance(action, SetLaunchConfiguration):
+                action.execute(context)
+        actions = FUSION.robot_nodes(context, package, nav)
+        return [action for action in actions if isinstance(action, FUSION.Node)]
+
+    @staticmethod
+    def parameter_files(node, namespace):
+        """The namespace-level content of every parameter file given to a launch Node."""
+        configs = []
+        for entry in node._Node__parameters:
+            if isinstance(entry, ParameterFile):
+                path = perform_substitutions(LaunchContext(), entry.param_file)
+                config = yaml.safe_load(Path(path).read_text())
+                configs.append(config.get(namespace, {}) if namespace else config)
+        return configs
+
+    def node_parameters(self, nodes, name, namespace, key=None):
+        """Merged ros__parameters of block `key` (default: the node name) for node `name`."""
+        node = next(node for node in nodes if node._Node__node_name == name)
+        merged = {}
+        for config in self.parameter_files(node, namespace):
+            block = config.get(key or name) or {}
+            if key and key in block:
+                block = block[key]
+            merged.update(block.get("ros__parameters") or {})
+        return merged
+
+    def test_three_d_local_odometry_launch(self):
+        nodes = self.fusion_nodes("carter1", "nova_carter",
+                                  local_odometry_inputs="wheel,imu,lio", local_odometry_3d="true")
+        ekf = self.node_parameters(nodes, "local_ekf", "carter1")
+        self.assertFalse(ekf["two_d_mode"])
+        self.assertEqual([index for index, value in enumerate(ekf["odom1_config"]) if value],
+                         [0, 1, 2, 3, 4, 5])
+        self.assertEqual([index for index, value in enumerate(ekf["imu0_config"]) if value],
+                         [9, 10, 11])
+        lio = self.node_parameters(nodes, "lio_odometry", "carter1")
+        self.assertTrue(lio["gravity_align"])
+        self.assertEqual(lio["imu_topic"], "/carter1/isaac/imu")
+        for server, costmap in (("planner_server", "global_costmap"),
+                                ("controller_server", "local_costmap")):
+            parameters = self.node_parameters(nodes, server, "carter1", costmap)
+            layers = [parameters[plugin] for plugin in parameters["plugins"]
+                      if "observation_sources" in parameters[plugin]]
+            self.assertTrue(layers, costmap)
+            for layer in layers:
+                for source in (layer, *(layer[name] for name in
+                                        layer["observation_sources"].split())):
+                    self.assertEqual(
+                        (source["min_obstacle_height"], source["max_obstacle_height"]),
+                        (-robot_fleet.THREE_D_OBSTACLE_HEIGHT, robot_fleet.THREE_D_OBSTACLE_HEIGHT))
+        planar = self.fusion_nodes("carter1", "nova_carter", local_odometry_inputs="wheel,imu,lio")
+        self.assertTrue(self.node_parameters(planar, "local_ekf", "carter1")["two_d_mode"])
+        self.assertNotIn("gravity_align", self.node_parameters(planar, "lio_odometry", "carter1"))
+        local = self.node_parameters(planar, "controller_server", "carter1", "local_costmap")
+        layer = next(local[plugin] for plugin in local["plugins"]
+                     if "observation_sources" in local[plugin])
+        source = layer[layer["observation_sources"].split()[0]]
+        self.assertLess(source["max_obstacle_height"], robot_fleet.THREE_D_OBSTACLE_HEIGHT)
+        with self.assertRaisesRegex(ValueError, "three_d requires the lio input"):
+            self.fusion_nodes("carter1", "nova_carter", local_odometry_3d="true")
+
+    def test_navigation_node_construction_with_rectangular_costmaps_for_both_robots(self):
         for namespace, kind in (("carter1", "nova_carter"), ("carter2", "carter_v1")):
             with self.subTest(kind=kind):
-                context = self.context(namespace)
-                context.launch_configurations.update(
-                    robot_type=kind, costmaps="true", navigate="true", obstacle_cloud="true",
-                    rviz="false", map_pcd="/workspace/maps/office/map.pcd",
-                    map_pgm="/workspace/maps/office/map_2d.yaml",
-                )
-                for action in FUSION.generate_launch_description().entities:
-                    if isinstance(action, (DeclareLaunchArgument, SetLaunchConfiguration)):
-                        action.execute(context)
-                filter_actions = FUSION.configure_filters(
-                    context, str(CONFIG / "observation_costmaps.yaml"))
-                for action in filter_actions:
-                    if isinstance(action, SetLaunchConfiguration):
-                        action.execute(context)
-                factory = tempfile.TemporaryDirectory
-
-                def directory(**kwargs):
-                    result = factory(**kwargs)
-                    self.addCleanup(result.cleanup)
-                    return result
-
-                with patch.object(FUSION.tempfile, "TemporaryDirectory", side_effect=directory):
-                    zone_actions = FUSION.configure_surround(
-                        context, *(str(CONFIG / name) for name in
-                                   ("collision_monitor.yaml", "navigation.yaml", "direction_zones.yaml")),
-                    )
-                for action in zone_actions:
-                    if isinstance(action, SetLaunchConfiguration):
-                        action.execute(context)
-                actions = FUSION.robot_nodes(context, package, nav)
-                nodes = [action for action in actions if isinstance(action, FUSION.Node)]
+                nodes = self.fusion_nodes(namespace, kind)
                 executables = {node._Node__node_executable for node in nodes}
                 for executable in ("planner_server", "controller_server", "collision_monitor"):
                     self.assertIn(executable, executables)
@@ -531,6 +594,51 @@ class LocalOdometryInputsTest(unittest.TestCase):
         wheel_only = self.local_ekf(("wheel", "imu"))
         self.assertEqual([index for index, value in enumerate(wheel_only["odom0_config"]) if value],
                          [5, 6])
+
+    def test_three_d_profile_flag_and_override(self):
+        profile = robot_fleet.load_robot_profile("nova_carter")
+        self.assertFalse(profile["local_odometry"]["three_d"])
+        lio = ("wheel", "imu", "lio")
+        self.assertFalse(robot_fleet.local_odometry_three_d(profile, lio))
+        self.assertTrue(robot_fleet.local_odometry_three_d(profile, lio, " TRUE "))
+        with self.assertRaisesRegex(ValueError, "true, false or empty"):
+            robot_fleet.local_odometry_three_d(profile, lio, "yes")
+        with self.assertRaisesRegex(ValueError, "three_d requires the lio input"):
+            robot_fleet.local_odometry_three_d(profile, ("wheel", "imu"), "true")
+        overrides = yaml.safe_load((CONFIG / "robots/nova_carter.yaml").read_text())[
+            "parameter_overrides"]
+        with tempfile.TemporaryDirectory() as directory:
+            write_profile(directory, "legged",
+                          local_odometry={"inputs": ["imu", "lio"], "three_d": True},
+                          parameter_overrides=overrides)
+            legged = robot_fleet.load_robot_profile("legged", directory)
+            self.assertTrue(robot_fleet.local_odometry_three_d(legged, ("imu", "lio")))
+            self.assertFalse(robot_fleet.local_odometry_three_d(legged, ("imu", "lio"), "false"))
+            write_profile(directory, "flat", local_odometry={"inputs": ["wheel"], "three_d": True},
+                          parameter_overrides=overrides)
+            with self.assertRaisesRegex(ValueError, "flat.yaml: local_odometry: three_d requires"):
+                robot_fleet.load_robot_profile("flat", directory)
+            write_profile(directory, "typo", local_odometry={"three_d": "yes"},
+                          parameter_overrides=overrides)
+            with self.assertRaisesRegex(ValueError, "three_d must be true or false"):
+                robot_fleet.load_robot_profile("typo", directory)
+
+    def test_three_d_local_ekf_without_wheel(self):
+        path = robot_namespace.local_odometry_file(
+            str(NAV_CONFIG / "local_odometry.yaml"), str(NAV_CONFIG / "local_ekf_inputs.yaml"),
+            "", "nova_carter", ("imu", "lio"), three_d=True,
+        )
+        config = yaml.safe_load(Path(path).read_text())
+        ekf = config["local_ekf"]["ros__parameters"]
+        self.assertFalse(ekf["two_d_mode"])
+        self.assertEqual((ekf["odom0"], ekf["imu0"]), ("/lio/odom", "/nav/imu"))
+        self.assertEqual([index for index, value in enumerate(ekf["odom0_config"]) if value],
+                         [0, 1, 2, 3, 4, 5])
+        self.assertEqual([index for index, value in enumerate(ekf["imu0_config"]) if value],
+                         [9, 10, 11])
+        self.assertTrue(ekf["smooth_lagged_data"])
+        self.assertNotIn("three_d", ekf)
+        self.assertTrue(config["lio_odometry"]["ros__parameters"]["gravity_align"])
 
     def test_launch_override_and_validation(self):
         profile = robot_fleet.load_robot_profile("nova_carter")

@@ -149,6 +149,26 @@ local_odometry:
 - `nav_imu_adapter` 一律啟動（`global_ekf` 也融合 IMU）。2D 模式（AMCL）不支援 `lio`。
 - 只有 `wheel` 時才需要 profile 的輪速參數；covariance 校正工具（[`covariance_calibration.md`](covariance_calibration.md)）仍需輪速資料。
 
+### 3D `odom -> base_link`（選用）
+
+預設 `local_ekf` 為 `two_d_mode`，`odom -> base_link` 的 z／roll／pitch 恆為 0。需要真實底盤高度與姿態的使用者（例如四足機器人以 elevation_mapping_cupy 產生 height scan）可在 profile 開啟：
+
+```yaml
+local_odometry:
+  inputs: [lio, imu]   # 必須包含 lio
+  three_d: true
+```
+
+或以啟動參數覆寫：`scripts/run_3d_localization.sh --global-fusion --3d-odom`（等同 `local_odometry_3d:=true`，`false` 可強制關閉）。開啟後：
+
+- `local_ekf` 關閉 `two_d_mode`；`lio` 改融合 x、y、z、roll、pitch、yaw，`imu` 改融合三軸角速度（`local_ekf_inputs.yaml` 的 `three_d` 區塊）。
+- `lio_odometry` 以 `gravity_align` 將 `odom` 對齊重力：FAST-LIO 的 `camera_init` 是初始化時的 IMU 姿態，不保證水平。節點在前 `level_scans`（預設 10）次掃描累積 `/isaac/imu` 比力（以 FAST-LIO 姿態轉到 `camera_init`）求出傾角後校正，並只以位置與 yaw 錨定 `odom` 原點，因此在斜坡上起動時 roll／pitch 仍是相對重力的值。z 與 roll／pitch 的雜訊為 profile `lio_odometry` 的 `z_variance`、`roll_pitch_variance`（預設沿用 `position_variance`、`yaw_variance`）。
+- `map -> odom` 維持平面（`global_tf_gate` 不變），`map` 中的 base z／roll／pitch 等於 `odom` 中的值。
+- 觀察 costmap 的 ObstacleLayer 在 global frame 以 z 過濾點，3D 時 base z 不為 0，因此所有 observation source 的 `min/max_obstacle_height` 放寬為 ±1000 m；高度裁切仍由 `base_link` 中的 `ground_obstacle_filter`（0.06–2.0 m）與 `pointcloud_to_laserscan`（0.1–2.0 m）負責。
+- z 只有 LIO 觀測（IMU 加速度二次積分無法約束位置），FAST-LIO 的 z 漂移會直接出現在 `odom`；模擬中約 1.5–2 cm/m 行駛距離。電梯中 LIO 退化時 z 會錯。
+
+模擬驗證（不需步態策略）：`ISAAC_PYTHON=<isaac>/python.sh tests/run_3d_odometry_validation.sh` 以 `standalone.py --ramp`（6° 斜坡上 0.15 m 平台）讓 Carter 上下坡，比對 TF 與 ground truth 的 z、roll、pitch、`lidar_link` 高度，以及 `map -> odom` 是否維持平面；結果在 `ros2_ws/log/3d_odometry/<時間>/results.json`（`RAMP`、`LOCAL_INPUTS` 環境變數可改坡道與輸入）。目前結果：z 誤差 ≤ 3.6 cm、每 1 m 局部漂移 ≤ 3.8 cm、pitch 誤差 ≤ 0.7°、roll ≤ 0.2°。
+
 ## 選擇啟動方式
 
 | 入口                                | 功能                                                                             |

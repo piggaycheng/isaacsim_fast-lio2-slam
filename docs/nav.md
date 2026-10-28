@@ -125,6 +125,7 @@ global／local inflation 半徑仍為 1.1／0.9 m；inflation 是障礙代價梯
 - 3D 標記能看到桌面、懸空物，且比高度切片更不易把地面誤判成障礙物。
 - 2D 清除是因為 `ObstacleLayer` 是 2D：用 3D 點雲 raytrace，越過矮障礙物、打到後方牆壁的射線壓平後會穿過障礙物格子，把剛標記的障礙物清掉。`/scan` 每角度只取最近點，不會誤清。若要 3D 清除，需改用 `VoxelLayer` 或 STVL（尚未實作）。
 - 車子看得到原位置時，障礙物移走後 `/scan` 約 1 秒內清除，BT 每秒重新規劃；在背後、超過 7 m、被擋住或低於 0.1 m 切片時清不掉，會留下殘影，需車子重新看到或 recovery 清除整張 costmap。`/scan` 未打到東西的方向（`use_inf`）不會被清除。
+- `ObstacleLayer` 以 global frame（`map`／`odom`）的 z 過濾觀測點。預設 `odom -> base_link` 是平面，z 即相對底盤的高度；開啟 3D `odom -> base_link`（[`local_odometry.three_d`](3d_localization.md#3d-odom---base_link選用)）時 launch 會把兩張 costmap 所有 observation source 的 `min/max_obstacle_height` 放寬為 ±1000 m，高度裁切交給 `base_link` 中的上游濾波，避免底盤高度改變時障礙物或清除射線被丟掉。
 
 ### Costmap filters：禁行區與限速區
 
@@ -283,9 +284,10 @@ Humble 的 `stop` 區域不分命令方向，車頭前有障礙時連 BackUp 與
 ```bash
 bash tests/run_navigation_environment.sh --braking
 bash tests/run_navigation_environment.sh --repeats 1 --cases baseline
+bash tests/run_navigation_environment.sh --3d-odom --repeats 1 --cases baseline corridor_1.8
 ```
 
-`tests/run_navigation_environment.sh` 需先停止一般模擬，使用獨立的 Compose project 與 ROS domain 189（`VALIDATION_ROS_DOMAIN_ID` 可覆寫），不開 RViz 與 filter 區域。預設每案重複 2 次，涵蓋 baseline 導航、兩種橫穿速度、空地與 1.8 m 通道內的移動障礙，以及 1.8／1.6／1.4／0.6 m 通道；`--cases ... --repeats N` 可選子集，結果存於 `ros2_ws/log/navigation_environment/<時間>/`。通過條件是可通行情境到達目標、過窄通道安全停住，且保守車體包絡淨空至少 2 cm；不安全淨空會鎖定 emergency stop 並中止整組測試。淨空以 2D USD 車體包絡估計，不是 PhysX 接觸感測。
+`tests/run_navigation_environment.sh` 需先停止一般模擬，使用獨立的 Compose project 與 ROS domain 189（`VALIDATION_ROS_DOMAIN_ID` 可覆寫），不開 RViz 與 filter 區域。預設每案重複 2 次，涵蓋 baseline 導航、兩種橫穿速度、空地與 1.8 m 通道內的移動障礙，以及 1.8／1.6／1.4 m 通道；`--cases ... --repeats N` 可選子集，結果存於 `ros2_ws/log/navigation_environment/<時間>/`。`--3d-odom` 以 `wheel,imu,lio` 與 3D `odom -> base_link` 跑相同情境，`--launch-arg name:=value`（可重複）可加入其他 `global_fusion` 啟動參數。通過條件是可通行情境到達目標、過窄通道安全停住，且保守車體包絡淨空至少 2 cm；不安全淨空會鎖定 emergency stop 並中止整組測試。淨空以 2D USD 車體包絡估計，不是 PhysX 接觸感測。
 
 ## 目前限制
 

@@ -21,6 +21,7 @@ filter_state="$project_dir/maps/costmap_filters/editor.json"
 filter_state_set=false
 ros_cmd_vel=false
 local_inputs=""
+three_d_odom=false
 mqtt_host=""
 mqtt_port=1883
 boxes=()
@@ -73,6 +74,10 @@ Options:
                       (odom -> base_link) inputs from wheel, imu, lio,
                       e.g. lio or lio,imu (default: the robot profile's
                       local_odometry.inputs).
+      --3d-odom       With --global-fusion, publish a 3D odom -> base_link
+                      (z/roll/pitch from LIO) for height-aware consumers such
+                      as elevation mapping; requires lio in --local-inputs or
+                      the profile (default: the profile's local_odometry.three_d).
       --ros-cmd-vel   Drive Carter from ROS 2 /cmd_vel without Nav2, e.g. for
                       covariance_drive.py calibration runs.
       --box X,Y[,SX,SY,SZ]
@@ -121,6 +126,7 @@ while (($# > 0)); do
     --navigate) navigate=true; costmaps=true; obstacle_cloud=true; shift ;;
     --static-zones) direction_zones=false; shift ;;
     --ros-cmd-vel) ros_cmd_vel=true; shift ;;
+    --3d-odom) three_d_odom=true; shift ;;
     --mqtt-host|--mqtt-port)
       if (($# < 2)) || [[ -z "$2" ]]; then
         echo "Missing value for $1" >&2
@@ -170,6 +176,10 @@ if [[ "$filter_state_set" == true && "$filter_editor" != true ]]; then
 fi
 if [[ -n "$local_inputs" && "$global_fusion" != true ]]; then
   echo "--local-inputs requires --global-fusion" >&2
+  exit 2
+fi
+if [[ "$three_d_odom" == true && "$global_fusion" != true ]]; then
+  echo "--3d-odom requires --global-fusion" >&2
   exit 2
 fi
 if [[ "$obstacle_cloud" == true && "$global_fusion" != true ]]; then
@@ -239,6 +249,9 @@ if [[ "$global_fusion" == true ]]; then
     direction_zones:="$direction_zones" "${filter_args[@]}")
   if [[ -n "$local_inputs" ]]; then
     launch_args+=(local_odometry_inputs:="$local_inputs")
+  fi
+  if [[ "$three_d_odom" == true ]]; then
+    launch_args+=(local_odometry_3d:=true)
   fi
   if [[ -n "$mqtt_host" ]]; then
     launch_args+=(floor_mqtt_host:="$mqtt_host" floor_mqtt_port:="$mqtt_port")

@@ -39,8 +39,13 @@ sensor_frames:
 # overrides it. Without wheel the wheel_encoder_odometry parameters are optional
 # and the global EKF propagates with /lio/twist (variances in global_fusion.yaml);
 # lio requires the lio_odometry variances below.
+# three_d (default false) makes odom -> base_link 3D (z/roll/pitch from a gravity-
+# aligned LIO pose; requires lio) for height-aware consumers such as elevation
+# mapping on legged robots. Launch argument local_odometry_3d overrides it.
+# map -> odom stays planar, so map -> base_link keeps the odom z/roll/pitch.
 local_odometry:
   inputs: [wheel, imu]
+  three_d: false
 
 # Deep-merged into every parameter file that contains the node key; lists are
 # replaced, not merged. Values not listed here come from the shared base configs.

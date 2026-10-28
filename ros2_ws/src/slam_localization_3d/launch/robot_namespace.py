@@ -31,13 +31,13 @@ def robot_overrides(robot_type):
     return load_robot_profile(robot_type)["parameter_overrides"]
 
 
-def local_odometry_file(path, templates_path, namespace, robot_type, inputs):
+def local_odometry_file(path, templates_path, namespace, robot_type, inputs, three_d=False):
     """local_odometry.yaml for this robot with local_ekf fed by the selected inputs."""
     with open(templates_path, encoding="utf-8") as stream:
         templates = yaml.safe_load(stream)
     return robot_parameter_file(
         path, namespace, robot_type,
-        transform=lambda config: with_local_ekf_inputs(config, templates, inputs),
+        transform=lambda config: with_local_ekf_inputs(config, templates, inputs, three_d),
     )
 
 

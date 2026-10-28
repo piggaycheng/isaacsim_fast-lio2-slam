@@ -33,6 +33,9 @@ GIMBAL_MAX_TORQUE = 2.0
 GIMBAL_CAMERA_OFFSET = 0.03
 BOX_PRIM_ROOT = "/World/TestBoxes"
 DEFAULT_BOX_SIZE = [0.6, 0.6, 1.0]
+# --ramp defaults: rise (m), slope (deg), plateau length (m), width (m).
+DEFAULT_RAMP = [0.15, 6.0, 1.5, 1.6]
+RAMP_THICKNESS = 0.2
 LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 0.5
 FOLLOW_CAMERA_DISTANCE = 2.5
@@ -114,6 +117,11 @@ parser.add_argument(
     "--box", action="append", default=[], metavar="X,Y[,SX,SY,SZ]",
     help="Add a static collision box on the floor at world X,Y (m, same as the Office "
     "map frame). Default size 0.6,0.6,1.0 m. Repeat for more boxes.",
+)
+parser.add_argument(
+    "--ramp", action="append", default=[], metavar="X,Y[,RISE,SLOPE_DEG,PLATEAU,WIDTH]",
+    help="Add a static ramp rising along +X from its foot at world X,Y onto a plateau, e.g. to "
+    "exercise a 3D odom -> base_link. Default 0.15 m rise, 6 deg, 1.5 m plateau, 1.6 m wide.",
 )
 parser.add_argument(
     "--camera", action="append", default=[], metavar="[ROBOT=]CAMERA",
@@ -218,6 +226,36 @@ def parse_box(text: str) -> list[float]:
 
 
 boxes = [parse_box(text) for text in args.box]
+
+
+def parse_ramp(text: str) -> list[float]:
+    try:
+        values = [float(value) for value in text.split(",")]
+    except ValueError:
+        values = []
+    if 2 <= len(values) < 6:
+        values += DEFAULT_RAMP[len(values) - 2:]
+    if (len(values) != 6 or min(values[2:]) <= 0 or values[3] >= 45
+            or not all(math.isfinite(value) for value in values)):
+        parser.error(f"--ramp expects X,Y[,RISE,SLOPE_DEG,PLATEAU,WIDTH] with positive "
+                     f"values and a slope below 45 deg, got {text!r}")
+    return values
+
+
+ramps = [parse_ramp(text) for text in args.ramp]
+
+
+def ramp_boxes(x, y, rise, slope_deg, plateau, width):
+    """(center, wxyz orientation, scale) of the slope slab and the plateau box."""
+    slope = math.radians(slope_deg)
+    run = rise / math.tan(slope)
+    # The slab's top face runs from (x, 0) to (x + run, rise); its lower end sinks into the floor.
+    center = [x + run / 2 + RAMP_THICKNESS / 2 * math.sin(slope), y,
+              rise / 2 - RAMP_THICKNESS / 2 * math.cos(slope)]
+    pitch = [math.cos(-slope / 2), 0.0, math.sin(-slope / 2), 0.0]
+    slab = (center, pitch, [run / math.cos(slope), width, RAMP_THICKNESS])
+    top = ([x + run + plateau / 2, y, rise / 2], [1.0, 0.0, 0.0, 0.0], [plateau, width, rise])
+    return slab, top
 
 
 def parse_cameras() -> list[tuple[SimRobot, str, str]]:
@@ -951,6 +989,16 @@ try:
         )
         UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(box_path))
         print(f"Spawned static box at ({x:.2f}, {y:.2f}) size {size_x}x{size_y}x{size_z} m")
+    for index, ramp in enumerate(ramps):
+        for part, (center, orientation, scale) in zip(("Slope", "Plateau"), ramp_boxes(*ramp)):
+            ramp_path = f"{BOX_PRIM_ROOT}/Ramp_{index}_{part}"
+            Cube(
+                ramp_path, sizes=1.0, colors="gray",
+                positions=center, orientations=orientation, scales=scale,
+            )
+            UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(ramp_path))
+        print(f"Spawned static ramp at ({ramp[0]:.2f}, {ramp[1]:.2f}): {ramp[2]} m rise, "
+              f"{ramp[3]} deg, {ramp[4]} m plateau, {ramp[5]} m wide")
 
     for index, sim_robot in enumerate(robots):
         spawn_robot(sim_robot, stage, assets_root_path)

@@ -9,10 +9,17 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 sim_pid=""
 probe=validate_navigation_environment.py
-if [[ "${1:-}" == --braking ]]; then
-  probe=validate_braking.py
+launch_args=()
+while [[ "${1:-}" == --braking || "${1:-}" == --3d-odom || "${1:-}" == --launch-arg ]]; do
+  case "$1" in
+    --braking) probe=validate_braking.py ;;
+    # Same scenarios with a 3D odom -> base_link (costmap height band opened).
+    --3d-odom) launch_args+=(local_odometry_inputs:=wheel,imu,lio local_odometry_3d:=true) ;;
+    # Extra global_fusion launch argument (name:=value); later ones win.
+    --launch-arg) launch_args+=("${2:?--launch-arg needs name:=value}"); shift ;;
+  esac
   shift
-fi
+done
 
 compose() {
   docker compose --project-directory "$project_dir" \
@@ -55,7 +62,8 @@ export ROS_LAUNCH_ARGS="$(printf '%s\n' \
   slam_localization_3d global_fusion.launch.py \
   map_pcd:=/workspace/maps/office/map.pcd \
   map_pgm:=/workspace/maps/office/map_2d.yaml \
-  rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true)"
+  rviz:=false auto_initial_pose:=true obstacle_cloud:=true costmaps:=true navigate:=true \
+  "${launch_args[@]}")"
 compose up -d ros
 "$isaac_python" "$project_dir/scripts/standalone.py" --headless --ros-cmd-vel \
   --lidar-motion-compensation noncompensated --validation-control-dir "$directory" \

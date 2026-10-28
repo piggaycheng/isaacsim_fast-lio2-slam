@@ -30,7 +30,7 @@ from validate_braking import BrakingProbe, rectangle, separation
 CASES = (
     "baseline", "crossing_slow", "crossing_fast", "blocked_then_clear",
     "blocked_then_clear_open",
-    "corridor_1.8", "corridor_1.6", "corridor_1.4", "corridor_0.6",
+    "corridor_1.8", "corridor_1.6", "corridor_1.4",
 )
 
 

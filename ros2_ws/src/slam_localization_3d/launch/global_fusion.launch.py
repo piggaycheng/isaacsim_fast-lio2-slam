@@ -18,7 +18,8 @@ from launch_ros.actions import Node, PushRosNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_fleet import (  # noqa: E402
     DEFAULT_ROBOT_TYPE, UPSTREAM_TOPICS, imu_mount, load_robot_profile, local_odometry_inputs,
-    namespaced_topic, normalize_namespace, with_global_ekf_inputs,
+    local_odometry_three_d, namespaced_topic, normalize_namespace, with_global_ekf_inputs,
+    with_three_d_costmaps,
 )
 from nav_geometry import rotation_radius, safety_geometry
 from robot_namespace import (  # noqa: E402
@@ -251,11 +252,15 @@ def robot_nodes(context, package, nav):
     if costmaps:
         rotation_radius(load_parameters(value("costmap_config"), kind))
     inputs = local_odometry_inputs(profile, value("local_odometry_inputs"))
+    three_d = local_odometry_three_d(profile, inputs, value("local_odometry_3d"))
     nav_parameters = [local_odometry_file(
         os.path.join(nav, "config", "local_odometry.yaml"),
-        os.path.join(nav, "config", "local_ekf_inputs.yaml"), namespace, kind, inputs,
+        os.path.join(nav, "config", "local_ekf_inputs.yaml"), namespace, kind, inputs, three_d,
     ), sim]
-    observation_config = config(value("costmap_config"))
+    observation_config = robot_parameter_file(
+        value("costmap_config"), namespace, kind,
+        transform=with_three_d_costmaps if three_d else None,
+    )
     navigation_config = config(value("navigation_config"))
     collision_config = config(value("collision_config"))
     fusion_config = robot_parameter_file(
@@ -265,7 +270,8 @@ def robot_nodes(context, package, nav):
     upstream = [(name, topic(name)) for name in UPSTREAM_TOPICS] if namespace else []
     actions = [
         *sensor_transforms(context),
-        LogInfo(msg=f"local_ekf inputs ({namespace or 'root'}): {', '.join(inputs)}"),
+        LogInfo(msg=f"local_ekf inputs ({namespace or 'root'}): {', '.join(inputs)}"
+                    f"; odom -> base_link {'3D' if three_d else '2D'}"),
         # The global EKF also fuses the IMU, so its adapter always runs.
         Node(
             package="slam_nav", executable="imu_covariance_adapter",
@@ -585,6 +591,11 @@ def generate_launch_description():
                 "local_odometry_inputs", default_value="",
                 description="Comma-separated local_ekf inputs (wheel, imu, lio) overriding "
                             "the robot profile's local_odometry.inputs",
+            ),
+            DeclareLaunchArgument(
+                "local_odometry_3d", default_value="",
+                description="true/false overriding the robot profile's local_odometry.three_d "
+                            "(3D odom -> base_link with z/roll/pitch; requires the lio input)",
             ),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("auto_initial_pose", default_value="false"),

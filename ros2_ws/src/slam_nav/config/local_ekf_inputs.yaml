@@ -5,7 +5,9 @@
 # number them per kind (odom0, odom1, imu0, ...) and write them into local_ekf.
 # `parameters` become <kind><N>_<key>; `filter` is merged into local_ekf itself.
 # `when: {<other input>: {parameters: ...}}` overrides parameters of this block
-# when <other input> is selected too.
+# when <other input> is selected too. `three_d: {parameters: ..., filter: ...}`
+# overrides it (after `when`) when local_odometry.three_d makes odom -> base_link
+# 3D (two_d_mode off); wheel needs none since three_d requires lio.
 #
 # config order: x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az
 
@@ -51,6 +53,17 @@ imu:
     relative: false
     queue_size: 20
     nodelay: true
+  three_d:
+    # All gyro rates propagate the 3D attitude between LIO scans; the absolute
+    # roll/pitch come from the gravity-aligned LIO pose, so IMUs without an
+    # orientation estimate work too.
+    parameters:
+      config:
+        [false, false, false,
+         false, false, false,
+         false, false, false,
+         true,  true,  true,
+         false, false, false]
 
 # FAST-LIO pose moved to base_link (slam_localization_3d lio_odometry.py),
 # anchored at the odom origin. Fused as an absolute pose: FAST-LIO's own
@@ -71,6 +84,15 @@ lio:
     relative: false
     queue_size: 10
     nodelay: true
+  three_d:
+    # Gravity-aligned by lio_odometry (gravity_align): z and roll/pitch are absolute.
+    parameters:
+      config:
+        [true,  true,  true,
+         true,  true,  true,
+         false, false, false,
+         false, false, false,
+         false, false, false]
   filter:
     # LIO poses are stamped at the scan end, ~0.1 s behind the IMU/wheel stream:
     # rewind and replay instead of fusing them at the wrong time.

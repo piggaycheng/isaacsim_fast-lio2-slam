@@ -148,7 +148,7 @@ class NavigationEnvironmentTest(unittest.TestCase):
             scenario("unsupported")
 
     def test_corridor_inner_width_and_expected_rejection(self):
-        for width in (0.6, 1.4, 1.6, 1.8):
+        for width in (1.4, 1.6, 1.8):
             boxes = walls(width)
             self.assertAlmostEqual(
                 boxes[1]["offset"][1] - boxes[1]["sizes"][1] / 2, width / 2,

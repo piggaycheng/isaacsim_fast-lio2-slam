@@ -64,3 +64,7 @@ lio_odometry:
     # live only in the robot profile (required when local_odometry.inputs has
     # lio); calibrate them with covariance_calibration.py. The lio/twist
     # variances for the global EKF are in slam_localization_3d global_fusion.yaml.
+    # With local_odometry.three_d the launch files set gravity_align: lio/odom is
+    # levelled with this IMU's accelerometer and also carries z/roll/pitch, weighted
+    # by z_variance / roll_pitch_variance (default: position_variance / yaw_variance).
+    imu_topic: /isaac/imu

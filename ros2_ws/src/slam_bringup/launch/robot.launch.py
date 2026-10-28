@@ -34,7 +34,7 @@ from fleet_ground_truth import FloorReference  # noqa: E402
 
 FORWARDED = (
     "map_pcd", "map_pgm", "rviz", "auto_initial_pose", "obstacle_cloud", "costmaps", "navigate",
-    "direction_zones", "local_odometry_inputs", "maps_root", "fleet_filters",
+    "direction_zones", "local_odometry_inputs", "local_odometry_3d", "maps_root", "fleet_filters",
 )
 
 
@@ -142,6 +142,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "local_odometry_inputs", default_value="",
             description="Comma-separated local_ekf inputs (wheel, imu, lio); empty uses the profile",
+        ),
+        DeclareLaunchArgument(
+            "local_odometry_3d", default_value="",
+            description="true/false 3D odom -> base_link (needs lio); empty uses the profile",
         ),
         DeclareLaunchArgument(
             "mqtt_host", default_value="",

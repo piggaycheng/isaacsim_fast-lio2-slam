@@ -45,6 +45,11 @@ SENSOR_FRAMES = ("lidar_link", "imu_link")
 # local_ekf (odom -> base_link) inputs a profile may select (slam_nav/config/local_ekf_inputs.yaml).
 LOCAL_ODOMETRY_INPUTS = ("wheel", "imu", "lio")
 DEFAULT_LOCAL_ODOMETRY_INPUTS = ("wheel", "imu")
+# Nav2 ObstacleLayer filters marking/clearing points by their z in the costmap's
+# global frame (map/odom). With a 3D odom -> base_link that z follows the robot
+# height, so the height band is applied in base_link upstream
+# (ground_obstacle_filter, pointcloud_to_laserscan) and the costmap band is opened.
+THREE_D_OBSTACLE_HEIGHT = 1000.0
 ROBOT_LOCALIZATION_INPUT_PATTERN = re.compile(r"^(odom|imu|pose|twist)\d+(_.*)?$")
 # Without wheel odometry (so LIO is a local input) the global EKF propagates
 # between PCD corrections with the scan-to-scan LIO velocity (lio_odometry's
@@ -199,7 +204,14 @@ def load_robot_profile(robot_type, directory=PROFILE_DIRECTORY):
         inputs = parse_local_odometry_inputs(local.get("inputs", DEFAULT_LOCAL_ODOMETRY_INPUTS))
     except ValueError as error:
         raise ValueError(f"{path}: local_odometry.inputs: {error}") from None
-    profile["local_odometry"] = dict(local, inputs=inputs)
+    three_d = local.get("three_d", False)
+    if not isinstance(three_d, bool):
+        raise ValueError(f"{path}: local_odometry.three_d must be true or false")
+    try:
+        require_three_d_inputs(three_d, inputs)
+    except ValueError as error:
+        raise ValueError(f"{path}: local_odometry: {error}") from None
+    profile["local_odometry"] = dict(local, inputs=inputs, three_d=three_d)
     profile["parameter_overrides"] = overrides
     profile["robot_type"] = robot_type
     try:
@@ -257,13 +269,53 @@ def local_odometry_inputs(profile, override=""):
     return inputs
 
 
+def require_three_d_inputs(three_d, inputs):
+    """A 3D odom -> base_link needs LIO: wheel and IMU never observe the height."""
+    if three_d and "lio" not in inputs:
+        raise ValueError("three_d requires the lio input (wheel and imu give no z)")
+
+
+def local_odometry_three_d(profile, inputs, override=""):
+    """The launch override (true/false) if set, else the profile's three_d."""
+    text = (override or "").strip().lower()
+    if not text:
+        three_d = profile["local_odometry"]["three_d"]
+    elif text in ("true", "false"):
+        three_d = text == "true"
+    else:
+        raise ValueError(f"local_odometry_3d must be true, false or empty, got {override!r}")
+    require_three_d_inputs(three_d, inputs)
+    return three_d
+
+
+def with_three_d_costmaps(config):
+    """Open the global-frame obstacle height band of every costmap observation source."""
+    result = copy.deepcopy(config)
+    for name in ("global_costmap", "local_costmap"):
+        parameters = ((result.get(name) or {}).get(name) or {}).get("ros__parameters") or {}
+        for plugin in parameters.get("plugins", []):
+            layer = parameters.get(plugin)
+            if not isinstance(layer, dict) or "observation_sources" not in layer:
+                continue
+            sources = layer["observation_sources"]
+            sources = sources.split() if isinstance(sources, str) else list(sources)
+            for target in (layer, *(layer[source] for source in sources)):
+                target["min_obstacle_height"] = -THREE_D_OBSTACLE_HEIGHT
+                target["max_obstacle_height"] = THREE_D_OBSTACLE_HEIGHT
+    return result
+
+
 def strip_robot_localization_inputs(parameters):
     return {key: value for key, value in parameters.items()
             if not ROBOT_LOCALIZATION_INPUT_PATTERN.match(key)}
 
 
-def local_ekf_inputs(templates, inputs):
-    """robot_localization parameters for the selected input templates."""
+def local_ekf_inputs(templates, inputs, three_d=False):
+    """robot_localization parameters for the selected input templates.
+
+    A template's `three_d` block overrides its parameters and filter settings
+    when odom -> base_link is 3D, after any `when` overrides.
+    """
     parameters, counts, filter_parameters = {}, {}, {}
     for name in inputs:
         template = templates[name]
@@ -273,21 +325,32 @@ def local_ekf_inputs(templates, inputs):
         parameters[prefix] = template["topic"]
         template_parameters = dict(template.get("parameters") or {})
         template_filter = dict(template.get("filter") or {})
-        for other, override in (template.get("when") or {}).items():
-            if other in inputs:
-                template_parameters.update(override.get("parameters") or {})
-                template_filter.update(override.get("filter") or {})
+        overrides = [override for other, override in (template.get("when") or {}).items()
+                     if other in inputs]
+        if three_d:
+            overrides.append(template.get("three_d") or {})
+        for override in overrides:
+            template_parameters.update(override.get("parameters") or {})
+            template_filter.update(override.get("filter") or {})
         for key, value in template_parameters.items():
             parameters[f"{prefix}_{key}"] = copy.deepcopy(value)
         filter_parameters.update(copy.deepcopy(template_filter))
     return {**filter_parameters, **parameters}
 
 
-def with_local_ekf_inputs(config, templates, inputs, node="local_ekf"):
-    """Replace the inputs of the local_ekf parameter block with the selected templates."""
+def with_local_ekf_inputs(config, templates, inputs, three_d=False, node="local_ekf"):
+    """Replace the inputs of the local_ekf parameter block with the selected templates.
+
+    three_d turns off two_d_mode and makes lio_odometry publish a gravity-aligned 3D pose.
+    """
     result = copy.deepcopy(config)
     parameters = strip_robot_localization_inputs(result[node]["ros__parameters"])
-    parameters.update(local_ekf_inputs(templates, inputs))
+    parameters.update(local_ekf_inputs(templates, inputs, three_d))
+    if three_d:
+        parameters["two_d_mode"] = False
+        lio = result.get("lio_odometry", {}).get("ros__parameters")
+        if lio is not None:
+            lio["gravity_align"] = True
     result[node]["ros__parameters"] = parameters
     return result
 

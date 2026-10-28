@@ -12,14 +12,25 @@ yaw_variance (per-scan pose noise, robot profile, covariance_calibration.py)
 for lio/odom, and twist_linear_variance / twist_angular_variance
 (global_fusion.yaml) for lio/twist, so calibrating one never changes the other.
 A backwards clock (simulation reset) re-anchors the origin.
+
+FAST-LIO's camera_init is the IMU frame at start-up, so it is tilted whenever the
+robot starts tilted. For a 3D odom -> base_link (gravity_align, set by the launch
+files with local_odometry.three_d) the frame is levelled with gravity: over the
+first level_scans scans the accelerometer mean between scans is rotated into
+camera_init with FAST-LIO's attitude and averaged (the robot must stand still, as
+FAST-LIO itself assumes). The origin keeps the initial roll/pitch: only position
+and yaw are re-anchored. z_variance and roll_pitch_variance weight the 3D pose.
 """
 
 import math
+from collections import deque
 
 import rclpy
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Imu
 
 if __package__:
     from .localization_3d_pose import (
@@ -32,6 +43,8 @@ else:
 
 # Variance of the unused z/roll/pitch entries (two_d_mode ignores them).
 UNUSED_VARIANCE = 1e-2
+# Accelerometer samples kept between scans for the gravity direction.
+GRAVITY_SAMPLES = 200
 
 
 def inverse_pose(pose):
@@ -40,15 +53,34 @@ def inverse_pose(pose):
     return tuple(-value for value in rotate_vector(inverse, translation)), inverse
 
 
-def pose_covariance(position_variance, yaw_variance):
-    """Diagonal planar covariance (x, y, yaw), also used for (vx, vy, vyaw)."""
+def pose_covariance(position_variance, yaw_variance, z_variance=UNUSED_VARIANCE,
+                    roll_pitch_variance=UNUSED_VARIANCE):
+    """Diagonal covariance (x, y, z, roll, pitch, yaw), also used for the twist."""
     covariance = [0.0] * 36
     for index, variance in enumerate((
-        position_variance, position_variance, UNUSED_VARIANCE,
-        UNUSED_VARIANCE, UNUSED_VARIANCE, yaw_variance,
+        position_variance, position_variance, z_variance,
+        roll_pitch_variance, roll_pitch_variance, yaw_variance,
     )):
         covariance[index * 7] = variance
     return covariance
+
+
+def gravity_alignment(acceleration):
+    """Quaternion rotating the measured specific force (up at rest) onto +z."""
+    norm = math.sqrt(sum(value * value for value in acceleration))
+    if not math.isfinite(norm) or norm < 1e-6:
+        raise ValueError("no gravity in the accelerometer mean")
+    x, y, z = (value / norm for value in acceleration)
+    if z < -0.999999:
+        return 1.0, 0.0, 0.0, 0.0
+    w = 1 + z
+    scale = math.sqrt(y * y + x * x + w * w)
+    return y / scale, -x / scale, 0.0, w / scale
+
+
+def yaw_only(quaternion):
+    yaw = quaternion_yaw(quaternion)
+    return 0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)
 
 
 def quaternion_yaw(quaternion):
@@ -75,10 +107,17 @@ class LioOdometry(Node):
         self.body_to_base = imu_mount_parameter(self)
         self.odom_frame = self.declare_parameter("odom_frame", "odom").value
         self.base_frame = self.declare_parameter("base_frame", "base_link").value
-        self.covariance = pose_covariance(
-            positive_parameter(self, "position_variance", 1e-4),
-            positive_parameter(self, "yaw_variance", 1e-4),
-        )
+        position_variance = positive_parameter(self, "position_variance", 1e-4)
+        yaw_variance = positive_parameter(self, "yaw_variance", 1e-4)
+        self.gravity_align = bool(self.declare_parameter("gravity_align", False).value)
+        if self.gravity_align:
+            self.covariance = pose_covariance(
+                position_variance, yaw_variance,
+                positive_parameter(self, "z_variance", position_variance),
+                positive_parameter(self, "roll_pitch_variance", yaw_variance),
+            )
+        else:
+            self.covariance = pose_covariance(position_variance, yaw_variance)
         self.twist_covariance = pose_covariance(
             positive_parameter(self, "twist_linear_variance", 2e-5),
             positive_parameter(self, "twist_angular_variance", 2e-5),
@@ -89,18 +128,67 @@ class LioOdometry(Node):
         self.last_base = None
         self.publisher = self.create_publisher(Odometry, "lio/odom", 20)
         self.twist_publisher = self.create_publisher(TwistWithCovarianceStamped, "lio/twist", 20)
+        self.level = None
+        self.accelerations = deque(maxlen=GRAVITY_SAMPLES)
+        self.gravity_sum = [0.0, 0.0, 0.0]
+        self.gravity_scans = 0
+        self.imu_subscription = None
+        if self.gravity_align:
+            self.level_scans = int(self.declare_parameter("level_scans", 10).value)
+            if self.level_scans < 1:
+                raise ValueError("level_scans must be at least 1")
+            self.imu_subscription = self.create_subscription(
+                Imu, self.declare_parameter("imu_topic", "/isaac/imu").value,
+                self.on_imu, qos_profile_sensor_data,
+            )
         self.create_subscription(Odometry, "/Odometry", self.on_odometry, 20)
+
+    def on_imu(self, message):
+        acceleration = message.linear_acceleration
+        self.accelerations.append((acceleration.x, acceleration.y, acceleration.z))
+
+    def levelled(self, body):
+        """FAST-LIO body pose in a gravity-aligned camera_init, or None while levelling."""
+        if self.level is None:
+            if not self.accelerations:
+                self.get_logger().warning(
+                    "Waiting for IMU data to level the 3D LIO odometry", throttle_duration_sec=5.0)
+                return None
+            count = len(self.accelerations)
+            mean = [sum(sample[axis] for sample in self.accelerations) / count for axis in range(3)]
+            self.accelerations.clear()
+            # Gravity seen in camera_init: the body-frame specific force rotated by FAST-LIO's attitude.
+            for axis, value in enumerate(rotate_vector(body[1], mean)):
+                self.gravity_sum[axis] += value
+            self.gravity_scans += 1
+            if self.gravity_scans < self.level_scans:
+                return None
+            self.level = gravity_alignment(self.gravity_sum)
+            self.destroy_subscription(self.imu_subscription)
+            self.imu_subscription = None
+            self.get_logger().info(
+                "Levelled LIO odometry over %d scans (camera_init tilt %.3f deg)" % (
+                    self.gravity_scans,
+                    math.degrees(2 * math.acos(max(-1.0, min(1.0, self.level[3]))))))
+        return compose_pose(((0.0, 0.0, 0.0), self.level), body)
 
     def on_odometry(self, message):
         if not valid_pose(message.pose.pose):
             self.get_logger().error("Invalid FAST-LIO odometry pose", throttle_duration_sec=5.0)
             return
         stamp = seconds(message.header.stamp)
-        base = compose_pose(pose_values(message.pose.pose), self.body_to_base)
+        body = pose_values(message.pose.pose)
+        if self.gravity_align:
+            body = self.levelled(body)
+            if body is None:
+                return
+        base = compose_pose(body, self.body_to_base)
         if self.origin is None or stamp < self.last_stamp:
             if self.origin is not None:
                 self.get_logger().warning("FAST-LIO clock jumped back; re-anchoring LIO odometry")
-            self.origin = inverse_pose(base)
+            # A levelled frame keeps the true roll/pitch: anchor position and yaw only.
+            self.origin = inverse_pose((base[0], yaw_only(base[1])) if self.gravity_align
+                                       else base)
             self.last_base = None
         if self.last_base is not None and 0 < stamp - self.last_stamp <= self.max_twist_interval:
             self.publish_twist(message.header.stamp, planar_velocity(
