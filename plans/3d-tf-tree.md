@@ -147,7 +147,8 @@
 驗證結果（Nova Carter，Office 場景）：
 
 - 單元測試：`test_robot_namespace`（旗標、覆寫、3D EKF 與 costmap 參數）、`test_lio_odometry`（重力對齊、共變異數）；輪式 profile 產生的設定不變。
-- 斜坡：z 誤差 ≤ 3.6 cm（6.5 m 行程）、每 1 m 局部漂移 ≤ 3.8 cm、pitch ≤ 0.7°、roll ≤ 0.2°；`map -> odom` z／傾角為 0。殘差主要是 FAST-LIO 本身的 z 漂移（約 1.5–2 cm/m）與約 0.2° 的固定 pitch 偏差。
+- 斜坡（`wheel,imu,lio`）：z 誤差 ≤ 3.6 cm（6.5 m 行程）、每 1 m 局部漂移 ≤ 3.8 cm、pitch ≤ 0.7°、roll ≤ 0.2°；`map -> odom` z／傾角為 0。
+- 斜坡（`lio,imu`，四足的輸入組合）：z 誤差 ≤ 3.73 cm、每 1 m 局部漂移 ≤ 3.91 cm、pitch ≤ 0.85°、roll ≤ 0.25°，全部通過。兩者殘差主要是 FAST-LIO 本身的 z 漂移（約 1.5–2 cm/m）與約 0.2° 的固定 pitch 偏差。
 - Nav2 3D 模式：baseline（3/3）、corridor_1.8（1/1）通過，障礙物有標記與清除；corridor_1.4 為 1/2（失敗那次已到終點，原地轉向時被 collision_monitor 的 PolygonRotate 擋住，2D 對照 2/2，樣本太少，無法判定是否和 3D 有關）。crossing_slow 與 blocked_then_clear_open 在 2D 對照組有相同的失敗或邊緣結果（橫穿障礙物淨空不足；繞牆時路徑左右翻轉，只能靠 BT wait recovery 釋放牆，完成時間貼近 75 s 期限），不是 3D 造成。corridor_0.6 已移除：0.6 m 只比車寬加 padding（0.52 m）多 8 cm，costmap 以 5 cm 格點量化後無可行路徑，在 2D／3D 都過不了。
 
 尚未完成：新增四足 profile、elevation_mapping_cupy ROS2 整合與 height scan 取樣節點、換樓層清圖、第二階段、與 Isaac Lab RayCaster 比對、真實步態下的姿態抖動與延遲（需策略）。
