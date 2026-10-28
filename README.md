@@ -115,6 +115,32 @@ sudo sysctl --system
 - `--pcd FILE`：指定 3D PCD 地圖（3D 模式）。
 - `--manual-initial-pose`：改用 RViz 的 **2D Pose Estimate** 手動初始化（3D 模式）。
 
+#### `run_3d_localization.sh`：手動操控並觀察定位
+
+在 Isaac Sim 視窗用 **W／S／A／D** 操控 Carter，並在 RViz 觀察點雲與 PCD／PGM 地圖是否對齊；預設不自主導航。定位分兩層：FAST-LIO 以 LiDAR＋IMU 計算連續里程計，`global_localization` 再以 ICP 將點雲與 PCD 地圖配準，修正漂移。
+
+```bash
+./scripts/run_3d_localization.sh                                   # 只看 FAST-LIO＋PCD 配準
+./scripts/run_3d_localization.sh --global-fusion                   # 加入 Local／Global EKF 融合
+./scripts/run_3d_localization.sh --global-fusion --costmaps        # 再觀察 Nav2 costmap
+./scripts/run_3d_localization.sh --global-fusion --navigate        # 從 RViz 2D Goal Pose 導航
+./scripts/run_3d_localization.sh --global-fusion --local-inputs lio,imu --3d-odom  # 3D odom -> base_link
+```
+
+| 參數 | 說明 |
+|---|---|
+| `--global-fusion` | 啟動 Local／Global EKF 融合，由 `global_tf_gate` 發布 `map -> odom`；下列 fusion 選項都需要它 |
+| `--local-inputs LIST` | Local EKF（`odom -> base_link`）輸入，可選 `wheel`、`imu`、`lio`，逗號分隔；預設用 robot profile 設定（Carter 為 `wheel,imu`）。只影響 EKF，不改變 FAST-LIO 內部使用 IMU |
+| `--3d-odom` | `odom -> base_link` 帶 z／roll／pitch（供 elevation mapping 等使用），需在 `--local-inputs` 或 profile 包含 `lio`；`map -> odom` 仍為平面。見 [3D odom](docs/3d_localization.md#3d-odom---base_link選用) |
+| `--obstacle-cloud`／`--costmaps`／`--navigate` | 地面濾除障礙點雲／Nav2 costmap／RViz 目標導航；後者會自動包含前者 |
+| `--pcd FILE`、`--pgm FILE` | PCD（ICP 用）與 PGM YAML（RViz 與 costmap 用） |
+| `--auto-jog` | 自動前後移動，不需手動操控 |
+| `--ros-cmd-vel` | 由 ROS 2 `/cmd_vel` 驅動（不經 Nav2） |
+| `--box X,Y[,SX,SY,SZ]` | 在場景放靜態障礙物，可重複 |
+| `--dynamic-elevator-doors`、`--elevator-door-mode` | 啟用電梯門與車廂 |
+
+完整參數見 `./scripts/run_3d_localization.sh --help`。不要和 `run_nav.sh` 同時執行。
+
 ### 多車導航
 
 ```bash
