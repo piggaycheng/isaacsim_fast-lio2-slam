@@ -81,7 +81,7 @@ class RobotSpecTest(unittest.TestCase):
 
 class RobotProfileTest(unittest.TestCase):
     def test_both_profiles_use_separate_path_alignment_thresholds(self):
-        for robot_type in ("nova_carter", "carter_v1"):
+        for robot_type in ("nova_carter", "carter_v1", "m20"):
             with self.subTest(robot_type=robot_type):
                 config = robot_namespace.load_parameters(CONFIG / "navigation.yaml", robot_type)
                 controller = config["controller_server"]["ros__parameters"]["FollowPath"]
