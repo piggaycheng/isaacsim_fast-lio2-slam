@@ -90,21 +90,25 @@ sudo sysctl --system
 
 ### 單車定位與導航
 
+> **注意：單車定位／導航腳本（`run_nav.sh`、`run_nav_m20.sh`、`run_2d_localization.sh`、`run_3d_localization.sh`）啟動後不會自動取得初始位姿**，皆須先在 RViz 點選 **2D Pose Estimate** 手動拉取初始位置與航向，完成定位收斂後才會啟用 Nav2 導航。
+
 | 腳本 | 用途與範例 |
 |---|---|
-| `scripts/run_nav.sh` | 預設 3D 融合定位與完整 Nav2 導航；`--mode 2d` 保留 AMCL 純定位 |
-| `scripts/run_2d_localization.sh` | 2D AMCL 定位；例如 `./scripts/run_2d_localization.sh --map maps/office/map_2d.yaml` |
+| `scripts/run_nav.sh` | 預設 3D 融合定位與完整 Nav2 導航（Nova Carter）；`--mode 2d` 保留 AMCL 純定位 |
+| `scripts/run_nav_m20.sh` | Deep Robotics M20 輪足機器人 3D 定位、GPU 高程圖與 Nav2 導航（見 [M20 導航文件](docs/m20_nav.md)） |
+| `scripts/run_2d_localization.sh` | 2D AMCL 定位；例如 `./scripts/run_2d_localization.sh --map maps/1F/map_2d.yaml` |
 | `scripts/run_3d_localization.sh` | 3D ICP 定位顯示；加 `--global-fusion` 啟動輪速／IMU／PCD 融合 |
 
 ```bash
 ./scripts/run_nav.sh --mode 2d                 # AMCL 定位，不啟動自主導航
 ./scripts/run_nav.sh                           # 預設 3D 融合定位與完整 Nav2 導航
 ./scripts/run_nav.sh --mode 3d                 # 同上，不需再加 --navigate
+./scripts/run_nav_m20.sh --policy /path/to/policy.pt --policy-device cuda  # M20 3D 定位 + 高程圖 + Nav2 導航
 ./scripts/run_3d_localization.sh              # 獨立的 3D 定位顯示
 ./scripts/run_3d_localization.sh --global-fusion --costmaps # 融合與 costmap 觀察，不導航
 ```
 
-預設 `maps/1F` 先用 RViz 的 **2D Pose Estimate** 設定初始位置與航向；等定位收斂、導航堆疊啟動完成後，用 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。啟動不會自動發送導航目標；舊的 `--navigate` 參數仍相容。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)。
+單車腳本載入地圖（預設 `maps/1F`）後，請先用 RViz 的 **2D Pose Estimate** 手動設定初始位置與航向；等定位收斂、導航堆疊啟動完成後，再用 **2D Goal Pose** 在地圖上按住左鍵拖曳，設定目標位置與航向。啟動不會自動發送導航目標；舊的 `--navigate` 參數仍相容。其他導航選項（`--box`、`--filter-editor`、`--static-zones` 等）見[導航文件](docs/nav.md)，M20 專屬說明見 [M20 導航文件](docs/m20_nav.md)。
 
 多樓層換圖操作、RViz 按鈕、MQTT 接口與實作方式統一見[導航地圖切換](docs/nav_change_map.md)。
 
@@ -183,6 +187,7 @@ sudo sysctl --system
 - [建圖流程](docs/mapping_flow.md)
 - [3D 定位架構](docs/3d_localization.md)
 - [導航、安全限制與驗證](docs/nav.md)
+- [M20 輪足機器人導航與高程圖整合](docs/m20_nav.md)
 - [多車架構、車種設定與部署](docs/multi_robot.md)
 - [對外連線：MQTT 與 RTSP 相機](docs/online.md)
 - [更換車輛後的協方差校正](docs/covariance_calibration.md)

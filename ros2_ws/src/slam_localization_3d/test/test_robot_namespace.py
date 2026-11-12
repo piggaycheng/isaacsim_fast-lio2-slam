@@ -434,12 +434,17 @@ class LaunchNamespaceTest(unittest.TestCase):
             self.fusion_nodes("carter1", "nova_carter", local_odometry_3d="true")
 
     def test_navigation_node_construction_with_rectangular_costmaps_for_both_robots(self):
-        for namespace, kind in (("carter1", "nova_carter"), ("carter2", "carter_v1")):
+        for namespace, kind in (("carter1", "nova_carter"), ("carter2", "carter_v1"), ("m20", "m20")):
             with self.subTest(kind=kind):
                 nodes = self.fusion_nodes(namespace, kind)
                 executables = {node._Node__node_executable for node in nodes}
                 for executable in ("planner_server", "controller_server", "collision_monitor"):
                     self.assertIn(executable, executables)
+                if kind == "m20":
+                    ekf = self.node_parameters(nodes, "local_ekf", namespace)
+                    self.assertFalse(ekf["two_d_mode"])
+                    lio = self.node_parameters(nodes, "lio_odometry", namespace)
+                    self.assertTrue(lio["gravity_align"])
 
     def test_sensor_transforms_follow_profile(self):
         nodes = FUSION.sensor_transforms(self.context("carter1"))

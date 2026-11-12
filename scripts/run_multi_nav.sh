@@ -118,8 +118,7 @@ if [[ ! -f "$map_pgm" ]]; then
   echo "PGM map YAML does not exist: $map_pgm" >&2
   exit 1
 fi
-if [[ "$auto_initial_pose" == true && "$(basename "$(dirname "$map_pgm")")" != office &&
-      ! -f "$(dirname "$map_pgm")/session.json" ]]; then
+if [[ "$auto_initial_pose" == true && ! -f "$(dirname "$map_pgm")/session.json" ]]; then
   echo "Automatic initial poses require $(dirname "$map_pgm")/session.json; use --manual-initial-pose." >&2
   exit 1
 fi

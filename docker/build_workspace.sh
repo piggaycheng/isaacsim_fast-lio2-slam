@@ -14,7 +14,8 @@ if [[ ! -f /.dockerenv ]]; then
   exit 1
 fi
 if [[ ! -f "$livox_driver/package_ROS2.xml" || ! -d "$fastlio_source/pgo" ||
-      ! -f "$workspace_dir/src/FAST_LIO_LOCALIZATION2/package.xml" ]]; then
+      ! -f "$workspace_dir/src/FAST_LIO_LOCALIZATION2/package.xml" ||
+      ! -f "$workspace_dir/src/elevation_mapping_cupy/elevation_mapping_cupy/package.xml" ]]; then
   echo "Submodules are missing. Run: git submodule update --init --recursive" >&2
   exit 1
 fi
@@ -57,6 +58,7 @@ cd "$workspace_dir"
 colcon build \
   --packages-up-to fastlio2 pgo isaac_fastlio_adapter slam_nav \
     slam_localization_2d fast_lio_localization slam_localization_3d slam_bringup \
+    elevation_mapping_cupy m20_policy_node m20_jog \
   "$@" \
   --cmake-args \
   -DROS_EDITION=ROS2 \

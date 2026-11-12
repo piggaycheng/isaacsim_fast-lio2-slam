@@ -227,6 +227,37 @@ def configure_surround(context, collision_config, navigation_config, direction_c
     return configure_direction_zones(context, collision_config, navigation_config, direction_config)
 
 
+def session_initial_pose(context):
+    """Derive initial_x/y/z/yaw from session.json when auto_initial_pose:=true on a saved floor."""
+    if LaunchConfiguration("auto_initial_pose").perform(context).lower() != "true":
+        return []
+    map_yaml = os.path.abspath(LaunchConfiguration("map_pgm").perform(context))
+    floor_dir = os.path.dirname(map_yaml)
+    floor_name = os.path.basename(floor_dir)
+    session = os.path.join(floor_dir, "session.json")
+    if not os.path.isfile(session):
+        return []
+    from pathlib import Path
+    from fleet_ground_truth import FloorReference
+    from robot_fleet import RobotSpec, body_pose
+
+    kind = robot_type(context)
+    profile = load_robot_profile(kind)
+    spec = RobotSpec(
+        robot_namespace(context), kind,
+        float(LaunchConfiguration("initial_x").perform(context)),
+        float(LaunchConfiguration("initial_y").perform(context)),
+        float(LaunchConfiguration("initial_yaw").perform(context)),
+    )
+    reference = FloorReference.load(floor_name, Path(session))
+    pose = reference.initial_body_pose(body_pose(spec, profile))
+    return [
+        LogInfo(msg=f"Auto initial pose from {session}: {pose}"),
+        *(SetLaunchConfiguration(f"initial_{axis}", str(value))
+          for axis, value in zip(("x", "y", "z", "yaw"), pose)),
+    ]
+
+
 def robot_nodes(context, package, nav):
     """All per-robot nodes, with namespace-dependent names resolved to strings."""
     namespace = robot_namespace(context)
@@ -628,6 +659,7 @@ def generate_launch_description():
                             "filter_editor:=true (/fleet/zones/floor_FLOOR); requires navigate",
             ),
             OpaqueFunction(function=push_robot_namespace),
+            OpaqueFunction(function=session_initial_pose),
             SetLaunchConfiguration("filter_mask_topics", '[""]'),
             OpaqueFunction(
                 function=configure_filters,

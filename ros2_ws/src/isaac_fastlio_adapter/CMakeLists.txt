@@ -27,6 +27,11 @@ install(TARGETS pointcloud2_to_livox imu_scale_adapter
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/grid_map_to_points.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )

@@ -45,17 +45,16 @@ def robot_stack(context, package):
     if LaunchConfiguration("auto_initial_pose").perform(context).lower() == "true":
         map_yaml = Path(LaunchConfiguration("map_pgm").perform(context))
         session = map_yaml.parent / "session.json"
-        if map_yaml.parent.name != "office" or session.exists():
-            try:
-                if Path(LaunchConfiguration("map_pcd").perform(context)).parent != map_yaml.parent:
-                    raise ValueError("Automatic initialization requires PCD and YAML in the same floor directory")
-                reference = FloorReference.load(map_yaml.parent.name, session)
-                pose = reference.initial_body_pose(body_pose(spec, profile))
-            except (OSError, ValueError, KeyError, TypeError) as error:
-                raise ValueError(
-                    f"Cannot derive automatic initial pose from {session}: {error}. "
-                    "Use --manual-initial-pose (auto_initial_pose:=false) to initialize manually."
-                ) from error
+        try:
+            if Path(LaunchConfiguration("map_pcd").perform(context)).parent != map_yaml.parent:
+                raise ValueError("Automatic initialization requires PCD and YAML in the same floor directory")
+            reference = FloorReference.load(map_yaml.parent.name, session)
+            pose = reference.initial_body_pose(body_pose(spec, profile))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise ValueError(
+                f"Cannot derive automatic initial pose from {session}: {error}. "
+                "Use --manual-initial-pose (auto_initial_pose:=false) to initialize manually."
+            ) from error
     arguments = {name: LaunchConfiguration(name) for name in FORWARDED}
     arguments.update(
         namespace=spec.name, robot_type=spec.robot_type,

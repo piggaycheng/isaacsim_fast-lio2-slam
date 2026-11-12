@@ -87,6 +87,15 @@ class ScriptEntrypointsTest(unittest.TestCase):
                 '#!/usr/bin/env bash\nprintf "SIMULATOR %s\\n" "$*"\n',
             )
             simulator.chmod(0o755)
+            fake_isaac = root / "fake_isaac"
+            fake_isaac.mkdir()
+            fake_python = fake_isaac / "python.sh"
+            fake_python.write_text(
+                '#!/usr/bin/env bash\nprintf "M20_SIMULATOR %s\\n" "$*"\n',
+            )
+            fake_python.chmod(0o755)
+            fake_policy = root / "policy.pt"
+            fake_policy.touch()
             maps = root / "maps/office"
             maps.mkdir(parents=True)
             (maps / "map.pcd").touch()
@@ -98,8 +107,10 @@ class ScriptEntrypointsTest(unittest.TestCase):
             docker.mkdir()
             (docker / "ros_compose.sh").write_text(
                 'require_ros_workspace() { printf "ROOT %s\\n" "$project_dir"; }\n'
+                'require_height_map_workspace() { printf "ROOT %s\\n" "$project_dir"; }\n'
                 'container_path() { printf "/workspace/%s\\n" "${1#"$project_dir"/}"; }\n'
                 'start_ros() { printf "ROS %s\\n" "$*"; }\n'
+                'start_height_map() { printf "HEIGHT_MAP %s\\n" "$*"; }\n'
                 'start_ros_container() { printf "ROS %s\\n" "$*"; }\n'
                 'ros_compose() {\n'
                 '  if [[ "$1" == ps ]]; then\n'
@@ -157,6 +168,14 @@ class ScriptEntrypointsTest(unittest.TestCase):
                 ("run_nav.sh", ("--mqtt-host", "localhost", "--mqtt-port", "1884"),
                  ("global_fusion.launch.py", "navigate:=true",
                   "floor_mqtt_host:=localhost", "floor_mqtt_port:=1884")),
+                ("run_nav_m20.sh",
+                 ("--policy", str(fake_policy), "--headless", "--no-rviz",
+                  "--policy-device", "cuda"),
+                 ("ROOT", "ROS launch slam_localization_3d global_fusion.launch.py",
+                  "robot_type:=m20", "costmaps:=true", "navigate:=true", "rviz:=false",
+                  "HEIGHT_MAP launch m20_policy_node m20_policy.launch.py",
+                  "policy_path:=/policies/policy.pt", "device:=cuda", "fastlio:=false",
+                  "M20_SIMULATOR", "m20_standalone.py --external --no-cmd-vel --no-tf --headless")),
                 ("run_multi_nav.sh", ("--headless", "--no-rviz"),
                  ("ROOT", "launch slam_bringup robot.launch.py",
                   "robot:=carter1@0,0,0", "robot:=carter2:carter_v1@3.5,0,0",
@@ -195,8 +214,9 @@ class ScriptEntrypointsTest(unittest.TestCase):
             )
             for name, args, expected in cases:
                 with self.subTest(script=name, args=args):
+                    env = {**os.environ, "ISAACSIM_DIR": str(fake_isaac)}
                     result = subprocess.run(
-                        [str(scripts / name), *args], cwd=maps,
+                        [str(scripts / name), *args], cwd=maps, env=env,
                         capture_output=True, text=True, timeout=10, check=False,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -218,7 +238,7 @@ class ScriptEntrypointsTest(unittest.TestCase):
                         self.assertNotIn("--dynamic-elevator-doors", result.stdout)
                     if "ROOT" in expected:
                         self.assertIn(f"ROOT {root}\n", result.stdout)
-                    if name in ("run_nav.sh", "run_3d_localization.sh", "run_multi_nav.sh"):
+                    if name in ("run_nav.sh", "run_nav_m20.sh", "run_3d_localization.sh", "run_multi_nav.sh"):
                         self.assertIn("/workspace/maps/1F/map_2d.yaml", result.stdout)
                         if name != "run_nav.sh" or "--mode 2d" not in " ".join(args):
                             self.assertIn("/workspace/maps/1F/map.pcd", result.stdout)

@@ -227,9 +227,10 @@ class DirectionZonesTest(unittest.TestCase):
         clock.now.side_effect = lambda: Time(seconds=self.now)
         self.clock_patch = patch.object(self.node, "get_clock", return_value=clock)
         self.clock_patch.start()
-        for name in ("publisher", "getter", "setter"):
+        for name in ("publisher", "state_getter", "getter", "setter"):
             setattr(self.node, name, Mock())
         self.node.zone_visualizers = {name: Mock() for name in self.node.zone_visualizers}
+        self.node.monitor_active = True
         self.node.checked = True
         self.node.active = "forward"
 

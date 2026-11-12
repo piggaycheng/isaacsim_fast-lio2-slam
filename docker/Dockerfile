@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pytest \
       python3-scipy \
       python3-yaml \
+      ros-humble-ament-cmake-python \
+      ros-humble-cv-bridge \
+      ros-humble-grid-map-msgs \
+      ros-humble-grid-map-rviz-plugin \
       ros-humble-gtsam \
       ros-humble-interactive-markers \
       ros-humble-nav2-amcl \

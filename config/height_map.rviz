@@ -1,0 +1,116 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: map
+      Cell Size: 1
+      Plane Cell Count: 40
+    - Class: grid_map_rviz_plugin/GridMap
+      Name: ElevationMap (surface)
+      Enabled: false
+      Topic:
+        Value: /elevation_mapping_node/elevation_map_filter
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Alpha: 1
+      Height Layer: elevation
+      Height Transformer: elevation
+      Color Transformer: GridMapLayer
+      Color Layer: elevation
+      Autocompute Intensity Bounds: true
+      Use Rainbow: true
+      Show Grid Lines: true
+      History Length: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Name: ElevationMap (points)
+      Enabled: true
+      Topic:
+        Value: /elevation_points
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 4
+      Color Transformer: AxisColor
+      Axis: Z
+      Use Rainbow: true
+      Autocompute Value Bounds:
+        Min Value: -0.6
+        Max Value: 1.5
+        Value: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Assumed ground (under robot)
+      Enabled: true
+      Topic:
+        Value: /elevation_points_assumed
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 4
+      Color Transformer: FlatColor
+      Color: 255; 255; 255
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LIO Cloud (map)
+      Enabled: false
+      Topic:
+        Value: /fastlio2/world_cloud
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Alpha: 0.5
+    - Class: rviz_default_plugins/Path
+      Name: LIO Path
+      Enabled: true
+      Topic:
+        Value: /fastlio2/lio_path
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 25; 255; 0
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Marker Scale: 0.5
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 18
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.9
+      Yaw: 3.0
+      Target Frame: base_link
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1400

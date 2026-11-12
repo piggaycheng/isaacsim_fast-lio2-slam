@@ -1,0 +1,33 @@
+/elevation_mapping_node:
+  ros__parameters:
+    # In 3D localization/navigation, local_ekf continuously publishes 3D odom -> base_link
+    # while global_tf_gate publishes planar map -> odom. Using 'odom' keeps the terrain map
+    # under the robot continuous across global ICP updates and available before map -> odom locks.
+    map_frame: 'odom'
+    corrected_map_frame: 'odom'
+    base_frame: 'base_link'
+
+    subscribers:
+      lio_cloud:
+        topic_name: '/perception/self_filtered_points'
+        data_type: pointcloud
+
+    publishers:
+      elevation_map_raw:
+        layers: ['elevation', 'traversability', 'variance']
+        basic_layers: ['elevation']
+        fps: 5.0
+      elevation_map_filter:
+        layers: ['min_filter', 'smooth', 'inpaint', 'elevation']
+        basic_layers: ['min_filter']
+        fps: 3.0
+
+    # Quadruped stair climbing: remove ghost points while keeping stairs seen
+    # from afar after they enter the lidar blind zone.
+    enable_visibility_cleanup: true
+    max_ray_length: 3.0
+    cleanup_step: 0.02
+    cleanup_cos_thresh: 0.3
+    enable_overlap_clearance: true
+    overlap_clear_range_xy: 4.0
+    overlap_clear_range_z: 2.0

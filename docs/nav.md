@@ -15,10 +15,8 @@
 ./scripts/run_nav.sh --static-zones  # 全部保護區同時生效
 ```
 
-預設載入 `maps/1F`，等待初始位姿；單車可用 RViz 初始化。
+預設載入 `maps/1F`，單車啟動後不會自動初始化位姿，請先在 RViz 用 **2D Pose Estimate** 手動給定初始位姿；待定位收斂且 log 出現 `navigator active` 後，即可用 **2D Goal Pose** 送出導航目標。
 換圖操作、電梯手動測試、MQTT 接口與實作方式統一見[導航地圖切換](nav_change_map.md)。
-明確指定 `--map maps/office/map_2d.yaml` 時，`global_pose_adapter` 才會依 Office 生成點自動送出初始位姿；
-log 出現 `navigator active` 後即可送目標。
 
 ## 感測 → costmap
 

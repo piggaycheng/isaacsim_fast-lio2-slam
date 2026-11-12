@@ -13,3 +13,7 @@
 [submodule "ros2_ws/src/FAST_LIO_LOCALIZATION2"]
 	path = ros2_ws/src/FAST_LIO_LOCALIZATION2
 	url = https://github.com/Smart-Wheelchair-RRC/FAST_LIO_LOCALIZATION2.git
+[submodule "ros2_ws/src/elevation_mapping_cupy"]
+	path = ros2_ws/src/elevation_mapping_cupy
+	url = https://github.com/leggedrobotics/elevation_mapping_cupy.git
+	branch = ros2

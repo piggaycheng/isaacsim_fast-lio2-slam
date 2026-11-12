@@ -55,10 +55,14 @@ container_path() {
 
 stop_ros() {
   trap - EXIT INT TERM
-  ros_compose down --remove-orphans >/dev/null 2>&1 || true
+  ros_compose --profile height_map down --remove-orphans >/dev/null 2>&1 || true
   if [[ -n "$ros_logs_pid" ]]; then
     kill "$ros_logs_pid" 2>/dev/null || true
     wait "$ros_logs_pid" 2>/dev/null || true
+  fi
+  if [[ -n "${height_map_logs_pid:-}" ]]; then
+    kill "$height_map_logs_pid" 2>/dev/null || true
+    wait "$height_map_logs_pid" 2>/dev/null || true
   fi
 }
 
@@ -74,6 +78,29 @@ start_ros() {
   trap stop_ros EXIT INT TERM
   ros_compose logs -f --no-log-prefix ros &
   ros_logs_pid=$!
+}
+
+require_height_map_workspace() {
+  require_ros_workspace
+  if [[ ! -d "$workspace_dir/install/elevation_mapping_cupy" ||
+        ! -d "$workspace_dir/install/m20_policy_node" ]]; then
+    echo "M20 height_map packages are not built. Run: docker compose --profile height_map run --rm height_map build" >&2
+    exit 1
+  fi
+}
+
+# start_height_map COMMAND [LAUNCH_ARGS...]
+# Starts the height_map container alongside `ros` and streams its logs.
+start_height_map() {
+  export HEIGHT_MAP_COMMAND="$1"
+  shift
+  HEIGHT_MAP_LAUNCH_ARGS="$(printf '%s\n' "$@")"
+  export HEIGHT_MAP_LAUNCH_ARGS
+  ros_compose --profile height_map up -d --force-recreate height_map
+  trap stop_ros EXIT INT TERM
+  ros_compose --profile height_map logs -f --no-log-prefix height_map 2>&1 |
+    sed -u 's/^/[height_map] /' &
+  height_map_logs_pid=$!
 }
 
 # One container per robot (as on real robots) plus e.g. one fleet RViz: each

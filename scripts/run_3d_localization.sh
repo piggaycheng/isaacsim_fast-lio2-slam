@@ -10,7 +10,7 @@ dynamic_elevator_doors=false
 elevator_door_mode=cycle
 rviz=true
 auto_jog=false
-auto_initial_pose=true
+auto_initial_pose=false
 global_fusion=false
 obstacle_cloud=false
 costmaps=false
@@ -202,10 +202,6 @@ fi
 if [[ "$map_pgm" != /* ]]; then map_pgm="$project_dir/$map_pgm"; fi
 if [[ -z "$map_pcd" ]]; then map_pcd="$(dirname "$map_pgm")/map.pcd"; fi
 if [[ "$map_pcd" != /* ]]; then map_pcd="$project_dir/$map_pcd"; fi
-if [[ "$map_pcd" != "$project_dir/maps/office/map.pcd" ||
-      "$map_pgm" != "$project_dir/maps/office/map_2d.yaml" ]]; then
-  auto_initial_pose=false
-fi
 if [[ ! -f "$map_pgm" || ( "$map_pgm" != *.yaml && "$map_pgm" != *.yml ) ]]; then
   echo "PGM map YAML does not exist: $map_pgm" >&2
   exit 1

@@ -83,15 +83,6 @@ class RobotInitialPoseTest(unittest.TestCase):
                     self.arguments("prior_test@0,0")
                 self.arguments("prior_test@0,0", auto=False)
 
-    def test_legacy_office_without_session_preserves_seed(self):
-        office = Path(self.directory.name) / "office"
-        office.mkdir()
-        spec = parse_robot_spec("prior_test@3.5,0,0.7")
-        self.assertEqual(
-            self.seed(self.arguments("prior_test@3.5,0,0.7", floor=office)),
-            initial_pose(spec, load_robot_profile(spec.robot_type)),
-        )
-
     def test_real_ros_routes_one_prior_per_robot_and_none_in_manual_mode(self):
         executor = SingleThreadedExecutor()
         nodes, adapters, publishers, received = [], [], [], {}

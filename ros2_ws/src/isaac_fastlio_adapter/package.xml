@@ -13,9 +13,11 @@
   <depend>sensor_msgs</depend>
 
   <exec_depend>fastlio2</exec_depend>
+  <exec_depend>grid_map_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>pgo</exec_depend>
+  <exec_depend>rclpy</exec_depend>
   <exec_depend>rviz2</exec_depend>
 
   <export>

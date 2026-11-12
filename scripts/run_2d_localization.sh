@@ -111,9 +111,6 @@ require_ros_workspace
 set -u
 
 auto_initial_pose=false
-if [[ "$map_file" == "$project_dir/maps/office/map_2d.yaml" ]]; then
-  auto_initial_pose=true
-fi
 start_ros launch slam_localization_2d localization_2d.launch.py \
   map:="$container_map" \
   auto_initial_pose:="$auto_initial_pose" \

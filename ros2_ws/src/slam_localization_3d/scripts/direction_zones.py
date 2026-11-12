@@ -13,6 +13,8 @@ import math
 import rclpy
 from geometry_msgs.msg import PolygonStamped, Twist
 from nav_msgs.msg import Odometry
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from rcl_interfaces.msg import Parameter as ParameterMessage, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParametersAtomically
 from rclpy.node import Node
@@ -57,6 +59,8 @@ class DirectionZones(Node):
         self.request_stamp = None
         self.barrier_since = None
         self.publisher = self.create_publisher(Twist, "nav2/cmd_vel_direction", 10)
+        self.state_getter = self.create_client(GetState, "collision_monitor/get_state")
+        self.monitor_active = False
         self.getter = self.create_client(GetParameters, "collision_monitor/get_parameters")
         self.setter = self.create_client(SetParametersAtomically, "collision_monitor/set_parameters_atomically")
         self.base_frame = self.declare_parameter("base_frame_id", "base_link").value
@@ -169,6 +173,11 @@ class DirectionZones(Node):
     def finish_request(self):
         response = self.future.result()
         self.future = None
+        if self.target == "_state":
+            self.target = None
+            if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
+                self.monitor_active = True
+            return
         if self.target is None:
             values = response.values
             if len(values) != len(POLYGONS) or any(v.type == ParameterType.PARAMETER_NOT_SET for v in values):
@@ -206,6 +215,12 @@ class DirectionZones(Node):
                 return
             self.finish_request()
         if not self.checked:
+            if not self.monitor_active:
+                if self.state_getter.service_is_ready():
+                    self.future = self.state_getter.call_async(GetState.Request())
+                    self.target = "_state"
+                    self.request_stamp = now
+                return
             if self.getter.service_is_ready():
                 self.future = self.getter.call_async(GetParameters.Request(
                     names=[name + ".enabled" for name in POLYGONS],
