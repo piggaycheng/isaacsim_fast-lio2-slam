@@ -7,7 +7,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/Grid
       Name: Grid
       Enabled: true
-      Reference Frame: map
+      Reference Frame: lidar
       Cell Size: 1
       Plane Cell Count: 40
     - Class: grid_map_rviz_plugin/GridMap
@@ -91,7 +91,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: map
+    Fixed Frame: lidar
     Frame Rate: 30
   Name: root
   Tools:

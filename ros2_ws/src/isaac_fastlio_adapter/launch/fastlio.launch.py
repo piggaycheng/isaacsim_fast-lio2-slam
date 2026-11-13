@@ -1,7 +1,9 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 
 def generate_launch_description():
@@ -14,6 +16,11 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "pgo",
+                default_value="true",
+                description="Start PGO alongside FAST-LIO2",
+            ),
             Node(
                 package="isaac_fastlio_adapter",
                 executable="pointcloud2_to_livox",
@@ -52,6 +59,7 @@ def generate_launch_description():
                 namespace="pgo",
                 name="pgo_node",
                 output="screen",
+                condition=IfCondition(LaunchConfiguration("pgo")),
                 parameters=[
                     {
                         "config_path": pgo_config_path,

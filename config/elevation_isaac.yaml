@@ -1,8 +1,8 @@
 /elevation_mapping_node:
   ros__parameters:
-    # FAST-LIO2 publishes map -> body; standalone.py publishes body -> base_link.
-    map_frame: 'map'
-    corrected_map_frame: 'map'
+    # FAST-LIO2 (isaac_lio.yaml) publishes lidar -> body; standalone.py publishes body -> base_link.
+    map_frame: 'lidar'
+    corrected_map_frame: 'lidar'
     base_frame: 'base_link'
 
     subscribers:

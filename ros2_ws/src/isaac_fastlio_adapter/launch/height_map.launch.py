@@ -30,6 +30,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(adapter_share, "launch", "fastlio.launch.py")),
+                launch_arguments={"pgo": "false"}.items(),
                 condition=IfCondition(LaunchConfiguration("fastlio")),
             ),
             Node(
