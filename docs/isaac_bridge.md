@@ -40,12 +40,12 @@ docker compose exec ros /workspace/docker/entrypoint.sh ros2 topic list   # run 
 直接啟動模擬器時，可選擇在執行期間啟用 Office 的電梯門與車廂：
 
 ```bash
-/home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py --dynamic-elevator-doors
+/home/user/isaacsim-6.2.0/python.sh scripts/standalone.py --dynamic-elevator-doors
 # 手動模式：初始關門、車廂在地面樓層，E 開／關門，L 升／降
-/home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py \
+/home/user/isaacsim-6.2.0/python.sh scripts/standalone.py \
   --dynamic-elevator-doors --elevator-door-mode manual
 # 無 GUI 的自動循環
-/home/yu/isaacsim-6.1.0/python.sh scripts/standalone.py --headless --dynamic-elevator-doors
+/home/user/isaacsim-6.2.0/python.sh scripts/standalone.py --headless --dynamic-elevator-doors
 ```
 
 直接執行 `standalone.py` 時預設不啟用，維持原場景；`./scripts/run_slam.sh` 與 `./scripts/run_nav.sh` 的 3D GUI 模式則自動帶上 `--dynamic-elevator-doors --elevator-door-mode manual`，以初始關門的手動模式啟動。`run_nav.sh --headless` 不啟用手動電梯，2D 模式維持原行為。啟用後沿用原門片的骨架、網格與材質，四片伸縮門同步向兩側滑動，另建立隱藏的運動學碰撞盒與門片同步。沿用原有車廂並以內部引用複製到另一個井口，兩個車廂都從地面樓層起始，車廂、內門與碰撞一起升降。修改僅存在 USD session layer，不儲存或改寫 NVIDIA 資產。
@@ -71,7 +71,7 @@ Office 原本的 `/Root/GroundPlane/CollisionPlane` 是 z=0 的無限碰撞平�
 
 `run_slam.sh` 固定啟用手動電梯門，不提供模式切換參數；`run_nav.sh` 的 3D GUI 模式預設啟用手動電梯。`run_3d_localization.sh` 可明確傳入 `--dynamic-elevator-doors --elevator-door-mode manual`，或在 headless 下啟用 `cycle` 模式；直接執行該腳本時預設仍不啟用電梯。`run_multi_nav_online.sh` 提供 `--elevator-lift`，其他啟動腳本未提供電梯門參數的轉傳介面。單獨執行模擬器不會自動啟動 ROS container；要同時建圖／導航，需另行啟動相應 ROS 流程。
 
-驗證：`python3 -m unittest tests.test_elevator_doors tests.test_mqtt_elevator` 測試控制時序、MQTT 電梯 session／開關門順序、E／L 按鍵、升降互鎖及地面開口網格；`/home/yu/isaacsim-6.1.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、PhysX 門口阻擋、RTX LiDAR 量測，以及兩個車廂以物理接觸載送 Nova Carter 下樓再上樓、停靠樓層門互鎖與地下地板支撐。
+驗證：`python3 -m unittest tests.test_elevator_doors tests.test_mqtt_elevator` 測試控制時序、MQTT 電梯 session／開關門順序、E／L 按鍵、升降互鎖及地面開口網格；`/home/user/isaacsim-6.2.0/python.sh tests/validate_elevator_doors.py` 載入真實 Office，檢查門片與碰撞盒一致、原始 USD 未修改、PhysX 門口阻擋、RTX LiDAR 量測，以及兩個車廂以物理接觸載送 Nova Carter 下樓再上樓、停靠樓層門互鎖與地下地板支撐。
 
 ## 套件分工
 

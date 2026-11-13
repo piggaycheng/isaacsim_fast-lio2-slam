@@ -1,4 +1,4 @@
-#!/home/user/isaacsim-6.1.0/python.sh
+#!/home/user/isaacsim-6.2.0/python.sh
 
 import argparse
 import math

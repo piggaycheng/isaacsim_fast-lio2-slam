@@ -1,4 +1,4 @@
-#!/home/yu/isaacsim-6.1.0/python.sh
+#!/home/user/isaacsim-6.2.0/python.sh
 """Measure the tight bounding box and 2D footprint of any USD asset or prim.
 
 Mesh vertices are transformed into a reference frame, so the box is not

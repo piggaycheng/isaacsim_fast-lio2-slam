@@ -241,7 +241,7 @@ isaac_args=(--external --no-cmd-vel --no-tf)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 isaac_args+=("${boxes[@]}" "${sim_args[@]}")
 
-isaacsim_dir="${ISAACSIM_DIR:-$HOME/isaacsim-6.1.0}"
+isaacsim_dir="${ISAACSIM_DIR:-$HOME/isaacsim-6.2.0}"
 ros_distro="${ISAAC_ROS_DISTRO:-humble}"
 sim_ld_path="$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | { grep -v '^/opt/ros' || true; } | paste -sd:)"
 env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH -u CMAKE_PREFIX_PATH -u ROS_VERSION -u ROS_PYTHON_VERSION \

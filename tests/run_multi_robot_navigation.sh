@@ -5,7 +5,7 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-isaac_python="${ISAAC_PYTHON:-/home/yu/isaacsim-6.1.0/python.sh}"
+isaac_python="${ISAAC_PYTHON:-/home/user/isaacsim-6.2.0/python.sh}"
 directory="$project_dir/ros2_ws/log/multi_robot_navigation/$(date +%Y%m%d_%H%M%S)"
 export ROS_DOMAIN_ID="${VALIDATION_ROS_DOMAIN_ID:-188}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
