@@ -2,11 +2,11 @@
 
 ## Isaac Sim
 
-- Isaac Sim installation: `/home/user/isaacsim-6.2.0`
+- Isaac Sim installation: `$HOME/isaacsim-6.2.0`
 - Run Python scripts with Isaac Sim's Python launcher:
 
   ```bash
-  /home/user/isaacsim-6.2.0/python.sh <script.py>
+  $HOME/isaacsim-6.2.0/python.sh <script.py>
   ```
 
 - Do not use the system `python` or `python3` for scripts that import `isaacsim`, `omni`, `carb`, or `pxr`.

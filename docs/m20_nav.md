@@ -52,7 +52,7 @@ docker compose --profile height_map run --rm height_map build
 
 ```bash
 ./scripts/run_nav_m20.sh \
-  --policy /home/user/code/yu/locomotion_training/logs/rsl_rl/m20_rough/2026-11-03_14-33-41/exported/policy.pt \
+  --policy "$HOME/path/to/policy.pt" \
   --policy-device cuda
 ```
 
@@ -87,7 +87,7 @@ docker compose --profile height_map run --rm height_map build
 
 ```bash
 ./scripts/run_m20_policy.sh \
-  --policy /home/user/code/yu/locomotion_training/logs/rsl_rl/m20_rough/2026-11-03_14-33-41/exported/policy.pt \
+  --policy "$HOME/path/to/policy.pt" \
   --policy-device cuda
 ```
 
