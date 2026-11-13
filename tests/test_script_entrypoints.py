@@ -75,6 +75,34 @@ class ScriptEntrypointsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("container is not running", result.stderr)
 
+    def test_isaac_python_path_prefers_isaac_python_over_isaacsim_dir(self):
+        cases = (
+            ({}, "/tmp/test_home/isaacsim-6.2.0/python.sh"),
+            ({"ISAACSIM_DIR": "/opt/isaac"}, "/opt/isaac/python.sh"),
+            ({"ISAAC_PYTHON": "/custom/python.sh"}, "/custom/python.sh"),
+            (
+                {"ISAAC_PYTHON": "/custom/python.sh", "ISAACSIM_DIR": "/opt/isaac"},
+                "/custom/python.sh",
+            ),
+        )
+        for extra_env, expected in cases:
+            with self.subTest(extra_env=extra_env):
+                env = {
+                    k: v for k, v in os.environ.items()
+                    if k not in ("ISAAC_PYTHON", "ISAACSIM_DIR")
+                }
+                env["HOME"] = "/tmp/test_home"
+                env.update(extra_env)
+                result = subprocess.run(
+                    ["bash", "-c",
+                     'project_dir="$1"; source "$project_dir/docker/ros_compose.sh" '
+                     '2>/dev/null; isaac_python_path',
+                     "bash", str(ROOT)],
+                    capture_output=True, text=True, check=False, env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_launchers_use_repository_resources_and_moved_simulator(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -82,18 +110,27 @@ class ScriptEntrypointsTest(unittest.TestCase):
             scripts.mkdir()
             for script in (ROOT / "scripts").glob("*.sh"):
                 shutil.copy2(script, scripts / script.name)
-            simulator = scripts / "standalone.py"
-            simulator.write_text(
-                '#!/usr/bin/env bash\nprintf "SIMULATOR %s\\n" "$*"\n',
-            )
-            simulator.chmod(0o755)
+            (scripts / "standalone.py").touch()
             fake_isaac = root / "fake_isaac"
             fake_isaac.mkdir()
             fake_python = fake_isaac / "python.sh"
             fake_python.write_text(
-                '#!/usr/bin/env bash\nprintf "M20_SIMULATOR %s\\n" "$*"\n',
+                '#!/usr/bin/env bash\n'
+                'script="$1"; shift\n'
+                'if [[ "$(basename "$script")" == "m20_standalone.py" ]]; then\n'
+                '  printf "M20_SIMULATOR %s %s\\n" "$(basename "$script")" "$*"\n'
+                'else\n'
+                '  printf "SIMULATOR %s\\n" "$*"\n'
+                'fi\n',
             )
             fake_python.chmod(0o755)
+            override_python = root / "override_isaac/python.sh"
+            override_python.parent.mkdir()
+            override_python.write_text(
+                '#!/usr/bin/env bash\n'
+                'printf "OVERRIDE_PYTHON %s | %s\\n" "$LD_LIBRARY_PATH" "$*"\n',
+            )
+            override_python.chmod(0o755)
             fake_policy = root / "policy.pt"
             fake_policy.touch()
             maps = root / "maps/office"
@@ -106,6 +143,7 @@ class ScriptEntrypointsTest(unittest.TestCase):
             docker = root / "docker"
             docker.mkdir()
             (docker / "ros_compose.sh").write_text(
+                'isaac_python_path() { printf "%s\\n" "${ISAAC_PYTHON:-${ISAACSIM_DIR:-$HOME/isaacsim-6.2.0}/python.sh}"; }\n'
                 'require_ros_workspace() { printf "ROOT %s\\n" "$project_dir"; }\n'
                 'require_height_map_workspace() { printf "ROOT %s\\n" "$project_dir"; }\n'
                 'container_path() { printf "/workspace/%s\\n" "${1#"$project_dir"/}"; }\n'
@@ -214,7 +252,10 @@ class ScriptEntrypointsTest(unittest.TestCase):
             )
             for name, args, expected in cases:
                 with self.subTest(script=name, args=args):
-                    env = {**os.environ, "ISAACSIM_DIR": str(fake_isaac)}
+                    env = {
+                        **{k: v for k, v in os.environ.items() if k != "ISAAC_PYTHON"},
+                        "ISAACSIM_DIR": str(fake_isaac),
+                    }
                     result = subprocess.run(
                         [str(scripts / name), *args], cwd=maps, env=env,
                         capture_output=True, text=True, timeout=10, check=False,
@@ -249,6 +290,26 @@ class ScriptEntrypointsTest(unittest.TestCase):
                             self.assertNotIn("global_fusion.launch.py", result.stdout)
                             self.assertNotIn("navigate:=true", result.stdout)
                             self.assertNotIn("--ros-cmd-vel", result.stdout)
+
+            for name, args, expected_ld in (
+                ("run_slam.sh", (), ""),
+                ("run_nav_m20.sh", ("--policy", str(fake_policy), "--headless", "--no-rviz"),
+                 f"{override_python.parent}/exts/isaacsim.ros2.core/humble/lib"),
+            ):
+                with self.subTest(isaac_python_override=name):
+                    env = {
+                        k: v for k, v in os.environ.items()
+                        if k != "ISAACSIM_DIR"
+                    }
+                    env["ISAAC_PYTHON"] = str(override_python)
+                    result = subprocess.run(
+                        [str(scripts / name), *args], cwd=maps, env=env,
+                        capture_output=True, text=True, timeout=10, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("OVERRIDE_PYTHON ", result.stdout)
+                    if expected_ld:
+                        self.assertIn(expected_ld, result.stdout)
 
             (root / "maps/1F/session.json").unlink()
             for name in ("run_multi_nav.sh", "run_multi_nav_online.sh"):

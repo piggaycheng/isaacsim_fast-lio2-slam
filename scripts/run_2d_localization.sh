@@ -125,4 +125,4 @@ if [[ "$auto_jog" == true ]]; then
 fi
 isaac_args+=("${boxes[@]}")
 
-"$project_dir/scripts/standalone.py" "${isaac_args[@]}"
+"$(isaac_python_path)" "$project_dir/scripts/standalone.py" "${isaac_args[@]}"

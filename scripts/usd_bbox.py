@@ -1,4 +1,3 @@
-#!/home/user/isaacsim-6.2.0/python.sh
 """Measure the tight bounding box and 2D footprint of any USD asset or prim.
 
 Mesh vertices are transformed into a reference frame, so the box is not
@@ -9,11 +8,12 @@ local extent.
 Examples:
   # Nova Carter footprint in ROS base_link (USD +x, drive wheels lead),
   # padded by 6 cm:
-  ./scripts/usd_bbox.py /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd \
+  $HOME/isaacsim-6.2.0/python.sh scripts/usd_bbox.py \
+      /Isaac/Robots/NVIDIA/NovaCarter/nova_carter.usd \
       --frame chassis_link --padding 0.06
 
   # Any local file, whole default prim in its own frame:
-  ./scripts/usd_bbox.py path/to/asset.usd
+  $HOME/isaacsim-6.2.0/python.sh scripts/usd_bbox.py path/to/asset.usd
 """
 
 import argparse

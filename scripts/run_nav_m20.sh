@@ -241,10 +241,11 @@ isaac_args=(--external --no-cmd-vel --no-tf)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 isaac_args+=("${boxes[@]}" "${sim_args[@]}")
 
-isaacsim_dir="${ISAACSIM_DIR:-$HOME/isaacsim-6.2.0}"
+isaac_python="$(isaac_python_path)"
+isaacsim_dir="${ISAACSIM_DIR:-$(dirname "$isaac_python")}"
 ros_distro="${ISAAC_ROS_DISTRO:-humble}"
 sim_ld_path="$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | { grep -v '^/opt/ros' || true; } | paste -sd:)"
 env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH -u CMAKE_PREFIX_PATH -u ROS_VERSION -u ROS_PYTHON_VERSION \
   ROS_DISTRO="$ros_distro" RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   LD_LIBRARY_PATH="$sim_ld_path:$isaacsim_dir/exts/isaacsim.ros2.core/$ros_distro/lib" \
-  "$isaacsim_dir/python.sh" "$project_dir/scripts/m20_standalone.py" "${isaac_args[@]}"
+  "$isaac_python" "$project_dir/scripts/m20_standalone.py" "${isaac_args[@]}"

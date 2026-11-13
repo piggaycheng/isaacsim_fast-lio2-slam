@@ -2,12 +2,14 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-isaac_python="${ISAAC_PYTHON:-/home/user/isaacsim-6.2.0/python.sh}"
 directory="$project_dir/ros2_ws/log/navigation_environment/$(date +%Y%m%d_%H%M%S)"
 export ROS_DOMAIN_ID="${VALIDATION_ROS_DOMAIN_ID:-189}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 sim_pid=""
+
+source "$project_dir/docker/ros_compose.sh"
+isaac_python="$(isaac_python_path)"
 probe=validate_navigation_environment.py
 launch_args=()
 while [[ "${1:-}" == --braking || "${1:-}" == --3d-odom || "${1:-}" == --launch-arg ]]; do

@@ -56,7 +56,7 @@ flowchart LR
 | 現象 | 檢查 |
 | :-- | :-- |
 | 啟動後 GUI 打不開 | 確認 `DISPLAY`；使用 Xauthority 時設定 `XAUTHORITY` |
-| 找不到 Isaac Sim | 修改 `scripts/standalone.py` 等 shebang，或設定 `ISAAC_PYTHON`（見根 README） |
+| 找不到 Isaac Sim | 設定 `ISAACSIM_DIR` 或 `ISAAC_PYTHON` 指向正確的 Isaac Sim 安裝路徑／`python.sh`（預設 `$HOME/isaacsim-6.2.0/python.sh`，見根 README） |
 | 腳本被拒絕啟動、埠或 container 衝突 | 上次執行的 container 或 Isaac 殘留；確認舊程序已結束、`docker ps` 沒有 `isaacsim-fastlio2-*` 後重試 |
 | 無法規劃或 Nav2 沒有 `navigator active` | 確認定位 TF（`map -> base_link`）存在；3D 模式需先有被接受的 PCD 配準，非 Office 起點要加 `--manual-initial-pose` 並在 RViz 點 **2D Pose Estimate** |
 | 車子突然停住 | 可能是 PCD 校正逾時（4 秒）、感測資料過期（1 秒）、命令中斷（0.5 秒）或 collision monitor 觸發；看 `cmd_vel_safety` 與 `collision_monitor` 的 log，見 [nav.md](nav.md#cmd_vel_safety) |

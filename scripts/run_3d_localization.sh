@@ -263,4 +263,4 @@ if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 if [[ "$auto_jog" == true ]]; then isaac_args+=(--auto-jog); fi
 if [[ "$navigate" == true || "$ros_cmd_vel" == true ]]; then isaac_args+=(--ros-cmd-vel); fi
 isaac_args+=("${boxes[@]}")
-"$project_dir/scripts/standalone.py" "${isaac_args[@]}"
+"$(isaac_python_path)" "$project_dir/scripts/standalone.py" "${isaac_args[@]}"

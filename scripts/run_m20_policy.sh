@@ -13,6 +13,7 @@ cd "$project_dir"
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-10}"
 export FASTRTPS_DEFAULT_PROFILES_FILE="$project_dir/docker/fastdds_udp.xml"
+source "$project_dir/docker/ros_compose.sh"
 
 build=false
 rviz=true
@@ -67,12 +68,13 @@ fi
 
 docker compose --profile height_map logs -f --no-log-prefix height_map &
 
-isaacsim_dir="${ISAACSIM_DIR:-$HOME/isaacsim-6.2.0}"
+isaac_python="$(isaac_python_path)"
+isaacsim_dir="${ISAACSIM_DIR:-$(dirname "$isaac_python")}"
 ros_distro="${ISAAC_ROS_DISTRO:-humble}"
 sim_ld_path="$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | { grep -v '^/opt/ros' || true; } | paste -sd:)"
 env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH -u CMAKE_PREFIX_PATH -u ROS_VERSION -u ROS_PYTHON_VERSION \
   ROS_DISTRO="$ros_distro" RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   LD_LIBRARY_PATH="$sim_ld_path:$isaacsim_dir/exts/isaacsim.ros2.core/$ros_distro/lib" \
-  "$isaacsim_dir/python.sh" "$project_dir/scripts/m20_standalone.py" --external "${sim_args[@]}" &
+  "$isaac_python" "$project_dir/scripts/m20_standalone.py" --external "${sim_args[@]}" &
 sim_pid=$!
 wait "$sim_pid"

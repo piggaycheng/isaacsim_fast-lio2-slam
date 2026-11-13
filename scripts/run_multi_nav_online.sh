@@ -223,4 +223,4 @@ if [[ "$ceiling_cameras" == true ]]; then isaac_args+=(--ceiling-cameras); fi
 if [[ -n "$elevator_lift" ]]; then
   isaac_args+=(--dynamic-elevator-doors --elevator-mqtt-lift "$elevator_lift")
 fi
-"$project_dir/scripts/standalone.py" "${isaac_args[@]}"
+"$(isaac_python_path)" "$project_dir/scripts/standalone.py" "${isaac_args[@]}"

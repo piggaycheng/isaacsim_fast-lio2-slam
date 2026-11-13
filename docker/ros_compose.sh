@@ -2,6 +2,11 @@
 # project_dir. The ROS 2 stack runs in the `ros` Docker Compose service while
 # Isaac Sim (standalone.py) runs on the host.
 
+# Resolves the host Isaac Sim python.sh launcher, honoring ISAAC_PYTHON then ISAACSIM_DIR.
+isaac_python_path() {
+  printf '%s\n' "${ISAAC_PYTHON:-${ISAACSIM_DIR:-$HOME/isaacsim-6.2.0}/python.sh}"
+}
+
 project_dir="$(cd "$project_dir" && pwd -P)"
 workspace_dir="$project_dir/ros2_ws"
 # The host-side Isaac bridge and container nodes must use the same UDP-only profile.

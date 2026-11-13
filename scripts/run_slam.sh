@@ -10,4 +10,4 @@ start_ros slam
 echo "Mapping is initially idle. In another terminal: ./scripts/slam_session.sh start FLOOR"
 echo "Before changing floor: ./scripts/slam_session.sh save-stop"
 
-"$project_dir/scripts/standalone.py" --dynamic-elevator-doors --elevator-door-mode manual
+"$(isaac_python_path)" "$project_dir/scripts/standalone.py" --dynamic-elevator-doors --elevator-door-mode manual

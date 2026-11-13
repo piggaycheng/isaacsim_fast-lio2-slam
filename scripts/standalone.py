@@ -1,5 +1,3 @@
-#!/home/user/isaacsim-6.2.0/python.sh
-
 import argparse
 import math
 import sys

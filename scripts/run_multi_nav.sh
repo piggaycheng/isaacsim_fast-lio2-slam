@@ -163,4 +163,4 @@ isaac_args=(--ros-cmd-vel --lidar-motion-compensation noncompensated)
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 for robot in "${robots[@]}"; do isaac_args+=(--robot "$robot"); done
 isaac_args+=("${boxes[@]}")
-"$project_dir/scripts/standalone.py" "${isaac_args[@]}"
+"$(isaac_python_path)" "$project_dir/scripts/standalone.py" "${isaac_args[@]}"

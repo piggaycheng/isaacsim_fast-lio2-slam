@@ -4,7 +4,6 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-isaac_python="${ISAAC_PYTHON:-/home/user/isaacsim-6.2.0/python.sh}"
 directory="$project_dir/ros2_ws/log/3d_odometry/$(date +%Y%m%d_%H%M%S)"
 export ROS_DOMAIN_ID="${VALIDATION_ROS_DOMAIN_ID:-188}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
@@ -12,6 +11,9 @@ export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 ramp="${RAMP:-1.0,0.0,0.15,6.0,1.5,1.6}"
 inputs="${LOCAL_INPUTS:-wheel,imu,lio}"
 sim_pid=""
+
+source "$project_dir/docker/ros_compose.sh"
+isaac_python="$(isaac_python_path)"
 
 compose() {
   docker compose --project-directory "$project_dir" \
