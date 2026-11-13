@@ -38,6 +38,11 @@ parameter_overrides:
       registration_covariance_scale: 1.0
       min_covariance_xy: 0.0002
       min_covariance_yaw: 2.0e-06
+  global_tf_gate:
+    ros__parameters:
+      # Shift odom (anchored at standing base_link) above the 2D map plane (z=0) by M20's
+      # standing height so the 2D /map aligns with the ground surface of the elevation map.
+      map_z_offset: 0.49
 
   # USD visible + collision bounds in base_link rounded outward to 1 mm.
   global_costmap:
@@ -63,16 +68,18 @@ parameter_overrides:
     ros__parameters:
       FollowPath:
         desired_linear_vel: 0.6
-        rotate_to_heading_angular_vel: 0.5
+        rotate_to_heading_angular_vel: 0.6
+        rotate_to_heading_min_angular_vel: 0.5
+        max_angular_accel: 6.0
   velocity_smoother:
     ros__parameters:
-      max_velocity: [0.6, 0.0, 0.5]
-      min_velocity: [-0.5, 0.0, -0.5]
-      max_accel: [0.8, 0.0, 1.5]
-      max_decel: [-1.5, 0.0, -2.0]
+      max_velocity: [0.6, 0.0, 0.6]
+      min_velocity: [-0.5, 0.0, -0.6]
+      max_accel: [0.8, 0.0, 2.0]
+      max_decel: [-1.5, 0.0, -2.5]
   cmd_vel_safety:
     ros__parameters:
       max_linear_accel: 0.8
-      max_angular_accel: 1.5
+      max_angular_accel: 2.0
       max_linear_speed: 0.6
-      max_angular_speed: 0.5
+      max_angular_speed: 0.6

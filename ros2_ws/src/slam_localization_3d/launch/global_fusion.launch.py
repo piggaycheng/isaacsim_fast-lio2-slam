@@ -409,7 +409,7 @@ def robot_nodes(context, package, nav):
         ),
         Node(
             package="slam_localization_3d", executable="global_tf_gate.py",
-            name="global_tf_gate", output="screen", parameters=[sim],
+            name="global_tf_gate", output="screen", parameters=[fusion_config, sim],
         ),
         Node(
             package="nav2_map_server", executable="map_server",

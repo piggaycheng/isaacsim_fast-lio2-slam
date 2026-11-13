@@ -7,12 +7,29 @@ Visualization Manager:
     - Class: rviz_default_plugins/Grid
       Name: Grid
       Enabled: true
-      Reference Frame: lidar
+      Reference Frame: base_link
       Cell Size: 1
       Plane Cell Count: 40
+      Offset:
+        X: 0
+        Y: 0
+        Z: -0.49
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+      Name: 2D Map (Reference)
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Use Timestamp: false
     - Class: grid_map_rviz_plugin/GridMap
       Name: ElevationMap (surface)
-      Enabled: false
+      Enabled: true
       Topic:
         Value: /elevation_mapping_node/elevation_map_filter
         Depth: 5
@@ -21,7 +38,7 @@ Visualization Manager:
         Reliability Policy: Reliable
       Alpha: 1
       Height Layer: elevation
-      Height Transformer: elevation
+      Height Transformer: GridMapLayer
       Color Transformer: GridMapLayer
       Color Layer: elevation
       Autocompute Intensity Bounds: true
@@ -30,7 +47,7 @@ Visualization Manager:
       History Length: 1
     - Class: rviz_default_plugins/PointCloud2
       Name: ElevationMap (points)
-      Enabled: true
+      Enabled: false
       Topic:
         Value: /elevation_points
         Depth: 1
@@ -48,7 +65,7 @@ Visualization Manager:
         Value: false
     - Class: rviz_default_plugins/PointCloud2
       Name: Assumed ground (under robot)
-      Enabled: true
+      Enabled: false
       Topic:
         Value: /elevation_points_assumed
         Depth: 1
@@ -91,7 +108,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: lidar
+    Fixed Frame: map
     Frame Rate: 30
   Name: root
   Tools:

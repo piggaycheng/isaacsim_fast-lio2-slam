@@ -45,6 +45,16 @@ def generate_launch_description():
                 description="Path to elevation_mapping_cupy override YAML",
             ),
             DeclareLaunchArgument(
+                "rviz",
+                default_value="false",
+                description="Also start a dedicated RViz window showing the robot's local height map",
+            ),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value="/workspace/config/height_map.rviz",
+                description="Path to RViz config file for height map visualization",
+            ),
+            DeclareLaunchArgument(
                 "control_rate_hz",
                 default_value="50.0",
                 description="Inference rate (timer on the latest state); 0 = one inference per joint_states message",
@@ -59,6 +69,8 @@ def generate_launch_description():
                 launch_arguments={
                     "fastlio": LaunchConfiguration("fastlio"),
                     "elevation_config": LaunchConfiguration("elevation_config"),
+                    "rviz": LaunchConfiguration("rviz"),
+                    "rviz_config": LaunchConfiguration("rviz_config"),
                     "use_sim_time": LaunchConfiguration("use_sim_time"),
                 }.items(),
                 condition=IfCondition(LaunchConfiguration("height_map")),

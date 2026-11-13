@@ -27,6 +27,16 @@ def generate_launch_description():
                 default_value=default_elevation_config,
                 description="Path to elevation_mapping_cupy override YAML",
             ),
+            DeclareLaunchArgument(
+                "rviz",
+                default_value="false",
+                description="Also start a dedicated RViz window showing the robot's local height map",
+            ),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value="/workspace/config/height_map.rviz",
+                description="Path to RViz config file for height map visualization",
+            ),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(adapter_share, "launch", "fastlio.launch.py")),
@@ -50,6 +60,15 @@ def generate_launch_description():
                     LaunchConfiguration("elevation_config"),
                     {"use_sim_time": LaunchConfiguration("use_sim_time")},
                 ],
+            ),
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="height_map_rviz",
+                output="screen",
+                arguments=["-d", LaunchConfiguration("rviz_config")],
+                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+                condition=IfCondition(LaunchConfiguration("rviz")),
             ),
         ]
     )

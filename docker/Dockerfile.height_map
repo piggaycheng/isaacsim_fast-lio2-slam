@@ -67,11 +67,12 @@ ENV PATH="/usr/local/cuda-12.6/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda-12.6/lib64:${LD_LIBRARY_PATH}"
 
 # Pin numpy==1.23.5 to stay ABI-compatible with Ubuntu 22.04 apt scipy/sklearn/opencv C extensions.
+# Pin setuptools<71 to remain compatible with Ubuntu 22.04 apt python3-packaging during colcon build.
 # Install CUDA 12.6 PyTorch and CuPy for GPU elevation mapping & RSL-RL TorchScript policy inference.
 RUN python3 -m pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu126 torch torchvision \
     && python3 -m pip install --no-cache-dir \
-      'numpy==1.23.5' 'simple-parsing' fastrlock \
+      'numpy==1.23.5' 'setuptools<71' 'simple-parsing' fastrlock \
     && python3 -m pip install --no-cache-dir --no-deps \
       'cupy-cuda12x==13.6.0' 'ros2-numpy==0.0.5' transformations pybase64
 

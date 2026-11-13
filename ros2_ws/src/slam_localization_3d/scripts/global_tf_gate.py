@@ -42,6 +42,9 @@ def map_to_odom(global_pose, odom_pose):
 class GlobalTfGate(Node):
     def __init__(self):
         super().__init__("global_tf_gate")
+        self.map_z_offset = float(self.declare_parameter("map_z_offset", 0.0).value)
+        if not math.isfinite(self.map_z_offset):
+            raise ValueError("map_z_offset must be finite")
         self.max_correction_age = self.declare_parameter(
             "max_correction_age", 5.0
         ).value
@@ -208,6 +211,7 @@ class GlobalTfGate(Node):
         transform.child_frame_id = "odom"
         transform.transform.translation.x = x
         transform.transform.translation.y = y
+        transform.transform.translation.z = self.map_z_offset
         transform.transform.rotation.z = math.sin(yaw / 2)
         transform.transform.rotation.w = math.cos(yaw / 2)
         self.broadcaster.sendTransform(transform)

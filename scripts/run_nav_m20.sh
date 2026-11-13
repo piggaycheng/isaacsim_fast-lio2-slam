@@ -233,6 +233,7 @@ start_height_map launch m20_policy_node m20_policy.launch.py \
   "device:=$policy_device" \
   use_sim_time:=true \
   fastlio:=false \
+  "rviz:=$rviz" \
   "elevation_config:=$ELEVATION_CONFIG" \
   "flat_height_scan:=$flat_height_scan"
 

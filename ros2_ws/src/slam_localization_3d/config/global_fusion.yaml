@@ -68,3 +68,7 @@ lio_odometry:
   ros__parameters:
     twist_linear_variance: 2.0e-5
     twist_angular_variance: 2.0e-5
+
+global_tf_gate:
+  ros__parameters:
+    map_z_offset: 0.0

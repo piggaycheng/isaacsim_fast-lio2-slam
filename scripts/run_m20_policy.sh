@@ -39,6 +39,7 @@ policy="$(readlink -f "$policy")"
 # the policy directory is mounted read-only at /policies in the container
 export POLICY_DIR="$(dirname "$policy")"
 export ELEVATION_CONFIG="${ELEVATION_CONFIG:-/workspace/config/elevation_isaac.yaml}"
+export HEIGHT_MAP_RVIZ_CONFIG="${HEIGHT_MAP_RVIZ_CONFIG:-/workspace/config/height_map_jog.rviz}"
 
 if [[ "$build" == true || ! -f ros2_ws/install/m20_policy_node/share/m20_policy_node/package.xml || ! -f ros2_ws/install/m20_jog/share/m20_jog/package.xml ]]; then
   docker compose --profile height_map run --rm height_map build
@@ -56,13 +57,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 HEIGHT_MAP_COMMAND=launch \
-HEIGHT_MAP_LAUNCH_ARGS=$'m20_policy_node\nm20_policy.launch.py\npolicy_path:=/policies/'"$(basename "$policy")"$'\ndevice:='"$policy_device"$'\nuse_sim_time:=true\nflat_height_scan:='"${FLAT_HEIGHT_SCAN:-false}" \
+HEIGHT_MAP_LAUNCH_ARGS=$'m20_policy_node\nm20_policy.launch.py\npolicy_path:=/policies/'"$(basename "$policy")"$'\ndevice:='"$policy_device"$'\nuse_sim_time:=true\nrviz:='"$rviz"$'\nrviz_config:='"$HEIGHT_MAP_RVIZ_CONFIG"$'\nflat_height_scan:='"${FLAT_HEIGHT_SCAN:-false}" \
   docker compose --profile height_map up -d --force-recreate height_map
-
-if [[ "$rviz" == true ]]; then
-  docker compose --profile height_map exec -d height_map /workspace/docker/entrypoint.sh \
-    rviz2 -d /workspace/config/height_map.rviz --ros-args -p use_sim_time:=true
-fi
 
 if [[ "$jog" == true ]]; then
   docker compose --profile height_map exec -d height_map /workspace/docker/entrypoint.sh ros2 run m20_jog m20_jog

@@ -171,37 +171,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /perception/obstacles
-    - Class: rviz_default_plugins/PointCloud2
-      Name: ElevationMap (points)
-      Enabled: true
-      Topic:
-        Value: /elevation_points
-        Depth: 1
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-      Style: Points
-      Size (Pixels): 4
-      Color Transformer: AxisColor
-      Axis: Z
-      Use Rainbow: true
-      Autocompute Value Bounds:
-        Min Value: -0.6
-        Max Value: 1.5
-        Value: false
-    - Class: rviz_default_plugins/PointCloud2
-      Name: Assumed ground (under robot)
-      Enabled: true
-      Topic:
-        Value: /elevation_points_assumed
-        Depth: 1
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-      Style: Points
-      Size (Pixels): 4
-      Color Transformer: FlatColor
-      Color: 255; 255; 255
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 5

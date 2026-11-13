@@ -20,7 +20,7 @@ M20 為 12 個腿部關節 + 4 個輪子的輪足機器人，不能直接以差�
    - 執行 `ground_obstacle_filter` 濾除 M20 機身自體點雲，發布 `/perception/self_filtered_points` 與 `/perception/obstacles`。
    - 執行 Nav2（`planner_server`、`controller_server`、`direction_zones`、`collision_monitor`、`cmd_vel_safety`），將導航速度命令發布至 `/cmd_vel`。
 3. **`height_map` 容器（ROS 2 Humble + CUDA 12.6 + PyTorch + CuPy）**：
-   - 執行 `elevation_mapping_cupy`：訂閱 `/perception/self_filtered_points` 與 3D TF（`odom -> base_link`），在 GPU 上即時維護局部高程圖 `/elevation_mapping_node/elevation_map_filter`，並透過 `grid_map_to_points.py` 轉換成 `/elevation_points` 供 RViz 檢視。
+   - 執行 `elevation_mapping_cupy`：訂閱 `/perception/self_filtered_points` 與 3D TF（`odom -> base_link`），在 GPU 上即時維護局部高程圖 `/elevation_mapping_node/elevation_map_filter`，並啟動獨立的 `height_map_rviz`（`config/height_map.rviz`，以 `base_link` 為參考系顯示 `GridMap` 表面，方便未來在多機 `multi_nav` 環境下每台 M20 各自開啟獨立的局部高程圖視窗）。
    - 執行 `m20_policy_node`：訂閱 `/cmd_vel`、`/m20/*` 狀態與高程圖，以 50 Hz 推論並發布 `/m20/joint_commands`。
 
 ---
@@ -58,11 +58,12 @@ docker compose --profile height_map run --rm height_map build
 
 啟動後的操作流程：
 
-1. 等待 Isaac Sim 載入場景，以及 RViz 視窗開啟。
-2. **手動給定初始定位**：在 RViz 工具列點選 **2D Pose Estimate**，在地圖上機器人起點（預設生成於原點 `(0, 0)` 附近）按住左鍵拖曳設定初始位置與航向。
+1. 等待 Isaac Sim 載入場景，此時會開啟兩個 RViz 視窗：
+   - **導航 RViz（`global_fusion.rviz`）**：顯示 2D/3D 全域地圖、定位與 Nav2 路徑。
+   - **高程圖 RViz（`height_map.rviz`）**：由 `height_map` 容器啟動，以機器人 `base_link` 為視角顯示該 M20 專屬的 `GridMap` 局部地形高程圖。
+2. **手動給定初始定位**：在導航 RViz 工具列點選 **2D Pose Estimate**，在地圖上機器人起點（預設生成於原點 `(0, 0)` 附近）按住左鍵拖曳設定初始位置與航向。
 3. 等待終端機顯示 `Initial localization succeeded` 以及 `Nav2 planner, controller, ... and navigator active`。
-4. **發送導航目標**：在 RViz 工具列點選 **2D Goal Pose**，在地圖上點選目標位置與方向，M20 即會沿規劃路徑行走。
-5. RViz 左側 Displays 可勾選 **ElevationMapPoints**（`/elevation_points`）或 **ElevationMapAssumed**（`/elevation_points_assumed`）查看即時高程點雲。
+4. **發送導航目標**：在導航 RViz 工具列點選 **2D Goal Pose**，在地圖上點選目標位置與方向，M20 即會沿規劃路徑行走。
 
 常用參數：
 
