@@ -34,6 +34,27 @@ RViz 使用 `/clock` 模擬時間（`use_sim_time=true`），與點雲及 TF 的
 
 電梯初始停在地面樓層。升降約需 6 秒，抵達後按 E 開門；未停靠樓層的門不能開啟。建圖管理指令在終端執行，沒有額外的建圖快捷鍵。
 
+### 2.1 自由飛行跨樓層一次掃圖模式（`--free-fly`）
+
+若要以單一 session 直接掃描多層樓與樓梯間（供 M20 3D 跨樓層導航使用），可使用 `--free-fly` 啟動：
+
+```bash
+./scripts/run_mapping.sh --free-fly
+# 或
+./scripts/run_slam.sh --free-fly
+```
+
+在 `--free-fly` 模式下，場景不會載入 Nova Carter 車體，而是直接產生一個無重力、無碰撞的輕量感測載具（小方塊底座 + Hesai XT-32 RTX LiDAR + IMU），保持水平姿態於 3D 空間自由飛行，並持續發布相同的 `/isaac/lidar_points`、`/isaac/imu` 與 `/isaac/ground_truth/odom`，完全相容 `slam_session.sh start`／`save-stop` 與 3D 定位流程：
+
+| 按鍵 | 功能（`--free-fly` 模式） |
+|---|---|
+| W/S 或 Up/Down | 前進／後退 |
+| A/D 或 Left/Right | 左轉／右轉（Yaw） |
+| E/Q 或 PageUp/PageDown | 垂直上升／下降（Z 軸） |
+| Space | 停止並懸停 |
+| O | 開／關停靠樓層的電梯門 |
+| L | 切換電梯上下樓層 |
+
 ## 3. 建立第一層地圖
 
 在第二個終端執行：

@@ -163,6 +163,10 @@ class ScriptEntrypointsTest(unittest.TestCase):
             cases = (
                 ("run_slam.sh", (), ("ROOT", "ROS slam",
                  "SIMULATOR --dynamic-elevator-doors --elevator-door-mode manual\n")),
+                ("run_slam.sh", ("--free-fly",), ("ROOT", "ROS slam",
+                 "SIMULATOR --dynamic-elevator-doors --elevator-door-mode manual --free-fly\n")),
+                ("run_mapping.sh", ("--free-fly",), ("ROOT", "ROS slam",
+                 "SIMULATOR --dynamic-elevator-doors --elevator-door-mode manual --free-fly\n")),
                 ("slam_session.sh", ("start", "floor_ground"),
                  ("python3 /workspace/scripts/mapping_manager.py start floor_ground",)),
                 ("slam_session.sh", ("save-stop",),

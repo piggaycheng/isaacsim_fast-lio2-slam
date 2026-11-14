@@ -18,6 +18,7 @@ from robot_fleet import (  # noqa: E402
 
 
 OFFICE_ASSET_PATH = "/Isaac/Environments/Office/office.usd"
+FREE_FLY_LIDAR_ASSET_PATH = "/Isaac/Sensors/HESAI/XT32_SD10/HESAI_XT32_SD10.usd"
 SURROUNDING_BUILDINGS_PRIM_PATH = "/Root/SM_Buildings"
 # Prim of the single robot when no --robot is given (root ROS namespace).
 CARTER_PRIM_PATH = "/World/Carter"
@@ -36,10 +37,13 @@ DEFAULT_RAMP = [0.15, 6.0, 1.5, 1.6]
 RAMP_THICKNESS = 0.2
 LINEAR_JOG_SPEED = 0.75
 ANGULAR_JOG_SPEED = 0.5
+VERTICAL_JOG_SPEED = 0.5
 FOLLOW_CAMERA_DISTANCE = 2.5
 FOLLOW_CAMERA_HEIGHT = 1.5
 FOLLOW_CAMERA_LOOK_AHEAD = 0.6
 FOLLOW_CAMERA_TARGET_HEIGHT = 0.5
+FREE_FLY_CAMERA_DISTANCE = 1.2
+FREE_FLY_CAMERA_HEIGHT = 0.85
 # Multi-robot overview: fixed top-down view over all spawn points.
 OVERVIEW_CAMERA_MARGIN = 5.0
 OVERVIEW_CAMERA_MIN_HEIGHT = 12.0
@@ -72,6 +76,10 @@ KIT_EXTRA_ARGS = [
 parser = argparse.ArgumentParser(description="Launch Isaac Sim with the Office environment.")
 parser.add_argument("--headless", action="store_true", help="Run without the Isaac Sim GUI.")
 parser.add_argument("--auto-jog", action="store_true", help="Drive forward automatically for headless SLAM tests.")
+parser.add_argument(
+    "--free-fly", action="store_true",
+    help="Fly the robot in 3D with W/S/A/D and Q/E (disables robot gravity and collisions).",
+)
 parser.add_argument(
     "--dynamic-elevator-doors", action="store_true",
     help="Enable Office elevator doors and moving cabins (original USD is unchanged).",
@@ -153,8 +161,8 @@ parser.add_argument(
 args, _ = parser.parse_known_args()
 if (args.camera or args.ceiling_cameras) and not args.mqtt_host:
     parser.error("--camera and --ceiling-cameras are switched over MQTT and require --mqtt-host")
-if args.ros_cmd_vel and (args.auto_jog or args.test):
-    parser.error("--ros-cmd-vel cannot be combined with --auto-jog or --test")
+if args.ros_cmd_vel and (args.auto_jog or args.test or args.free_fly):
+    parser.error("--ros-cmd-vel cannot be combined with --auto-jog, --test, or --free-fly")
 if args.validation_control_dir and not args.ros_cmd_vel:
     parser.error("--validation-control-dir requires --ros-cmd-vel")
 if args.validation_control_dir and args.robot:
@@ -187,6 +195,7 @@ class SimRobot:
         self.receiver = None
         self.gimbal_dofs = None
         self.gimbal_time = 0.0
+        self.free_fly = False
 
     def topic(self, name: str) -> str:
         return namespaced_topic(self.name, name)
@@ -195,8 +204,26 @@ class SimRobot:
         return f"{base}_{self.name}" if self.name else base
 
     def drive(self, linear: float, angular: float) -> None:
+        if self.controller is None:
+            return
         self.robot.apply_wheel_actions(
             self.controller.forward(command=[linear * self.forward_sign, angular])
+        )
+
+    def fly(self, linear: float, vertical: float, angular: float) -> None:
+        if self.controller is not None:
+            self.drive(0.0, 0.0)
+        _, orientations = self.robot.get_world_poses()
+        qw, qx, qy, qz = (float(value) for value in orientations.numpy()[0])
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        if math.hypot(qx, qy) > 1e-3:
+            self.robot.set_world_poses(
+                orientations=[[math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]]
+            )
+        speed = linear * self.forward_sign
+        self.robot.set_velocities(
+            linear_velocities=[[speed * math.cos(yaw), speed * math.sin(yaw), float(vertical)]],
+            angular_velocities=[[0.0, 0.0, float(angular)]],
         )
 
 
@@ -209,6 +236,8 @@ try:
     ]
 except ValueError as error:
     parser.error(str(error))
+if args.free_fly:
+    robots[0].free_fly = True
 
 
 def parse_box(text: str) -> list[float]:
@@ -280,7 +309,11 @@ def parse_cameras() -> list[tuple[SimRobot, str, str]]:
         # Every gimbal camera is offered (off until enabled) as camera/gimbal.
         for sim_robot in robots:
             path = f"{sim_robot.prim_path}/gimbal_tilt/camera"
-            if "gimbal" in sim_robot.simulation and all(c[1] != path for c in cameras):
+            if (
+                "gimbal" in sim_robot.simulation
+                and not sim_robot.free_fly
+                and all(c[1] != path for c in cameras)
+            ):
                 cameras.append((sim_robot, path, "gimbal"))
     if len({(r.name, stream) for r, _, stream in cameras}) != len(cameras):
         parser.error("--camera streams must be unique per robot")
@@ -305,6 +338,7 @@ import omni.appwindow
 import omni.graph.core as og
 import usdrt
 from isaacsim.core.experimental.objects import Cube
+from isaacsim.core.experimental.prims import RigidPrim
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.experimental.utils.stage import is_stage_loading
 from isaacsim.core.rendering_manager import ViewportManager
@@ -314,13 +348,14 @@ from isaacsim.sensors.experimental.physics import IMU
 from isaacsim.sensors.experimental.rtx import Lidar, LidarSensor
 from isaacsim.storage.native import get_assets_root_path, is_file
 from omni.kit.viewport.utility import get_active_viewport
-from pxr import Gf, Tf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, PhysxSchema, Tf, Usd, UsdGeom, UsdPhysics
 
 app_utils.enable_extension("isaacsim.ros2.bridge")
 simulation_app.update()
 
 
 pressed_keys = set()
+free_fly = args.free_fly
 input_interface = None
 camera_runtime = []
 ceiling_gimbals = []
@@ -335,12 +370,17 @@ if args.ros_cmd_vel:
 
 
 def on_keyboard_event(event, *_) -> bool:
-    key = (event.input if isinstance(event.input, str) else event.input.name).upper()
-    if event.type == carb.input.KeyboardEventType.KEY_PRESS:
-        if key == "E" and key not in pressed_keys and elevator_doors is not None:
-            elevator_doors.toggle()
-        if key == "L" and key not in pressed_keys and elevator_doors is not None:
-            elevator_doors.toggle_lift()
+    key = (event.input if isinstance(event.input, str) else event.input.name).upper().removeprefix("KEY_")
+    if event.type in (
+        carb.input.KeyboardEventType.KEY_PRESS,
+        getattr(carb.input.KeyboardEventType, "KEY_REPEAT", carb.input.KeyboardEventType.KEY_PRESS),
+    ):
+        door_key = "O" if globals().get("free_fly", False) else "E"
+        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+            if key == door_key and key not in pressed_keys and elevator_doors is not None:
+                elevator_doors.toggle()
+            if key == "L" and key not in pressed_keys and elevator_doors is not None:
+                elevator_doors.toggle_lift()
         pressed_keys.add(key)
     elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
         pressed_keys.discard(key)
@@ -349,16 +389,47 @@ def on_keyboard_event(event, *_) -> bool:
 
 def get_jog_command() -> list[float]:
     """Keyboard (linear, angular) in the robot's forward convention."""
-    if "SPACE" in pressed_keys:
+    active_keys = set(pressed_keys)
+    iface = globals().get("input_interface")
+    kbd = globals().get("keyboard")
+    if iface is not None and kbd is not None:
+        for name in ("W", "A", "S", "D", "UP", "DOWN", "LEFT", "RIGHT", "SPACE"):
+            key_enum = getattr(carb.input.KeyboardInput, name, None)
+            if key_enum is not None and iface.get_keyboard_value(kbd, key_enum) > 0.0:
+                active_keys.add(name)
+    if "SPACE" in active_keys:
         return [0.0, 0.0]
 
-    forward = int(bool(pressed_keys & {"W", "UP"}))
-    backward = int(bool(pressed_keys & {"S", "DOWN"}))
-    left = int(bool(pressed_keys & {"A", "LEFT"}))
-    right = int(bool(pressed_keys & {"D", "RIGHT"}))
+    forward = int(bool(active_keys & {"W", "UP"}))
+    backward = int(bool(active_keys & {"S", "DOWN"}))
+    left = int(bool(active_keys & {"A", "LEFT"}))
+    right = int(bool(active_keys & {"D", "RIGHT"}))
     return [
         (forward - backward) * LINEAR_JOG_SPEED,
         (left - right) * ANGULAR_JOG_SPEED,
+    ]
+
+
+def get_free_fly_command() -> list[float]:
+    """Keyboard (linear, vertical, angular) in the robot's forward convention."""
+    active_keys = set(pressed_keys)
+    iface = globals().get("input_interface")
+    kbd = globals().get("keyboard")
+    if iface is not None and kbd is not None:
+        for name in ("Q", "E", "PAGE_UP", "PAGE_DOWN", "SPACE"):
+            key_enum = getattr(carb.input.KeyboardInput, name, None)
+            if key_enum is not None and iface.get_keyboard_value(kbd, key_enum) > 0.0:
+                active_keys.add(name)
+    if "SPACE" in active_keys:
+        return [0.0, 0.0, 0.0]
+
+    linear, angular = get_jog_command()
+    up = int(bool(active_keys & {"E", "PAGE_UP"}))
+    down = int(bool(active_keys & {"Q", "PAGE_DOWN"}))
+    return [
+        linear,
+        (up - down) * VERTICAL_JOG_SPEED,
+        angular,
     ]
 
 
@@ -382,10 +453,12 @@ def update_follow_camera(sim_robot: SimRobot, camera_path: str) -> None:
         [sim_robot.forward_sign, 0.0, 0.0],
         orientations.numpy()[0],
     )
+    distance = FREE_FLY_CAMERA_DISTANCE if sim_robot.free_fly else FOLLOW_CAMERA_DISTANCE
+    height = FREE_FLY_CAMERA_HEIGHT if sim_robot.free_fly else FOLLOW_CAMERA_HEIGHT
     eye = [
-        float(position[0] - forward[0] * FOLLOW_CAMERA_DISTANCE),
-        float(position[1] - forward[1] * FOLLOW_CAMERA_DISTANCE),
-        float(position[2] + FOLLOW_CAMERA_HEIGHT),
+        float(position[0] - forward[0] * distance),
+        float(position[1] - forward[1] * distance),
+        float(position[2] + height),
     ]
     target = [
         float(position[0] + forward[0] * FOLLOW_CAMERA_LOOK_AHEAD),
@@ -450,6 +523,30 @@ def set_overview_camera(robots: list[SimRobot], viewport) -> list[float]:
 def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
     graph_path = sim_robot.graph_path("/World/FASTLIO_ROS2")
     keys = og.Controller.Keys
+    joint_nodes = (
+        []
+        if sim_robot.free_fly
+        else [("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState")]
+    )
+    joint_connections = (
+        []
+        if sim_robot.free_fly
+        else [
+            ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
+            ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
+        ]
+    )
+    joint_values = (
+        []
+        if sim_robot.free_fly
+        else [
+            ("PublishJointState.inputs:topicName", sim_robot.topic("/isaac/joint_states")),
+            (
+                "PublishJointState.inputs:targetPrim",
+                [usdrt.Sdf.Path(sim_robot.articulation_path)],
+            ),
+        ]
+    )
     clock_nodes = [("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock")]
     clock_connections = [
         ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
@@ -463,7 +560,7 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
                 ("ReadIMU", "isaacsim.sensors.physics.IsaacReadIMU"),
                 ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
                 ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
-                ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
+                *joint_nodes,
                 *(clock_nodes if publish_clock else []),
                 ("ComputeGroundTruth", "isaacsim.core.nodes.IsaacComputeOdometry"),
                 ("PublishGroundTruth", "isaacsim.ros2.bridge.ROS2PublishOdometry"),
@@ -475,8 +572,7 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
                 ("ReadIMU.outputs:angVel", "PublishIMU.inputs:angularVelocity"),
                 ("ReadIMU.outputs:linAcc", "PublishIMU.inputs:linearAcceleration"),
                 ("ReadIMU.outputs:sensorTime", "PublishIMU.inputs:timeStamp"),
-                ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
-                ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
+                *joint_connections,
                 *(clock_connections if publish_clock else []),
                 ("OnPlaybackTick.outputs:tick", "ComputeGroundTruth.inputs:execIn"),
                 ("ComputeGroundTruth.outputs:execOut", "PublishGroundTruth.inputs:execIn"),
@@ -495,11 +591,7 @@ def create_ros2_publishers(sim_robot: SimRobot, publish_clock: bool) -> None:
             keys.SET_VALUES: [
                 ("PublishIMU.inputs:topicName", sim_robot.topic("/isaac/imu")),
                 ("PublishIMU.inputs:frameId", "imu_link"),
-                ("PublishJointState.inputs:topicName", sim_robot.topic("/isaac/joint_states")),
-                (
-                    "PublishJointState.inputs:targetPrim",
-                    [usdrt.Sdf.Path(sim_robot.articulation_path)],
-                ),
+                *joint_values,
                 *([("PublishClock.inputs:topicName", "/clock")] if publish_clock else []),
                 # Simulator truth for covariance validation only; never fused.
                 ("PublishGroundTruth.inputs:topicName", sim_robot.topic(GROUND_TRUTH_TOPIC)),
@@ -680,6 +772,8 @@ def add_gimbal(sim_robot: SimRobot, stage) -> None:
     position-driven revolute joints, so they join the robot's articulation; the camera
     is a plain transform child of the tilt body. There is no visual geometry.
     """
+    if sim_robot.free_fly:
+        return
     gimbal = sim_robot.simulation.get("gimbal")
     if gimbal is None:
         return
@@ -742,7 +836,7 @@ def add_gimbal(sim_robot: SimRobot, stage) -> None:
 
 def update_gimbal(sim_robot: SimRobot, now: float) -> None:
     """Drive the gimbal joints toward the latest ROS goal; call once per simulation step."""
-    if "gimbal" not in sim_robot.simulation:
+    if sim_robot.free_fly or "gimbal" not in sim_robot.simulation:
         return
     controller = controller_for(sim_robot.name)
     if sim_robot.gimbal_dofs is None:
@@ -849,36 +943,90 @@ def create_gimbal_graph(graph_path: str, topic, controller_name: str) -> None:
 
 def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
     simulation = sim_robot.simulation
-    usd_path = assets_root_path + simulation["asset"]
-    if not is_file(usd_path):
-        raise FileNotFoundError(f"{sim_robot.spec.robot_type} asset was not found: {usd_path}")
     yaw = sim_robot.spec.yaw
-    sim_robot.robot = WheeledRobot(
-        paths=sim_robot.prim_path,
-        wheel_dof_names=list(simulation["wheel_joints"]),
-        usd_path=usd_path,
-        positions=[sim_robot.spec.x, sim_robot.spec.y, float(simulation["spawn_height"])],
-        orientations=[math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)],
-    )
-    sim_robot.controller = DifferentialController(
-        wheel_radius=float(simulation["wheel_radius"]),
-        wheel_base=float(simulation["wheel_base"]),
-    )
-
-    lidar_prim = stage.GetPrimAtPath(sim_robot.lidar_path)
-    if not lidar_prim.IsValid():
-        raise RuntimeError(f"{sim_robot.label} LiDAR prim was not found: {sim_robot.lidar_path}")
-    if "lidar_translation" in simulation:
-        lidar_prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(*simulation["lidar_translation"]))
-    lidar = Lidar(
-        sim_robot.lidar_path,
-        accumulate_outputs=None,
-        aux_output_level="BASIC",
-        attributes={
-            "omni:sensor:Core:outputMotionCompensationState":
-                lidar_motion_compensation_state,
-        },
-    )
+    if sim_robot.free_fly:
+        lidar_usd_path = assets_root_path + FREE_FLY_LIDAR_ASSET_PATH
+        if not is_file(lidar_usd_path):
+            raise FileNotFoundError(f"Free-fly LiDAR asset was not found: {lidar_usd_path}")
+        UsdGeom.Xform.Define(stage, sim_robot.prim_path)
+        chassis_xform = UsdGeom.Xform.Define(stage, sim_robot.articulation_path)
+        chassis_xform.AddTranslateOp().Set(
+            Gf.Vec3d(sim_robot.spec.x, sim_robot.spec.y, float(simulation["spawn_height"]))
+        )
+        chassis_xform.AddOrientOp().Set(
+            Gf.Quatf(math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0))
+        )
+        chassis_prim = chassis_xform.GetPrim()
+        UsdPhysics.RigidBodyAPI.Apply(chassis_prim)
+        physx_body = PhysxSchema.PhysxRigidBodyAPI.Apply(chassis_prim)
+        physx_body.CreateDisableGravityAttr(True)
+        physx_body.CreateSleepThresholdAttr(0.0)
+        physx_body.CreateLinearDampingAttr(0.0)
+        physx_body.CreateAngularDampingAttr(0.0)
+        UsdPhysics.MassAPI.Apply(chassis_prim).CreateMassAttr(1.0)
+        lidar_frame = sim_robot.profile["sensor_frames"]["lidar_link"]
+        mount_xyz = [
+            float(lidar_frame["x"]),
+            float(lidar_frame["y"]),
+            float(lidar_frame["z"]),
+        ]
+        Cube(
+            f"{sim_robot.articulation_path}/sensor_pod",
+            sizes=1.0,
+            colors="orange",
+            translations=[[mount_xyz[0], mount_xyz[1], mount_xyz[2] - 0.11]],
+            scales=[[0.22, 0.16, 0.10]],
+        )
+        lidar_create_path = (
+            sim_robot.lidar_path.rsplit("/", 1)[0]
+            if sim_robot.lidar_path.endswith("/PandarXT_32_10hz")
+            else sim_robot.lidar_path
+        )
+        lidar = Lidar.create(
+            path=lidar_create_path,
+            usd_path=lidar_usd_path,
+            translations=[mount_xyz],
+            accumulate_outputs=None,
+            aux_output_level="BASIC",
+            attributes={
+                "omni:sensor:Core:outputMotionCompensationState":
+                    lidar_motion_compensation_state,
+            },
+        )
+        sim_robot.lidar_path = str(lidar.prims[0].GetPath())
+        sim_robot.imu_path = f"{sim_robot.lidar_path}/fastlio_imu"
+        sim_robot.robot = RigidPrim(sim_robot.articulation_path)
+    else:
+        usd_path = assets_root_path + simulation["asset"]
+        if not is_file(usd_path):
+            raise FileNotFoundError(f"{sim_robot.spec.robot_type} asset was not found: {usd_path}")
+        sim_robot.robot = WheeledRobot(
+            paths=sim_robot.prim_path,
+            wheel_dof_names=list(simulation["wheel_joints"]),
+            usd_path=usd_path,
+            positions=[sim_robot.spec.x, sim_robot.spec.y, float(simulation["spawn_height"])],
+            orientations=[math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)],
+        )
+        sim_robot.controller = DifferentialController(
+            wheel_radius=float(simulation["wheel_radius"]),
+            wheel_base=float(simulation["wheel_base"]),
+        )
+        lidar_prim = stage.GetPrimAtPath(sim_robot.lidar_path)
+        if not lidar_prim.IsValid():
+            raise RuntimeError(f"{sim_robot.label} LiDAR prim was not found: {sim_robot.lidar_path}")
+        if "lidar_translation" in simulation:
+            lidar_prim.GetAttribute("xformOp:translate").Set(
+                Gf.Vec3d(*simulation["lidar_translation"])
+            )
+        lidar = Lidar(
+            sim_robot.lidar_path,
+            accumulate_outputs=None,
+            aux_output_level="BASIC",
+            attributes={
+                "omni:sensor:Core:outputMotionCompensationState":
+                    lidar_motion_compensation_state,
+            },
+        )
     motion_compensation_state = lidar.prims[0].GetAttribute(
         "omni:sensor:Core:outputMotionCompensationState"
     ).Get()
@@ -907,8 +1055,15 @@ def spawn_robot(sim_robot: SimRobot, stage, assets_root_path: str) -> None:
         angular_velocity_filter_size=3,
         orientation_filter_size=3,
     )
+    if sim_robot.free_fly:
+        for prim in Usd.PrimRange(
+            stage.GetPrimAtPath(sim_robot.prim_path), Usd.TraverseInstanceProxies()
+        ):
+            if prim.HasAPI(UsdPhysics.CollisionAPI):
+                UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False)
     print(
-        f"Added {sim_robot.spec.robot_type} {sim_robot.prim_path} at "
+        f"Added {'free-fly sensor rig' if sim_robot.free_fly else sim_robot.spec.robot_type} "
+        f"{sim_robot.prim_path} at "
         f"({sim_robot.spec.x:.2f}, {sim_robot.spec.y:.2f}, yaw {yaw:.2f}); "
         f"ROS topics {sim_robot.topic('/isaac/*')}, cmd_vel {sim_robot.topic('/cmd_vel')}"
     )
@@ -1003,7 +1158,7 @@ try:
         create_ros2_publishers(sim_robot, publish_clock=index == 0)
         if sim_robot.receiver is not None:
             create_ros2_drive_subscriber(sim_robot)
-        if "gimbal" in sim_robot.simulation:
+        if "gimbal" in sim_robot.simulation and not sim_robot.free_fly:
             create_gimbal_subscriber(sim_robot)
     if args.ceiling_cameras:
         camera_runtime += create_ceiling_cameras(stage)
@@ -1066,15 +1221,21 @@ try:
     print(f"RTX LiDAR output motion compensation: {lidar_motion_compensation_state}")
     print(f"ROS 2 LiDAR: {lead.topic('/isaac/lidar_points')} [sensor_msgs/msg/PointCloud2]")
     print(f"ROS 2 IMU: {lead.topic('/isaac/imu')} [sensor_msgs/msg/Imu]")
-    print(f"ROS 2 joint states: {lead.topic('/isaac/joint_states')} [sensor_msgs/msg/JointState]")
+    if not lead.free_fly:
+        print(f"ROS 2 joint states: {lead.topic('/isaac/joint_states')} [sensor_msgs/msg/JointState]")
     print("ROS 2 simulation clock: /clock [rosgraph_msgs/msg/Clock]")
     print(f"ROS 2 simulator ground truth: {lead.topic(GROUND_TRUTH_TOPIC)} [nav_msgs/msg/Odometry]")
     if command_receiver is not None:
         print("Command source: native ROS 2 cmd_vel per robot (0.5 s watchdog; keyboard driving disabled)")
     if not args.headless and command_receiver is None:
-        print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
+        if args.free_fly:
+            print("Free-fly controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, "
+                  "E/Q or PageUp/PageDown = up/down, Space = stop/hover")
+        else:
+            print("Jog controls: W/S or Up/Down = forward/backward, A/D or Left/Right = turn, Space = stop")
     if not args.headless and elevator_doors is not None:
-        print("Elevator controls: E = toggle doors at the current landing; L = change floor "
+        door_key = "O" if args.free_fly else "E"
+        print(f"Elevator controls: {door_key} = toggle doors at the current landing; L = change floor "
               "(closes doors first; both cabins move together)")
 
     timeline = omni.timeline.get_timeline_interface()
@@ -1100,7 +1261,10 @@ try:
     if args.test:
         start_position = lead.robot.get_world_poses()[0].numpy()[0]
         for _ in range(60):
-            lead.drive(0.2, 0.0)
+            if args.free_fly:
+                lead.fly(0.2, 0.2, 0.0)
+            else:
+                lead.drive(0.2, 0.0)
             if elevator_lift is not None:
                 elevator_lift.update()
             if elevator_doors is not None:
@@ -1111,7 +1275,10 @@ try:
             if overview_camera is not None:
                 overview_camera.update()
             simulation_app.update()
-        lead.drive(0.0, 0.0)
+        if args.free_fly:
+            lead.fly(0.0, 0.0, 0.0)
+        else:
+            lead.drive(0.0, 0.0)
         end_position = lead.robot.get_world_poses()[0].numpy()[0]
         displacement = end_position - start_position
         distance_moved = float((displacement**2).sum() ** 0.5)
@@ -1124,7 +1291,15 @@ try:
             raise RuntimeError(
                 f"Nova Carter forward jog moved in the wrong direction: displacement={displacement.tolist()}"
             )
-        if not 0.15 <= distance_moved <= 0.25:
+        if args.free_fly:
+            planar_distance = float(math.hypot(float(displacement[0]), float(displacement[1])))
+            vertical_distance = float(displacement[2])
+            if not (0.15 <= planar_distance <= 0.25 and 0.15 <= vertical_distance <= 0.25):
+                raise RuntimeError(
+                    f"Free-fly speed differs from commanded (0.2, 0.2) m/s: "
+                    f"planar={planar_distance:.3f} m, vertical={vertical_distance:.3f} m"
+                )
+        elif not 0.15 <= distance_moved <= 0.25:
             raise RuntimeError(
                 f"Nova Carter jog speed differs from the commanded 0.2 m/s: "
                 f"moved {distance_moved:.3f} m in one simulated second"
@@ -1148,12 +1323,16 @@ try:
                     except ValueError as error:
                         carb.log_error(f"Rejected {sim_robot.label} drive command: {error}")
                         command = (0.0, 0.0)
+                    sim_robot.drive(*command)
+                elif args.free_fly and sim_robot is lead:
+                    fly_command = (0.2, 0.1, 0.15) if args.auto_jog else get_free_fly_command()
+                    sim_robot.fly(*fly_command)
                 elif args.auto_jog:
-                    command = (0.2, 0.15)
+                    sim_robot.drive(0.2, 0.15)
                 else:
                     # Keyboard drives the followed (first) robot only.
                     command = get_jog_command() if sim_robot is lead else (0.0, 0.0)
-                sim_robot.drive(*command)
+                    sim_robot.drive(*command)
             update_gimbals()
             if follow_camera_path is not None:
                 update_follow_camera(lead, follow_camera_path)

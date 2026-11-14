@@ -201,6 +201,43 @@ class ElevatorDoorsTest(unittest.TestCase):
                 self.assertEqual(controller.toggle.call_count, 2)
                 controller.toggle_lift.assert_called_once()
 
+    def test_free_fly_keyboard_controls_vertical_motion_and_rebinds_door_key(self):
+        source = Path(__file__).resolve().parents[1] / "scripts/standalone.py"
+        functions = [
+            node for node in ast.parse(source.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name in ("on_keyboard_event", "get_jog_command", "get_free_fly_command")
+        ]
+        events = SimpleNamespace(KEY_PRESS=1, KEY_RELEASE=2)
+        controller = Mock()
+        namespace = {
+            "carb": SimpleNamespace(input=SimpleNamespace(KeyboardEventType=events)),
+            "pressed_keys": set(),
+            "elevator_doors": controller,
+            "free_fly": True,
+            "LINEAR_JOG_SPEED": 0.75,
+            "ANGULAR_JOG_SPEED": 0.5,
+            "VERTICAL_JOG_SPEED": 0.5,
+        }
+        exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
+        handler = namespace["on_keyboard_event"]
+        fly_cmd = namespace["get_free_fly_command"]
+
+        def send(key, event_type=events.KEY_PRESS):
+            handler(SimpleNamespace(input=SimpleNamespace(name=key), type=event_type))
+
+        send("W")
+        send("E")
+        self.assertEqual(fly_cmd(), [0.75, 0.5, 0.0])
+        controller.toggle.assert_not_called()
+        send("E", events.KEY_RELEASE)
+        send("Q")
+        self.assertEqual(fly_cmd(), [0.75, -0.5, 0.0])
+        send("O")
+        controller.toggle.assert_called_once()
+        send("Space")
+        self.assertEqual(fly_cmd(), [0.0, 0.0, 0.0])
+
 
 if __name__ == "__main__":
     unittest.main()
