@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a grid_map layer as a PointCloud2 and extract untraversable obstacle points."""
+"""Extract untraversable obstacle points from a grid_map layer as a PointCloud2."""
 
 import numpy as np
 import rclpy
@@ -63,11 +63,7 @@ class GridMapToPoints(Node):
     def __init__(self, **kwargs):
         super().__init__("grid_map_to_points", **kwargs)
         self.layer = self.declare_parameter("layer", "elevation").value
-        self.publisher = self.create_publisher(PointCloud2, "/elevation_points", 1)
         self.base_frame = self.declare_parameter("base_frame", "base_link").value
-        self.fill_radius = self.declare_parameter("fill_radius", 0.6).value
-        self.fill_height = self.declare_parameter("fill_height_offset", 0.0).value
-        self.fill_publisher = self.create_publisher(PointCloud2, "/elevation_points_assumed", 1)
         self.publish_obstacles = bool(self.declare_parameter("publish_obstacles", True).value)
         self.obstacles_topic = self.declare_parameter(
             "obstacles_topic", "/perception/obstacles"
@@ -97,7 +93,7 @@ class GridMapToPoints(Node):
         )
 
     def callback(self, msg: GridMap) -> None:
-        if self.layer not in msg.layers:
+        if not self.publish_obstacles or self.layer not in msg.layers:
             return
         layer = msg.data[msg.layers.index(self.layer)]
         rows, cols = layer.layout.dim[0].size, layer.layout.dim[1].size
@@ -107,13 +103,7 @@ class GridMapToPoints(Node):
         x = msg.info.pose.position.x + msg.info.length_x / 2.0 - res * (np.arange(rows)[:, None] + 0.5)
         y = msg.info.pose.position.y + msg.info.length_y / 2.0 - res * (np.arange(cols)[None, :] + 0.5)
         x, y = np.broadcast_arrays(x, y)
-        valid = np.isfinite(z)
-        points = np.stack([x[valid], y[valid], z[valid]], axis=1).astype(np.float32)
-
-        self.publisher.publish(self.make_cloud(msg.header, points))
-        self.publish_assumed(msg.header, x, y, valid)
-        if self.publish_obstacles:
-            self.publish_obstacle_cloud(msg.header, x, y, z, res)
+        self.publish_obstacle_cloud(msg.header, x, y, z, res)
 
     def publish_obstacle_cloud(self, header, x, y, z, resolution) -> None:
         try:
@@ -139,19 +129,6 @@ class GridMapToPoints(Node):
         out_header.stamp = tf_stamp if (tf_stamp.sec or tf_stamp.nanosec) else header.stamp
         out_header.frame_id = self.base_frame
         self.obstacles_publisher.publish(self.make_cloud(out_header, in_base))
-
-    def publish_assumed(self, header, x, y, valid) -> None:
-        # Cells under the robot with no measurement are assumed flat at the base_link height.
-        # They disappear as soon as the layer has a real value there.
-        try:
-            t = self.tf_buffer.lookup_transform(header.frame_id, self.base_frame, rclpy.time.Time()).transform.translation
-        except Exception as e:
-            self.get_logger().warn(str(e), throttle_duration_sec=5.0)
-            return
-        empty = ~valid & (np.hypot(x - t.x, y - t.y) <= self.fill_radius)
-        z = np.full(int(empty.sum()), t.z + self.fill_height, dtype=np.float32)
-        points = np.stack([x[empty], y[empty], z], axis=1).astype(np.float32)
-        self.fill_publisher.publish(self.make_cloud(header, points))
 
     @staticmethod
     def make_cloud(header, points) -> PointCloud2:
