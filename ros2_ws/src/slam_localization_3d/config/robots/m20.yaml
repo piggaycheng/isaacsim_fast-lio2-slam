@@ -45,24 +45,49 @@ parameter_overrides:
       map_z_offset: 0.49
 
   # USD visible + collision bounds in base_link rounded outward to 1 mm.
+  # Rolling-window 3D height-map navigation: no static 2D PGM layer so M20 can
+  # traverse stairs across floors continuously between Open-RMF waypoints.
   global_costmap:
     global_costmap:
       ros__parameters:
         footprint: '[[0.409, 0.254], [0.409, -0.252], [-0.409, -0.252], [-0.409, 0.254]]'
         footprint_padding: 0.01
+        rolling_window: true
+        width: 24
+        height: 24
+        plugins: ["obstacle_layer", "inflation_layer"]
+        obstacle_layer:
+          footprint_clearing_enabled: true
         inflation_layer: {inflation_radius: 1.1}
   local_costmap:
     local_costmap:
       ros__parameters:
         footprint: '[[0.409, 0.254], [0.409, -0.252], [-0.409, -0.252], [-0.409, 0.254]]'
         footprint_padding: 0.01
+        obstacle_layer:
+          footprint_clearing_enabled: true
         inflation_layer: {inflation_radius: 0.9}
+  pointcloud_to_laserscan:
+    ros__parameters:
+      # Exclude overhead stairwell ceilings (z_base ~ +1.5..+2.0 m when descending
+      # stairs) so /scan raytrace clearing reaches through the stairwell.
+      max_height: 0.5
   ground_obstacle_filter:
     ros__parameters:
       self_filter_bounds: [-0.409, 0.409, -0.252, 0.254]
       # Standing height in base_link (ground is ~0.49 m below base_link).
       ground_z: -0.49
       ground_search_height: 0.35
+      # Elevation map step filter (grid_map_to_points.py) publishes /perception/obstacles
+      # so climbable stairs are not flagged by planar RANSAC.
+      publish_obstacles: false
+  collision_monitor:
+    ros__parameters:
+      # Use only height-map step obstacles; raw horizontal /scan hits climbable stair steps.
+      observation_sources: ["obstacles"]
+      obstacles:
+        min_height: -2.0
+        max_height: 0.6
 
   controller_server:
     ros__parameters:

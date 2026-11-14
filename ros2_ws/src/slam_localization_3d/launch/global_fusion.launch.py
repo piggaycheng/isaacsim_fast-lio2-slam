@@ -280,8 +280,16 @@ def robot_nodes(context, package, nav):
     costmaps = enabled("costmaps")
     navigate = enabled("navigate")
     profile = load_robot_profile(kind)
+    require_map = True
     if costmaps:
-        rotation_radius(load_parameters(value("costmap_config"), kind))
+        loaded_costmaps = load_parameters(value("costmap_config"), kind)
+        rotation_radius(loaded_costmaps)
+        global_plugins = (
+            ((loaded_costmaps.get("global_costmap") or {}).get("global_costmap") or {})
+            .get("ros__parameters", {})
+            .get("plugins", [])
+        )
+        require_map = "static_layer" in global_plugins
     inputs = local_odometry_inputs(profile, value("local_odometry_inputs"))
     three_d = local_odometry_three_d(profile, inputs, value("local_odometry_3d"))
     nav_parameters = [local_odometry_file(
@@ -296,7 +304,7 @@ def robot_nodes(context, package, nav):
     collision_config = config(value("collision_config"))
     fusion_config = robot_parameter_file(
         os.path.join(package, "config", "global_fusion.yaml"), namespace, kind,
-        transform=lambda fusion: with_global_ekf_inputs(fusion, inputs),
+        transform=lambda fusion: with_global_ekf_inputs(fusion, inputs, three_d),
     )
     upstream = [(name, topic(name)) for name in UPSTREAM_TOPICS] if namespace else []
     actions = [
@@ -379,6 +387,8 @@ def robot_nodes(context, package, nav):
                 "use_sim_time": True,
                 "pcd_map_path": value("map_pcd"),
                 "imu_mount": imu_mount(profile),
+                "merge_floor_maps": three_d,
+                "fov_z": 3.5 if three_d else 0.0,
                 "map_voxel_size": 0.4,
                 "scan_voxel_size": 0.1,
                 "freq_localization": 0.5,
@@ -515,7 +525,9 @@ def robot_nodes(context, package, nav):
             ),
         ]
     if costmaps:
-        actions += readiness_actions(namespace, navigate, value("filter_mask_topics"))
+        actions += readiness_actions(
+            namespace, navigate, value("filter_mask_topics"), require_map=require_map,
+        )
     if enabled("rviz"):
         actions.append(Node(
             package="rviz2", executable="rviz2", output="screen",
@@ -527,7 +539,7 @@ def robot_nodes(context, package, nav):
     return actions
 
 
-def readiness_actions(namespace, navigate, filter_mask_topics):
+def readiness_actions(namespace, navigate, filter_mask_topics, require_map=True):
     # Event handlers may run outside this robot's launch scope (fleet group) or
     # inside its pushed namespace (robot.launch.py), so their nodes get an
     # absolute namespace and need no TF.
@@ -536,7 +548,9 @@ def readiness_actions(namespace, navigate, filter_mask_topics):
     readiness = Node(
         package="slam_localization_3d", executable="wait_for_costmap_tf.py",
         output="screen", parameters=[{
-            "use_sim_time": True, "filter_mask_topics": yaml.safe_load(filter_mask_topics),
+            "use_sim_time": True,
+            "require_map": require_map,
+            "filter_mask_topics": yaml.safe_load(filter_mask_topics),
         }],
     )
     if navigate:

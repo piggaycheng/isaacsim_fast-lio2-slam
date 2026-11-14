@@ -41,6 +41,7 @@ public:
     max_obstacle_height_ = declare_parameter<double>("max_obstacle_height", 2.0);
     voxel_size_ = declare_parameter<double>("voxel_size", 0.08);
     min_ground_points_ = declare_parameter<int>("min_ground_points", 50);
+    publish_obstacles_ = declare_parameter<bool>("publish_obstacles", true);
     if (base_frame_.empty() || min_range_ < 0 || max_range_ <= min_range_ ||
       !std::isfinite(ground_z_) || ground_search_height_ <= 0 || ground_distance_ <= 0 ||
       min_obstacle_height_ <= ground_distance_ ||
@@ -132,6 +133,9 @@ private:
     self_filtered.header = message->header;
     self_filtered.header.frame_id = base_frame_;
     self_filtered_publisher_->publish(self_filtered);
+    if (!publish_obstacles_) {
+      return;
+    }
 
     auto ground_candidates = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     ground_candidates->reserve(cloud.size());
@@ -230,6 +234,7 @@ private:
   double max_obstacle_height_;
   double voxel_size_;
   int min_ground_points_;
+  bool publish_obstacles_;
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<tf2_ros::TransformListener> listener_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;

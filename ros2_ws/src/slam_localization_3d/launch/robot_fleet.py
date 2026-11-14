@@ -355,14 +355,32 @@ def with_local_ekf_inputs(config, templates, inputs, three_d=False, node="local_
     return result
 
 
-def with_global_ekf_inputs(config, inputs, node="global_ekf"):
-    """Without wheel odometry, propagate the global EKF with the LIO velocity."""
-    if "wheel" in inputs:
+def with_global_ekf_inputs(config, inputs, three_d=False, node="global_ekf"):
+    """Without wheel odometry, propagate the global EKF with the LIO velocity.
+
+    When three_d is True, fuse global z and (without wheel odometry) vertical LIO
+    velocity so /odometry/global and map -> odom -> base_link track 3D height.
+    """
+    if "wheel" in inputs and not three_d:
         return config
     result = copy.deepcopy(config)
-    parameters = {key: value for key, value in result[node]["ros__parameters"].items()
-                  if not re.match(r"^(odom|twist)\d+(_.*)?$", key)}
-    parameters.update(copy.deepcopy(GLOBAL_EKF_LIO_TWIST))
+    parameters = dict(result[node]["ros__parameters"])
+    if "wheel" not in inputs:
+        parameters = {key: value for key, value in parameters.items()
+                      if not re.match(r"^(odom|twist)\d+(_.*)?$", key)}
+        parameters.update(copy.deepcopy(GLOBAL_EKF_LIO_TWIST))
+        if three_d:
+            parameters["twist0_config"] = list(parameters["twist0_config"])
+            parameters["twist0_config"][8] = True
+    if three_d:
+        parameters["two_d_mode"] = False
+        if "pose0_config" in parameters:
+            parameters["pose0_config"] = list(parameters["pose0_config"])
+            parameters["pose0_config"][2] = True
+        for name in ("global_pose_adapter", "global_tf_gate"):
+            target = result.get(name, {}).get("ros__parameters")
+            if target is not None:
+                target["three_d"] = True
     result[node]["ros__parameters"] = parameters
     return result
 

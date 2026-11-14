@@ -212,7 +212,7 @@ class GravityAlignedLioOdometryTest(LioNodeTestCase):
         self.assertAlmostEqual(roll, 0.0, places=9)
         self.assertAlmostEqual(measured_pitch, pitch, places=9)
         self.assertAlmostEqual(yaw_of(first.pose.pose), 0.0, places=9)
-        moved = self.publish(odometry(2, 1.0, 0.0, 0.0, z=0.0))
+        moved = self.publish(odometry(1, 1.0, 0.0, 0.0, z=0.0, nanosec=200_000_000))
         self.assertAlmostEqual(moved.pose.pose.position.x, math.cos(pitch), places=9)
         self.assertAlmostEqual(moved.pose.pose.position.z, -math.sin(pitch), places=9)
         self.assertAlmostEqual(roll_pitch_of(moved.pose.pose)[1], pitch, places=9)
@@ -220,6 +220,11 @@ class GravityAlignedLioOdometryTest(LioNodeTestCase):
         # z defaults to position_variance; roll/pitch use roll_pitch_variance.
         self.assertEqual([covariance[index * 7] for index in range(6)],
                          [0.04, 0.04, 0.04, 0.002, 0.002, 0.01])
+        self.assertEqual(len(self.twists), 1)
+        twist = self.twists[-1]
+        self.assertAlmostEqual(twist.twist.twist.linear.x, math.cos(pitch) * 10.0, places=6)
+        self.assertAlmostEqual(twist.twist.twist.linear.z, -math.sin(pitch) * 10.0, places=6)
+        self.assertEqual(twist.twist.covariance[14], 2.0e-5)
 
     def test_camera_init_tilt_is_measured_with_the_lio_attitude(self):
         # The IMU really pitches -0.2 rad, but FAST-LIO already reports -0.05 in camera_init.

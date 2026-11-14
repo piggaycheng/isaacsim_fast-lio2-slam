@@ -18,7 +18,15 @@
       elevation_map_filter:
         layers: ['min_filter', 'smooth', 'inpaint', 'elevation']
         basic_layers: ['min_filter']
-        fps: 3.0
+        fps: 5.0
+
+    # Reject stairwell ceilings and overhangs (which slope down into +0.8..+1.7 m
+    # relative to the sensor 4-9 m ahead when descending stairs) while keeping
+    # upward stairs (slope ~0.25, z - sz <= +0.6 m within 5 m) and near obstacles.
+    max_height_range: 0.70
+    ramped_height_range_a: 0.22
+    ramped_height_range_b: 1.5
+    ramped_height_range_c: 0.15
 
     # Quadruped stair climbing: remove ghost points while keeping stairs seen
     # from afar after they enter the lidar blind zone.
@@ -30,5 +38,5 @@
     # Drops cells further than overlap_clear_range_z from the sensor height
     # (removes tall spikes). Must exceed the height of a full flight of stairs.
     enable_overlap_clearance: true
-    overlap_clear_range_xy: 4.0
-    overlap_clear_range_z: 2.0
+    overlap_clear_range_xy: 8.0
+    overlap_clear_range_z: 1.4

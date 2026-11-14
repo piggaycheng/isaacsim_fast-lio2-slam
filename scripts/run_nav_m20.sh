@@ -8,6 +8,7 @@ map_pgm="$project_dir/maps/1F/map_2d.yaml"
 map_pcd=""
 policy=""
 policy_device=cpu
+free_fly=false
 build=false
 headless=false
 rviz=true
@@ -24,19 +25,25 @@ sim_args=()
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/run_nav_m20.sh --policy /path/to/policy.pt [OPTIONS] [-- M20_SIM_ARGS...]
+Usage: ./scripts/run_nav_m20.sh (--policy /path/to/policy.pt | --free-fly) [OPTIONS] [-- M20_SIM_ARGS...]
 
-Launch Isaac Sim with the Deep Robotics M20 wheel-legged robot, 3D FAST-LIO2
+Launch Isaac Sim with the Deep Robotics M20 wheel-legged robot (or a terrain-
+following free-fly M20 sensor rig when --free-fly is passed), 3D FAST-LIO2
 localization + Nav2 navigation (in the `ros` container), and GPU elevation
-mapping + RSL-RL locomotion policy inference (in the `height_map` container).
+mapping (+ RSL-RL locomotion policy inference when --policy is used, in the
+`height_map` container).
 
-Nav2 publishes velocity commands on /cmd_vel, which m20_policy_node combines
-with the terrain height scan from elevation_mapping_cupy to drive the 12 leg
-joints and 4 wheels at 50 Hz.
+Nav2 publishes velocity commands on /cmd_vel, which either m20_policy_node
+(with --policy) or the terrain-following free-fly sensor rig (with --free-fly)
+follows across floors and stairs.
 
 Options:
       --policy FILE        TorchScript policy.pt exported by `isaaclab play`
                            (e.g. logs/rsl_rl/m20_rough/<run>/exported/policy.pt).
+      --free-fly           Policy-less mode: spawn a vehicle-less M20 sensor rig
+                           at M20 standing height (0.49 m) that follows ground/
+                           stair height automatically and drives from /cmd_vel
+                           (plus optional W/S/A/D + Q/E keyboard override).
       --policy-device DEV  Device for m20_policy_node inference: cpu (default)
                            or cuda.
       --build              Build ros2_ws in the height_map container before starting.
@@ -63,6 +70,7 @@ Options:
 
 Examples:
   ./scripts/run_nav_m20.sh --policy /path/to/policy.pt
+  ./scripts/run_nav_m20.sh --free-fly
   ./scripts/run_nav_m20.sh --policy /path/to/policy.pt --headless --no-rviz
   ./scripts/run_nav_m20.sh --policy /path/to/policy.pt --box 2.0,0.0
 EOF
@@ -77,6 +85,10 @@ while (($# > 0)); do
       fi
       policy="$2"
       shift 2
+      ;;
+    --free-fly)
+      free_fly=true
+      shift
       ;;
     --policy-device)
       if (($# < 2)) || [[ "$2" != cpu && "$2" != cuda ]]; then
@@ -144,14 +156,20 @@ while (($# > 0)); do
   esac
 done
 
-if [[ -z "$policy" ]]; then
-  echo "--policy /path/to/policy.pt is required" >&2
-  usage >&2
+if [[ "$free_fly" == true && -n "$policy" ]]; then
+  echo "--free-fly and --policy cannot be combined" >&2
   exit 2
 fi
-if [[ ! -f "$policy" ]]; then
-  echo "Policy file does not exist: $policy" >&2
-  exit 1
+if [[ "$free_fly" != true ]]; then
+  if [[ -z "$policy" ]]; then
+    echo "--policy /path/to/policy.pt (or --free-fly) is required" >&2
+    usage >&2
+    exit 2
+  fi
+  if [[ ! -f "$policy" ]]; then
+    echo "Policy file does not exist: $policy" >&2
+    exit 1
+  fi
 fi
 if [[ "$filter_state_set" == true && "$filter_editor" != true ]]; then
   echo "--filter-state requires --filter-editor" >&2
@@ -197,8 +215,10 @@ if [[ "$filter_editor" == true ]]; then
   filter_args+=(filter_editor:=true "filter_state:=$(container_path "$filter_state")")
 fi
 
-policy="$(readlink -f "$policy")"
-export POLICY_DIR="$(dirname "$policy")"
+if [[ "$free_fly" != true ]]; then
+  policy="$(readlink -f "$policy")"
+  export POLICY_DIR="$(dirname "$policy")"
+fi
 export ELEVATION_CONFIG="/workspace/ros2_ws/src/slam_localization_3d/config/elevation_m20_nav.yaml"
 
 if [[ "$build" == true ]]; then
@@ -228,16 +248,24 @@ if [[ -n "$mqtt_host" ]]; then
 fi
 
 start_ros launch slam_localization_3d global_fusion.launch.py "${launch_args[@]}"
-start_height_map launch m20_policy_node m20_policy.launch.py \
-  "policy_path:=/policies/$(basename "$policy")" \
-  "device:=$policy_device" \
-  use_sim_time:=true \
-  fastlio:=false \
-  "rviz:=$rviz" \
-  "elevation_config:=$ELEVATION_CONFIG" \
-  "flat_height_scan:=$flat_height_scan"
-
-isaac_args=(--external --no-cmd-vel --no-tf)
+if [[ "$free_fly" == true ]]; then
+  start_height_map launch isaac_fastlio_adapter height_map.launch.py \
+    use_sim_time:=true \
+    fastlio:=false \
+    "rviz:=$rviz" \
+    "elevation_config:=$ELEVATION_CONFIG"
+  isaac_args=(--free-fly --no-cmd-vel --no-tf)
+else
+  start_height_map launch m20_policy_node m20_policy.launch.py \
+    "policy_path:=/policies/$(basename "$policy")" \
+    "device:=$policy_device" \
+    use_sim_time:=true \
+    fastlio:=false \
+    "rviz:=$rviz" \
+    "elevation_config:=$ELEVATION_CONFIG" \
+    "flat_height_scan:=$flat_height_scan"
+  isaac_args=(--external --no-cmd-vel --no-tf)
+fi
 if [[ "$headless" == true ]]; then isaac_args+=(--headless); fi
 isaac_args+=("${boxes[@]}" "${sim_args[@]}")
 

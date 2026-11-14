@@ -445,6 +445,44 @@ class LaunchNamespaceTest(unittest.TestCase):
                     self.assertFalse(ekf["two_d_mode"])
                     lio = self.node_parameters(nodes, "lio_odometry", namespace)
                     self.assertTrue(lio["gravity_align"])
+                    global_ekf = self.node_parameters(nodes, "global_ekf", namespace)
+                    self.assertFalse(global_ekf["two_d_mode"])
+                    self.assertEqual(
+                        [i for i, v in enumerate(global_ekf["pose0_config"]) if v],
+                        [0, 1, 2, 5],
+                    )
+                    self.assertEqual(
+                        [i for i, v in enumerate(global_ekf["twist0_config"]) if v],
+                        [6, 7, 8, 11],
+                    )
+                    self.assertTrue(
+                        self.node_parameters(nodes, "global_pose_adapter", namespace)["three_d"]
+                    )
+                    self.assertTrue(
+                        self.node_parameters(nodes, "global_tf_gate", namespace)["three_d"]
+                    )
+                    global_costmap = self.node_parameters(
+                        nodes, "planner_server", namespace, "global_costmap"
+                    )
+                    self.assertTrue(global_costmap["rolling_window"])
+                    self.assertEqual((global_costmap["width"], global_costmap["height"]), (24, 24))
+                    self.assertEqual(
+                        global_costmap["plugins"], ["obstacle_layer", "inflation_layer"]
+                    )
+                    laserscan = self.node_parameters(
+                        nodes, "pointcloud_to_laserscan", namespace
+                    )
+                    self.assertEqual(laserscan["max_height"], 0.5)
+                    ground_filter = self.node_parameters(
+                        nodes, "ground_obstacle_filter", namespace
+                    )
+                    self.assertFalse(ground_filter["publish_obstacles"])
+                    monitor = self.node_parameters(nodes, "collision_monitor", namespace)
+                    self.assertEqual(monitor["observation_sources"], ["obstacles"])
+                    self.assertEqual(
+                        (monitor["obstacles"]["min_height"], monitor["obstacles"]["max_height"]),
+                        (-2.0, 0.6),
+                    )
 
     def test_sensor_transforms_follow_profile(self):
         nodes = FUSION.sensor_transforms(self.context("carter1"))
@@ -707,6 +745,59 @@ class LocalOdometryInputsTest(unittest.TestCase):
         for path in (NAV_CONFIG / "local_odometry.yaml", CONFIG / "global_fusion.yaml"):
             parameters = yaml.safe_load(path.read_text())["lio_odometry"]["ros__parameters"]
             self.assertFalse({"position_variance", "yaw_variance"} & set(parameters), path.name)
+
+    def test_three_d_stair_navigation_helpers(self):
+        import numpy as np
+        sys.path.insert(0, str(PACKAGE / "scripts"))
+        sys.path.insert(0, str(PACKAGE.parent / "isaac_fastlio_adapter/scripts"))
+        from floor_maps import sibling_floor_pcds
+        from global_pose_adapter import three_d_registration_covariance
+        from global_tf_gate import map_to_odom_3d
+        from grid_map_to_points import extract_obstacle_points
+        from geometry_msgs.msg import Pose, Transform
+
+        cov = three_d_registration_covariance(
+            np.diag([0.01, 0.02, 0.03, 0.001, 0.002, 0.004]),
+            (0.0, 0.0, 0.0), 1.0, 1e-4, 2e-4, 1e-5,
+        )
+        self.assertEqual(cov.shape, (4, 4))
+        self.assertAlmostEqual(cov[2, 2], 0.03 + 2e-4, places=9)
+
+        global_pose = Pose()
+        global_pose.position.x, global_pose.position.y, global_pose.position.z = 1.0, 2.0, -3.30
+        odom_pose = Transform()
+        odom_pose.translation.x, odom_pose.translation.y, odom_pose.translation.z = 1.0, 2.0, -3.25
+        odom_pose.rotation.w = 1.0
+        global_pose.orientation.w = 1.0
+        _, _, dz, _ = map_to_odom_3d(global_pose, odom_pose)
+        self.assertAlmostEqual(dz, -0.05, places=9)
+
+        maps_1f = PACKAGE.parents[2] / "maps/1F/map.pcd"
+        if maps_1f.is_file():
+            siblings = sibling_floor_pcds(maps_1f)
+            self.assertEqual([name for name, _, _ in siblings], ["B1"])
+            _, _, (translation, _) = siblings[0]
+            self.assertAlmostEqual(translation[2], -3.30, places=2)
+        maps_all = PACKAGE.parents[2] / "maps/all/map.pcd"
+        if maps_all.is_file():
+            self.assertEqual(sibling_floor_pcds(maps_all), [])
+
+        elevation_nav = yaml.safe_load((CONFIG / "elevation_m20_nav.yaml").read_text())[
+            "/elevation_mapping_node"
+        ]["ros__parameters"]
+        self.assertLessEqual(elevation_nav["max_height_range"], 0.8)
+        self.assertGreaterEqual(elevation_nav["overlap_clear_range_xy"], 8.0)
+
+        # Climbable stairs (0.18 m riser every 0.28 m tread, 0.04 m grid) vs 0.50 m box.
+        res = 0.04
+        rows, cols = 40, 40
+        x, y = np.meshgrid(np.arange(rows) * res, np.arange(cols) * res, indexing="ij")
+        stair_z = (np.floor(x / 0.28) * 0.18).astype(np.float32)
+        self.assertEqual(len(extract_obstacle_points(x, y, stair_z, res, 0.30, 0.12)), 0)
+        box_z = stair_z.copy()
+        box_z[18:22, 18:22] += 0.50
+        obstacles = extract_obstacle_points(x, y, box_z, res, 0.30, 0.12)
+        self.assertGreater(len(obstacles), 0)
 
 if __name__ == "__main__":
     unittest.main()

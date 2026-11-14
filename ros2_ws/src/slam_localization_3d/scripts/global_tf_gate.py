@@ -39,9 +39,16 @@ def map_to_odom(global_pose, odom_pose):
     return x, y, yaw
 
 
+def map_to_odom_3d(global_pose, odom_pose):
+    x, y, yaw = map_to_odom(global_pose, odom_pose)
+    z = global_pose.position.z - odom_pose.translation.z
+    return x, y, z, yaw
+
+
 class GlobalTfGate(Node):
-    def __init__(self):
-        super().__init__("global_tf_gate")
+    def __init__(self, **kwargs):
+        super().__init__("global_tf_gate", **kwargs)
+        self.three_d = bool(self.declare_parameter("three_d", False).value)
         self.map_z_offset = float(self.declare_parameter("map_z_offset", 0.0).value)
         if not math.isfinite(self.map_z_offset):
             raise ValueError("map_z_offset must be finite")
@@ -200,7 +207,11 @@ class GlobalTfGate(Node):
         ):
             self.get_logger().error("Invalid local odometry TF")
             return
-        x, y, yaw = map_to_odom(message.pose.pose, local.transform)
+        if self.three_d:
+            x, y, z, yaw = map_to_odom_3d(message.pose.pose, local.transform)
+        else:
+            x, y, yaw = map_to_odom(message.pose.pose, local.transform)
+            z = 0.0
         transform = TransformStamped()
         transform.header = message.header
         # Keep the measured pose, but leave a short TF validity window for Nav2.
@@ -211,7 +222,7 @@ class GlobalTfGate(Node):
         transform.child_frame_id = "odom"
         transform.transform.translation.x = x
         transform.transform.translation.y = y
-        transform.transform.translation.z = self.map_z_offset
+        transform.transform.translation.z = z + self.map_z_offset
         transform.transform.rotation.z = math.sin(yaw / 2)
         transform.transform.rotation.w = math.cos(yaw / 2)
         self.broadcaster.sendTransform(transform)

@@ -64,6 +64,12 @@ def compose_pose(first, second):
     )
 
 
+def inverse_pose(pose):
+    translation, (x, y, z, w) = pose
+    inverse = (-x, -y, -z, w)
+    return tuple(-value for value in rotate_vector(inverse, translation)), inverse
+
+
 BODY_TO_BASE = body_to_base(DEFAULT_IMU_MOUNT)
 
 

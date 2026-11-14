@@ -21,7 +21,7 @@ from tf_transformations import quaternion_from_matrix
 from slam_localization_3d.srv import LoadLocalizationMap
 from std_srvs.srv import SetBool
 
-from floor_maps import validate_initial_pose
+from floor_maps import sibling_floor_pcds, validate_initial_pose
 from localization_3d_pose import imu_mount_parameter
 from xyz_cloud import make_point_cloud
 
@@ -84,6 +84,81 @@ class XYZGlobalLocalization(upstream_localization_class()):
         self.get_logger().info(response.message)
         return response
 
+    def load_pcd_map(self, pcd_path):
+        path = Path(pcd_path)
+        if path.suffix != ".pcd" or not path.is_file():
+            raise ValueError(f"Missing PCD map: {path}")
+        cloud = o3d.io.read_point_cloud(str(path))
+        if cloud.is_empty() or not np.all(np.isfinite(np.asarray(cloud.points))):
+            raise ValueError(f"PCD map is empty or non-finite: {path}")
+        if getattr(self, "merge_floor_maps", False):
+            for floor_name, sibling_path, transform in sibling_floor_pcds(path):
+                sibling = o3d.io.read_point_cloud(sibling_path)
+                if sibling.is_empty() or not np.all(np.isfinite(np.asarray(sibling.points))):
+                    continue
+                (tx, ty, tz), (qx, qy, qz, qw) = transform
+                matrix = self.pose_to_mat(Pose(
+                    position=Point(x=float(tx), y=float(ty), z=float(tz)),
+                    orientation=Quaternion(x=float(qx), y=float(qy), z=float(qz), w=float(qw)),
+                ))
+                sibling.transform(matrix)
+                cloud += sibling
+                self.get_logger().info(f"Merged floor PCD {floor_name} ({sibling_path}) into map frame")
+        return self.voxel_down_sample(cloud, self.get_parameter("map_voxel_size").value)
+
+    def initialize_global_map(self):
+        if not self.has_parameter("merge_floor_maps"):
+            self.declare_parameter("merge_floor_maps", False)
+        if not self.has_parameter("fov_z"):
+            self.declare_parameter("fov_z", 0.0)
+        self.merge_floor_maps = bool(self.get_parameter("merge_floor_maps").value)
+        self.fov_z = float(self.get_parameter("fov_z").value)
+        self.global_map = self.load_pcd_map(self.get_parameter("pcd_map_path").value)
+        self.get_logger().info("Global map received.")
+
+    def crop_global_map_in_FOV(self, pose_estimation):
+        T_odom_to_base_link = self.pose_to_mat(self.cur_odom.pose.pose)
+        T_map_to_base_link = np.matmul(pose_estimation, T_odom_to_base_link)
+        T_base_link_to_map = self.inverse_se3(T_map_to_base_link)
+
+        global_map_in_map = np.array(self.global_map.points)
+        global_map_in_map = np.column_stack([global_map_in_map, np.ones(len(global_map_in_map))])
+        global_map_in_base_link = np.matmul(T_base_link_to_map, global_map_in_map.T).T
+
+        fov = self.get_parameter("fov").value
+        fov_far = self.get_parameter("fov_far").value
+        mask = (
+            (global_map_in_base_link[:, 0] < fov_far)
+            & (np.abs(np.arctan2(global_map_in_base_link[:, 1], global_map_in_base_link[:, 0])) < fov / 2.0)
+        )
+        if fov <= 3.14:
+            mask &= global_map_in_base_link[:, 0] > 0
+        if getattr(self, "fov_z", 0.0) > 0.0:
+            mask &= np.abs(global_map_in_base_link[:, 2]) < (self.fov_z + 0.5)
+        global_map_in_FOV = o3d.geometry.PointCloud()
+        global_map_in_FOV.points = o3d.utility.Vector3dVector(global_map_in_map[mask, :3])
+
+        header = self.cur_odom.header
+        header.frame_id = "map"
+        self.publish_point_cloud(self.pub_submap, header, np.array(global_map_in_FOV.points)[::10])
+
+        return global_map_in_FOV
+
+    def crop_scan_in_FOV(self, scan):
+        if getattr(self, "fov_z", 0.0) <= 0.0 or self.cur_odom is None:
+            return scan
+        scan_in_odom = np.asarray(scan.points)
+        if len(scan_in_odom) == 0:
+            return scan
+        T_odom_to_base_link = self.pose_to_mat(self.cur_odom.pose.pose)
+        T_base_link_to_odom = self.inverse_se3(T_odom_to_base_link)
+        scan_h = np.column_stack([scan_in_odom, np.ones(len(scan_in_odom))])
+        scan_in_base_link = np.matmul(T_base_link_to_odom, scan_h.T).T
+        mask = np.abs(scan_in_base_link[:, 2]) < self.fov_z
+        cropped = o3d.geometry.PointCloud()
+        cropped.points = o3d.utility.Vector3dVector(scan_in_odom[mask, :3])
+        return cropped
+
     def load_localization_map(self, request, response):
         try:
             validate_initial_pose(request.initial_pose)
@@ -96,12 +171,7 @@ class XYZGlobalLocalization(upstream_localization_class()):
             if self.scan_stamp is None or not 0 <= now - self.scan_stamp < 1.0:
                 raise ValueError("LIO scan is stale")
             path = Path(request.pcd_path)
-            if path.suffix != ".pcd" or not path.is_file():
-                raise ValueError(f"Missing PCD map: {path}")
-            cloud = o3d.io.read_point_cloud(str(path))
-            if cloud.is_empty() or not np.all(np.isfinite(np.asarray(cloud.points))):
-                raise ValueError(f"PCD map is empty or non-finite: {path}")
-            cloud = self.voxel_down_sample(cloud, self.get_parameter("map_voxel_size").value)
+            cloud = self.load_pcd_map(path)
             # RMF supplies map -> base_link; ICP expects map -> camera_init.
             seed = self.base_pose_seed(request.initial_pose.pose.pose)
         except (ValueError, OSError, RuntimeError) as error:
@@ -125,14 +195,14 @@ class XYZGlobalLocalization(upstream_localization_class()):
             return
         # Same two ICP calls and threshold as upstream; the fine stage is inlined
         # so its downsampled clouds can also produce the information matrix.
-        scan = copy.copy(self.cur_scan)
+        scan = self.crop_scan_in_FOV(copy.copy(self.cur_scan))
         submap = self.crop_global_map_in_FOV(pose_estimation)
-        self.registration_at_scale(scan, submap, initial=pose_estimation, scale=5)
+        transformation, _ = self.registration_at_scale(scan, submap, initial=pose_estimation, scale=5)
         scan_down = self.voxel_down_sample(scan, self.get_parameter("scan_voxel_size").value)
         map_down = self.voxel_down_sample(submap, self.get_parameter("map_voxel_size").value)
         max_distance = 1.0
         result = o3d.pipelines.registration.registration_icp(
-            scan_down, map_down, max_distance, pose_estimation,
+            scan_down, map_down, max_distance, transformation,
             o3d.pipelines.registration.TransformationEstimationPointToPoint(),
             o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=20),
         )

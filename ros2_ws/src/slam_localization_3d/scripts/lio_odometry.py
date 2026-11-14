@@ -34,23 +34,19 @@ from sensor_msgs.msg import Imu
 
 if __package__:
     from .localization_3d_pose import (
-        compose_pose, imu_mount_parameter, pose_values, rotate_vector, seconds, valid_pose,
+        compose_pose, imu_mount_parameter, inverse_pose, pose_values, rotate_vector, seconds,
+        valid_pose,
     )
 else:
     from localization_3d_pose import (
-        compose_pose, imu_mount_parameter, pose_values, rotate_vector, seconds, valid_pose,
+        compose_pose, imu_mount_parameter, inverse_pose, pose_values, rotate_vector, seconds,
+        valid_pose,
     )
 
 # Variance of the unused z/roll/pitch entries (two_d_mode ignores them).
 UNUSED_VARIANCE = 1e-2
 # Accelerometer samples kept between scans for the gravity direction.
 GRAVITY_SAMPLES = 200
-
-
-def inverse_pose(pose):
-    translation, (x, y, z, w) = pose
-    inverse = (-x, -y, -z, w)
-    return tuple(-value for value in rotate_vector(inverse, translation)), inverse
 
 
 def pose_covariance(position_variance, yaw_variance, z_variance=UNUSED_VARIANCE,
@@ -94,6 +90,13 @@ def planar_velocity(previous, current, dt):
     return x / dt, y / dt, quaternion_yaw(quaternion) / dt
 
 
+def levelled_velocity(previous, current, dt):
+    """Gravity-levelled yaw-frame (vx, vy, vz, wz) from previous to current in dt seconds."""
+    anchor = (previous[0], yaw_only(previous[1]))
+    (x, y, z), quaternion = compose_pose(inverse_pose(anchor), current)
+    return x / dt, y / dt, z / dt, quaternion_yaw(quaternion) / dt
+
+
 def positive_parameter(node, name, default):
     value = float(node.declare_parameter(name, default).value)
     if not (math.isfinite(value) and value > 0):
@@ -118,9 +121,12 @@ class LioOdometry(Node):
             )
         else:
             self.covariance = pose_covariance(position_variance, yaw_variance)
+        twist_linear_variance = positive_parameter(self, "twist_linear_variance", 2e-5)
+        twist_angular_variance = positive_parameter(self, "twist_angular_variance", 2e-5)
         self.twist_covariance = pose_covariance(
-            positive_parameter(self, "twist_linear_variance", 2e-5),
-            positive_parameter(self, "twist_angular_variance", 2e-5),
+            twist_linear_variance,
+            twist_angular_variance,
+            z_variance=twist_linear_variance if self.gravity_align else UNUSED_VARIANCE,
         )
         self.max_twist_interval = positive_parameter(self, "max_twist_interval", 0.5)
         self.origin = None
@@ -191,7 +197,8 @@ class LioOdometry(Node):
                                        else base)
             self.last_base = None
         if self.last_base is not None and 0 < stamp - self.last_stamp <= self.max_twist_interval:
-            self.publish_twist(message.header.stamp, planar_velocity(
+            velocity_fn = levelled_velocity if self.gravity_align else planar_velocity
+            self.publish_twist(message.header.stamp, velocity_fn(
                 self.last_base, base, stamp - self.last_stamp))
         self.last_stamp = stamp
         self.last_base = base
@@ -212,7 +219,10 @@ class LioOdometry(Node):
         output.header.stamp = stamp
         output.header.frame_id = self.base_frame
         twist = output.twist.twist
-        twist.linear.x, twist.linear.y, twist.angular.z = velocity
+        if len(velocity) == 4:
+            twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z = velocity
+        else:
+            twist.linear.x, twist.linear.y, twist.angular.z = velocity
         output.twist.covariance = self.twist_covariance
         self.twist_publisher.publish(output)
 

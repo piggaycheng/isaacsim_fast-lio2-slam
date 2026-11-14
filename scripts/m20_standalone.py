@@ -47,6 +47,14 @@ STANDING_HEIGHT = 0.49
 CAMERA_BACK_M = 2.5
 CAMERA_UP_M = 1.5
 CAMERA_TARGET_UP_M = 0.3
+FREE_FLY_CAMERA_BACK_M = 1.2
+FREE_FLY_CAMERA_UP_M = 0.85
+LINEAR_JOG_SPEED = 0.75
+ANGULAR_JOG_SPEED = 0.6
+VERTICAL_JOG_SPEED = 0.5
+CMD_VEL_TIMEOUT_S = 0.5
+TERRAIN_FOLLOW_GAIN = 8.0
+TERRAIN_FOLLOW_MAX_VZ = 1.5
 LEG_JOINTS = re.compile(r".*_(hipx|hipy|knee)_joint")
 WHEEL_JOINTS = re.compile(r".*_wheel_joint")
 DEFAULT_POS = [
@@ -77,6 +85,15 @@ COMMAND_PHASES = [
 parser = argparse.ArgumentParser(description="Run the M20 with an exported locomotion_training policy.")
 parser.add_argument("--policy", type=str, default=None, help="TorchScript policy.pt exported by isaaclab play.")
 parser.add_argument("--external", action="store_true", help="Run inference in the external m20_policy_node via ROS 2.")
+parser.add_argument(
+    "--free-fly",
+    action="store_true",
+    help=(
+        "Spawn a collision-free LiDAR+IMU sensor rig at M20 standing height (0.49 m) without the M20 body or policy. "
+        "Follows ground/stair height automatically via downward raycast, responds to /cmd_vel (for autonomous Nav2 "
+        "stair navigation), and also supports W/S/A/D + Q/E (or PageUp/PageDown) manual override."
+    ),
+)
 parser.add_argument("--no-cmd-vel", action="store_true", help="With --external: do not publish /cmd_vel (an external publisher such as m20_jog provides it).")
 parser.add_argument("--external-timeout", type=float, default=0.2, help="Seconds to wait for each external action.")
 parser.add_argument("--environment", choices=["office", "grid"], default="office", help="Scene: Isaac Office (structure for LiDAR odometry) or flat grid.")
@@ -128,7 +145,7 @@ def parse_box(text: str) -> list[float]:
 
 
 boxes = [parse_box(text) for text in args.box]
-use_lidar = args.external and not args.no_lidar
+use_lidar = (args.external or args.free_fly) and not args.no_lidar
 
 simulation_app = SimulationApp(
     {"headless": args.headless, "enable_motion_bvh": True, "extra_args": KIT_EXTRA_ARGS}
@@ -142,22 +159,26 @@ import carb
 import numpy as np
 import omni.timeline
 import omni.usd
-from isaacsim.core.experimental.prims import Articulation
+from isaacsim.core.experimental.prims import Articulation, RigidPrim
 from isaacsim.core.experimental.utils.stage import define_prim, is_stage_loading, set_stage_units, set_stage_up_axis
 from isaacsim.core.rendering_manager import RenderingManager
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.simulation_manager.impl.isaac_events import IsaacEvents
 from isaacsim.storage.native import get_assets_root_path, is_file
-from pxr import Usd, UsdGeom, UsdPhysics
+from pxr import Gf, PhysxSchema, Usd, UsdGeom, UsdPhysics
 
 if args.external and args.policy:
     parser.error("--policy and --external are mutually exclusive")
+if args.free_fly and (args.policy or args.external):
+    parser.error("--free-fly cannot be combined with --policy or --external")
 policy = None
 if args.policy:
     import torch
 
     policy = torch.jit.load(args.policy, map_location="cpu").eval()
-print(f"Policy: {'external ROS 2 node' if args.external else args.policy or 'none (zero actions)'}")
+print(
+    f"Policy: {'free-fly sensor rig (terrain-following + /cmd_vel + keyboard)' if args.free_fly else ('external ROS 2 node' if args.external else args.policy or 'none (zero actions)')}"
+)
 
 
 def quat_rotate_inverse(quat_wxyz: np.ndarray, vec: np.ndarray) -> np.ndarray:
@@ -314,10 +335,146 @@ class ExternalPolicyBridge:
 
 
 bridge = None
+pressed_keys = set()
+input_interface = None
+keyboard = None
+keyboard_sub = None
+physx_scene_query = None
+free_fly_height_offset = 0.0
+free_fly_cmd_vel = (0.0, 0.0, 0.0)
+free_fly_cmd_time = -1e9
+
+
+def accept_free_fly_twist(linear, angular) -> None:
+    """Record a ROS 2 /cmd_vel Twist received via OmniGraph."""
+    global free_fly_cmd_vel, free_fly_cmd_time
+    vx = float(linear[0])
+    vy = float(linear[1])
+    wz = float(angular[2])
+    if math.isfinite(vx) and math.isfinite(vy) and math.isfinite(wz):
+        free_fly_cmd_vel = (vx, vy, wz)
+        free_fly_cmd_time = step_count * PHYSICS_DT
+
+
+def on_keyboard_event(event, *_) -> bool:
+    key = (event.input if isinstance(event.input, str) else event.input.name).upper().removeprefix("KEY_")
+    if event.type in (
+        carb.input.KeyboardEventType.KEY_PRESS,
+        getattr(carb.input.KeyboardEventType, "KEY_REPEAT", carb.input.KeyboardEventType.KEY_PRESS),
+    ):
+        pressed_keys.add(key)
+    elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
+        pressed_keys.discard(key)
+    return True
+
+
+def get_free_fly_keyboard_command() -> tuple[float, float, float, bool]:
+    """Return (vx, vz, wz, active) from keyboard in the M20 forward convention."""
+    active_keys = set(pressed_keys)
+    iface = globals().get("input_interface")
+    kbd = globals().get("keyboard")
+    if iface is not None and kbd is not None:
+        for name in ("W", "A", "S", "D", "Q", "E", "UP", "DOWN", "LEFT", "RIGHT", "PAGE_UP", "PAGE_DOWN", "SPACE"):
+            key_enum = getattr(carb.input.KeyboardInput, name, None)
+            if key_enum is not None and iface.get_keyboard_value(kbd, key_enum) > 0.0:
+                active_keys.add(name)
+    if "SPACE" in active_keys:
+        return 0.0, 0.0, 0.0, True
+
+    forward = int(bool(active_keys & {"W", "UP"}))
+    backward = int(bool(active_keys & {"S", "DOWN"}))
+    left = int(bool(active_keys & {"A", "LEFT"}))
+    right = int(bool(active_keys & {"D", "RIGHT"}))
+    up = int(bool(active_keys & {"E", "PAGE_UP"}))
+    down = int(bool(active_keys & {"Q", "PAGE_DOWN"}))
+    vx = (forward - backward) * LINEAR_JOG_SPEED
+    vz = (up - down) * VERTICAL_JOG_SPEED
+    wz = (left - right) * ANGULAR_JOG_SPEED
+    active = bool(forward or backward or left or right or up or down)
+    return vx, vz, wz, active
+
+
+def sample_ground_z(x: float, y: float, z: float) -> float | None:
+    """Raycast straight down from the base to find floor or stair height beneath the sensor rig."""
+    global physx_scene_query
+    if physx_scene_query is None:
+        import omni.physx
+
+        physx_scene_query = omni.physx.get_physx_scene_query_interface()
+    if physx_scene_query is None:
+        return None
+    hit = physx_scene_query.raycast_closest(
+        carb.Float3(float(x), float(y), float(z + 0.35)),
+        carb.Float3(0.0, 0.0, -1.0),
+        10.0,
+    )
+    if hit.get("hit"):
+        return float(hit["position"][2])
+    return None
+
+
+class FreeFlyBridge:
+    """Drives the vehicle-less M20 sensor rig from /cmd_vel, keyboard, or scripted commands while following terrain height."""
+
+    def close(self) -> None:
+        pass
+
+    def step(self) -> None:
+        global free_fly_height_offset
+        positions, orientations = robot.get_world_poses()
+        pos = positions.numpy().reshape(-1)[:3]
+        qw, qx, qy, qz = (float(v) for v in orientations.numpy().reshape(-1)[:4])
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        if math.hypot(qx, qy) > 1e-3:
+            robot.set_world_poses(
+                orientations=[[math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]]
+            )
+
+        kbd_vx, kbd_vz, kbd_wz, kbd_active = get_free_fly_keyboard_command()
+        now_s = step_count * PHYSICS_DT
+        if kbd_active:
+            vx, vy, wz = kbd_vx, 0.0, kbd_wz
+            free_fly_height_offset += kbd_vz * PHYSICS_DT
+        elif (now_s - free_fly_cmd_time) <= CMD_VEL_TIMEOUT_S:
+            vx, vy, wz = free_fly_cmd_vel
+        else:
+            vx, vy, wz = float(base_command[0]), float(base_command[1]), float(base_command[2])
+
+        ground_z = sample_ground_z(float(pos[0]), float(pos[1]), float(pos[2]))
+        if ground_z is not None:
+            target_z = ground_z + STANDING_HEIGHT + free_fly_height_offset
+            vz = float(
+                np.clip(
+                    (target_z - float(pos[2])) * TERRAIN_FOLLOW_GAIN + kbd_vz,
+                    -TERRAIN_FOLLOW_MAX_VZ,
+                    TERRAIN_FOLLOW_MAX_VZ,
+                )
+            )
+        else:
+            vz = kbd_vz
+
+        world_vx = vx * math.cos(yaw) - vy * math.sin(yaw)
+        world_vy = vx * math.sin(yaw) + vy * math.cos(yaw)
+        robot.set_velocities(
+            linear_velocities=[[float(world_vx), float(world_vy), float(vz)]],
+            angular_velocities=[[0.0, 0.0, float(wz)]],
+        )
 
 
 def restart() -> None:
-    global last_action, step_count
+    global last_action, step_count, free_fly_height_offset
+    if args.free_fly:
+        free_fly_height_offset = 0.0
+        robot.set_world_poses(
+            positions=[[args.x, args.y, STANDING_HEIGHT]],
+            orientations=[[math.cos(args.yaw / 2.0), 0.0, 0.0, math.sin(args.yaw / 2.0)]],
+        )
+        robot.set_velocities(
+            linear_velocities=[[0.0, 0.0, 0.0]],
+            angular_velocities=[[0.0, 0.0, 0.0]],
+        )
+        step_count = 0
+        return
     robot.reset_to_default_state()
     robot.set_dof_position_targets(default_leg_pos.reshape(1, -1), dof_indices=leg_idx)
     robot.set_dof_velocity_targets(np.zeros((1, len(wheel_idx))), dof_indices=wheel_idx)
@@ -430,6 +587,40 @@ def mount_height_map_sensors():
         ]
         print(f"Static TF {parent} -> {child}: t={list(matrix.ExtractTranslation())}")
 
+    clock_nodes = [("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock")] if args.free_fly else []
+    clock_connections = (
+        [
+            ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
+            ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+        ]
+        if args.free_fly
+        else []
+    )
+    clock_values = [("PublishClock.inputs:topicName", "/clock")] if args.free_fly else []
+    drive_nodes = (
+        [
+            ("SubscribeTwist", "isaacsim.ros2.bridge.ROS2SubscribeTwist"),
+            ("RecordCommand", "omni.graph.scriptnode.ScriptNode"),
+        ]
+        if args.free_fly
+        else []
+    )
+    drive_connections = (
+        [
+            ("OnPlaybackTick.outputs:tick", "SubscribeTwist.inputs:execIn"),
+            ("SubscribeTwist.outputs:execOut", "RecordCommand.inputs:execIn"),
+        ]
+        if args.free_fly
+        else []
+    )
+    drive_values = (
+        [
+            ("SubscribeTwist.inputs:topicName", "/cmd_vel"),
+            ("SubscribeTwist.inputs:queueSize", 1),
+        ]
+        if args.free_fly
+        else []
+    )
     graph_path = "/World/FASTLIO_ROS2"
     og.Controller.edit(
         {"graph_path": graph_path, "evaluator_name": "execution"},
@@ -439,6 +630,8 @@ def mount_height_map_sensors():
                 ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
                 ("ReadIMU", "isaacsim.sensors.physics.IsaacReadIMU"),
                 ("PublishIMU", "isaacsim.ros2.bridge.ROS2PublishImu"),
+                *clock_nodes,
+                *drive_nodes,
                 *tf_nodes,
             ],
             keys.CONNECT: [
@@ -448,21 +641,44 @@ def mount_height_map_sensors():
                 ("ReadIMU.outputs:angVel", "PublishIMU.inputs:angularVelocity"),
                 ("ReadIMU.outputs:linAcc", "PublishIMU.inputs:linearAcceleration"),
                 ("ReadIMU.outputs:sensorTime", "PublishIMU.inputs:timeStamp"),
+                *clock_connections,
+                *drive_connections,
                 *tf_connections,
             ],
             keys.SET_VALUES: [
                 ("PublishIMU.inputs:topicName", args.imu_topic),
                 ("PublishIMU.inputs:frameId", args.imu_frame),
+                *clock_values,
+                *drive_values,
                 *tf_values,
             ],
         },
     )
+    if args.free_fly:
+        script_node = og.Controller.node(f"{graph_path}/RecordCommand")
+        for name in ("linearVelocity", "angularVelocity"):
+            og.Controller.create_attribute(
+                script_node,
+                f"inputs:{name}",
+                og.Type(og.BaseDataType.DOUBLE, 3, 0, og.AttributeRole.VECTOR),
+                og.AttributePortType.ATTRIBUTE_PORT_TYPE_INPUT,
+            )
+            og.Controller.connect(
+                og.Controller.attribute(f"{graph_path}/SubscribeTwist.outputs:{name}"),
+                script_node.get_attribute(f"inputs:{name}"),
+            )
+        script_node.get_attribute("inputs:script").set(
+            "def compute(db):\n"
+            "    import __main__\n"
+            "    __main__.accept_free_fly_twist(db.inputs.linearVelocity, db.inputs.angularVelocity)\n"
+        )
     og.Controller.set(og.Controller.attribute(f"{graph_path}/ReadIMU.inputs:imuPrim"), [usdrt.Sdf.Path(imu_path)])
     print(f"LiDAR {lidar_path} -> {args.lidar_topic}, IMU {imu_path} -> {args.imu_topic}")
     # The robot jolts for the first seconds after the reset; FAST-LIO would initialise gravity/bias on that
     # motion and diverge, so the IMU/TF graph only starts publishing after SENSOR_WARMUP_S of simulation time.
     sensor_graph = og.Controller.graph(graph_path)
-    sensor_graph.set_disabled(True)
+    if not args.free_fly:
+        sensor_graph.set_disabled(True)
     return lidar_sensor, sensor_graph
 
 
@@ -537,40 +753,72 @@ if not omni.usd.get_context().get_stage().GetPrimAtPath("/World/PhysicsScene").I
     define_prim("/World/PhysicsScene", "PhysicsScene")
 SimulationManager.set_physics_sim_device(args.device)
 
-m20_prim = define_prim(M20_PRIM_PATH, "Xform")
-m20_prim.GetReferences().AddReference(assets_root_path + M20_ASSET_PATH)
-for variant_set, selection in VARIANTS.items():
-    m20_prim.GetVariantSets().GetVariantSet(variant_set).SetVariantSelection(selection)
+if args.free_fly:
+    from isaacsim.core.experimental.objects import Cube
 
-robot = Articulation(M20_PRIM_PATH, positions=[[args.x, args.y, STANDING_HEIGHT]], reset_xform_op_properties=True)
+    stage = omni.usd.get_context().get_stage()
+    UsdGeom.Xform.Define(stage, M20_PRIM_PATH)
+    base_xform = UsdGeom.Xform.Define(stage, BASE_PATH)
+    base_xform.AddTranslateOp().Set(Gf.Vec3d(args.x, args.y, STANDING_HEIGHT))
+    base_xform.AddOrientOp().Set(
+        Gf.Quatf(math.cos(args.yaw / 2.0), 0.0, 0.0, math.sin(args.yaw / 2.0))
+    )
+    base_prim = base_xform.GetPrim()
+    UsdPhysics.RigidBodyAPI.Apply(base_prim)
+    physx_body = PhysxSchema.PhysxRigidBodyAPI.Apply(base_prim)
+    physx_body.CreateDisableGravityAttr(True)
+    physx_body.CreateSleepThresholdAttr(0.0)
+    physx_body.CreateLinearDampingAttr(0.0)
+    physx_body.CreateAngularDampingAttr(0.0)
+    UsdPhysics.MassAPI.Apply(base_prim).CreateMassAttr(1.0)
+    mount_xyz = [float(v) for v in args.lidar_offset]
+    Cube(
+        f"{BASE_PATH}/sensor_pod",
+        sizes=1.0,
+        colors="orange",
+        translations=[[mount_xyz[0], mount_xyz[1], mount_xyz[2] - 0.11]],
+        scales=[[0.22, 0.16, 0.10]],
+    )
+    robot = RigidPrim(BASE_PATH)
+    print(
+        f"Added M20 free-fly sensor rig {BASE_PATH} at "
+        f"({args.x:.2f}, {args.y:.2f}, z={STANDING_HEIGHT:.2f}, yaw {args.yaw:.2f})"
+    )
+else:
+    m20_prim = define_prim(M20_PRIM_PATH, "Xform")
+    m20_prim.GetReferences().AddReference(assets_root_path + M20_ASSET_PATH)
+    for variant_set, selection in VARIANTS.items():
+        m20_prim.GetVariantSets().GetVariantSet(variant_set).SetVariantSelection(selection)
 
-dof_names = list(robot.dof_names)
-leg_ids = [i for i, n in enumerate(dof_names) if LEG_JOINTS.fullmatch(n)]
-wheel_ids = [i for i, n in enumerate(dof_names) if WHEEL_JOINTS.fullmatch(n)]
-if len(leg_ids) != 12 or len(wheel_ids) != 4:
-    raise RuntimeError(f"Unexpected M20 joints: {dof_names}")
-leg_idx, wheel_idx = np.array(leg_ids), np.array(wheel_ids)
-default_leg_pos = np.array(
-    [next(v for p, v in DEFAULT_POS if p.fullmatch(dof_names[i])) for i in leg_ids], dtype=np.float32
-)
-print(f"Leg joints: {[dof_names[i] for i in leg_ids]}")
-print(f"Wheel joints: {[dof_names[i] for i in wheel_ids]}")
+    robot = Articulation(M20_PRIM_PATH, positions=[[args.x, args.y, STANDING_HEIGHT]], reset_xform_op_properties=True)
 
-# match the actuator model used in training (implicit PD, see my_locomotion_training/assets/m20.py)
-robot.set_dof_gains(LEG_STIFFNESS, LEG_DAMPING, dof_indices=leg_idx)
-robot.set_dof_gains(WHEEL_STIFFNESS, WHEEL_DAMPING, dof_indices=wheel_idx)
-robot.set_dof_max_efforts(LEG_MAX_EFFORT, dof_indices=leg_idx)
-robot.set_dof_max_efforts(WHEEL_MAX_EFFORT, dof_indices=wheel_idx)
-robot.set_dof_max_velocities(LEG_MAX_VELOCITY, dof_indices=leg_idx)
-robot.set_dof_max_velocities(WHEEL_MAX_VELOCITY, dof_indices=wheel_idx)
-default_positions = np.zeros((1, len(dof_names)), dtype=np.float32)
-default_positions[0, leg_idx] = default_leg_pos
-robot.set_default_state(
-    positions=[[args.x, args.y, STANDING_HEIGHT]],
-    orientations=[[math.cos(args.yaw / 2.0), 0.0, 0.0, math.sin(args.yaw / 2.0)]],
-    dof_positions=default_positions,
-    dof_velocities=np.zeros_like(default_positions),
-)
+    dof_names = list(robot.dof_names)
+    leg_ids = [i for i, n in enumerate(dof_names) if LEG_JOINTS.fullmatch(n)]
+    wheel_ids = [i for i, n in enumerate(dof_names) if WHEEL_JOINTS.fullmatch(n)]
+    if len(leg_ids) != 12 or len(wheel_ids) != 4:
+        raise RuntimeError(f"Unexpected M20 joints: {dof_names}")
+    leg_idx, wheel_idx = np.array(leg_ids), np.array(wheel_ids)
+    default_leg_pos = np.array(
+        [next(v for p, v in DEFAULT_POS if p.fullmatch(dof_names[i])) for i in leg_ids], dtype=np.float32
+    )
+    print(f"Leg joints: {[dof_names[i] for i in leg_ids]}")
+    print(f"Wheel joints: {[dof_names[i] for i in wheel_ids]}")
+
+    # match the actuator model used in training (implicit PD, see my_locomotion_training/assets/m20.py)
+    robot.set_dof_gains(LEG_STIFFNESS, LEG_DAMPING, dof_indices=leg_idx)
+    robot.set_dof_gains(WHEEL_STIFFNESS, WHEEL_DAMPING, dof_indices=wheel_idx)
+    robot.set_dof_max_efforts(LEG_MAX_EFFORT, dof_indices=leg_idx)
+    robot.set_dof_max_efforts(WHEEL_MAX_EFFORT, dof_indices=wheel_idx)
+    robot.set_dof_max_velocities(LEG_MAX_VELOCITY, dof_indices=leg_idx)
+    robot.set_dof_max_velocities(WHEEL_MAX_VELOCITY, dof_indices=wheel_idx)
+    default_positions = np.zeros((1, len(dof_names)), dtype=np.float32)
+    default_positions[0, leg_idx] = default_leg_pos
+    robot.set_default_state(
+        positions=[[args.x, args.y, STANDING_HEIGHT]],
+        orientations=[[math.cos(args.yaw / 2.0), 0.0, 0.0, math.sin(args.yaw / 2.0)]],
+        dof_positions=default_positions,
+        dof_velocities=np.zeros_like(default_positions),
+    )
 
 SimulationManager.set_physics_dt(PHYSICS_DT)
 RenderingManager.set_dt(PHYSICS_DT * DECIMATION)
@@ -587,7 +835,25 @@ else:
 
 # The sensor must stay referenced: its destructor detaches the writer and stops the point cloud.
 lidar_sensor, sensor_graph = mount_height_map_sensors() if use_lidar else (None, None)
-if args.external:
+if args.free_fly:
+    stage = omni.usd.get_context().get_stage()
+    for prim in Usd.PrimRange(stage.GetPrimAtPath(M20_PRIM_PATH), Usd.TraverseInstanceProxies()):
+        if prim.HasAPI(UsdPhysics.CollisionAPI):
+            UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False)
+    bridge = FreeFlyBridge()
+    if not args.headless:
+        import omni.appwindow
+
+        app_window = omni.appwindow.get_default_app_window()
+        input_interface = carb.input.acquire_input_interface()
+        keyboard = app_window.get_keyboard()
+        keyboard_sub = input_interface.subscribe_to_keyboard_events(keyboard, on_keyboard_event)
+        print(
+            "M20 free-fly controls: follows /cmd_vel (Nav2/m20_jog) and terrain/stair height "
+            f"(z = ground + {STANDING_HEIGHT:.2f} m); keyboard W/S/A/D or Arrow keys override planar motion, "
+            "E/Q or PageUp/PageDown adjust height offset, Space stops."
+        )
+elif args.external:
     bridge = ExternalPolicyBridge(args.external_timeout)
 
 callback_id = SimulationManager.register_callback(on_physics_step, IsaacEvents.POST_PHYSICS_STEP)
@@ -605,7 +871,9 @@ def follow_robot_camera() -> None:
     w, x, y, z = quat.numpy().reshape(-1)[:4]
     yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
     forward = np.array([math.cos(yaw), math.sin(yaw), 0.0])
-    eye = pos - CAMERA_BACK_M * forward + np.array([0.0, 0.0, CAMERA_UP_M])
+    back_m = FREE_FLY_CAMERA_BACK_M if args.free_fly else CAMERA_BACK_M
+    up_m = FREE_FLY_CAMERA_UP_M if args.free_fly else CAMERA_UP_M
+    eye = pos - back_m * forward + np.array([0.0, 0.0, up_m])
     target = pos + np.array([0.0, 0.0, CAMERA_TARGET_UP_M])
     camera_state = ViewportCameraState(str(get_active_viewport_camera_path()))
     camera_state.set_position_world(Gf.Vec3d(*map(float, eye)), True)

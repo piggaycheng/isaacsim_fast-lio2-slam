@@ -73,6 +73,22 @@ def planar_registration_covariance(covariance, position, scale, min_xy, min_yaw)
     return scale * planar
 
 
+def three_d_registration_covariance(covariance, position, scale, min_xy, min_z, min_yaw):
+    """Propagate a map-frame 6x6 registration covariance to base x/y/z/yaw."""
+    covariance = np.asarray(covariance, dtype=float).reshape(6, 6)
+    px, py, pz = position
+    # Left perturbation: delta_p = t + w x p, delta_yaw = w_z (ROS x,y,z,roll,pitch,yaw).
+    jacobian = np.array([
+        [1.0, 0.0, 0.0, 0.0, pz, -py],
+        [0.0, 1.0, 0.0, -pz, 0.0, px],
+        [0.0, 0.0, 1.0, py, -px, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ])
+    three_d = jacobian @ covariance @ jacobian.T
+    three_d = 0.5 * (three_d + three_d.T) + np.diag((min_xy, min_xy, min_z, min_yaw))
+    return scale * three_d
+
+
 class GlobalPoseAdapter(Node):
     def __init__(self, **kwargs):
         super().__init__("global_pose_adapter", **kwargs)
@@ -97,20 +113,25 @@ class GlobalPoseAdapter(Node):
         self.max_yaw_jump = self.declare_parameter("max_yaw_jump", 0.35).value
         self.jump_per_radian = self.declare_parameter("jump_per_radian", 0.2).value
         self.covariance_xy = self.declare_parameter("covariance_xy", 0.25).value
+        self.covariance_z = self.declare_parameter("covariance_z", self.covariance_xy).value
         self.covariance_yaw = self.declare_parameter("covariance_yaw", 0.09).value
         self.registration_covariance_scale = self.declare_parameter(
             "registration_covariance_scale", 1.0
         ).value
         self.min_covariance_xy = self.declare_parameter("min_covariance_xy", 1.0e-4).value
+        self.min_covariance_z = self.declare_parameter(
+            "min_covariance_z", self.min_covariance_xy
+        ).value
         self.min_covariance_yaw = self.declare_parameter("min_covariance_yaw", 1.0e-5).value
         self.covariance_unobserved = self.declare_parameter(
             "covariance_unobserved", 1_000_000.0
         ).value
+        self.three_d = bool(self.declare_parameter("three_d", False).value)
         for name in (
             "max_correction_age", "max_lio_age", "max_scan_age", "max_alignment",
-            "max_translation_jump", "max_yaw_jump", "covariance_xy",
+            "max_translation_jump", "max_yaw_jump", "covariance_xy", "covariance_z",
             "covariance_yaw", "covariance_unobserved", "registration_covariance_scale",
-            "min_covariance_xy", "min_covariance_yaw",
+            "min_covariance_xy", "min_covariance_z", "min_covariance_yaw",
         ):
             value = getattr(self, name)
             if not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
@@ -278,6 +299,25 @@ class GlobalPoseAdapter(Node):
             self.min_covariance_xy, self.min_covariance_yaw,
         )
 
+    def three_d_covariance(self, registration_covariance, position):
+        registration = np.asarray(registration_covariance, dtype=float)
+        if not np.any(registration):
+            return np.diag((
+                self.covariance_xy, self.covariance_xy, self.covariance_z, self.covariance_yaw,
+            ))
+        registration = registration.reshape(6, 6)
+        if (
+            not np.all(np.isfinite(registration))
+            or np.any(np.diag(registration) < 0)
+            or not np.allclose(registration, registration.T, rtol=1e-6, atol=1e-12)
+        ):
+            self.reject("invalid registration covariance")
+            return None
+        return three_d_registration_covariance(
+            registration, position, self.registration_covariance_scale,
+            self.min_covariance_xy, self.min_covariance_z, self.min_covariance_yaw,
+        )
+
     def on_correction(self, message):
         now = self.now()
         if self.map_switch_hold or (
@@ -324,15 +364,20 @@ class GlobalPoseAdapter(Node):
             return
         if self.last_accepted_lio is not None:
             old_lio = self.last_accepted_lio
-            old_pose = planar_base(self.last_accepted_correction, old_lio.pose.pose,
-                                   self.body_to_base)
-            expected = planar_base(self.last_accepted_correction, self.lio.pose.pose,
-                                   self.body_to_base)
-            proposed = planar_base(message.pose.pose, self.lio.pose.pose, self.body_to_base)
-            distance = math.hypot(expected[0] - old_pose[0], expected[1] - old_pose[1])
-            turn = abs(angle_difference(expected[2], old_pose[2]))
-            jump = math.hypot(proposed[0] - expected[0], proposed[1] - expected[1])
-            yaw_jump = abs(angle_difference(proposed[2], expected[2]))
+            old_pos, old_quat = base_pose(
+                self.last_accepted_correction, old_lio.pose.pose, self.body_to_base
+            )
+            exp_pos, exp_quat = base_pose(
+                self.last_accepted_correction, self.lio.pose.pose, self.body_to_base
+            )
+            prop_pos, prop_quat = base_pose(
+                message.pose.pose, self.lio.pose.pose, self.body_to_base
+            )
+            axes = 3 if self.three_d else 2
+            distance = math.sqrt(sum((exp_pos[i] - old_pos[i]) ** 2 for i in range(axes)))
+            turn = abs(angle_difference(yaw_of(exp_quat), yaw_of(old_quat)))
+            jump = math.sqrt(sum((prop_pos[i] - exp_pos[i]) ** 2 for i in range(axes)))
+            yaw_jump = abs(angle_difference(yaw_of(prop_quat), yaw_of(exp_quat)))
             if (
                 jump > self.max_translation_jump + self.jump_per_meter * distance
                 or yaw_jump > self.max_yaw_jump + self.jump_per_radian * turn
@@ -341,7 +386,7 @@ class GlobalPoseAdapter(Node):
                 return
 
         position, quaternion = base_pose(message.pose.pose, self.lio.pose.pose, self.body_to_base)
-        x, y, yaw = position[0], position[1], yaw_of(quaternion)
+        x, y, z, yaw = position[0], position[1], position[2], yaw_of(quaternion)
         observation = PoseWithCovarianceStamped()
         observation.header.frame_id = "map"
         # map->camera_init is a frame correction; the base pose it yields is the
@@ -350,16 +395,25 @@ class GlobalPoseAdapter(Node):
         observation.header.stamp = self.lio.header.stamp
         observation.pose.pose.position.x = x
         observation.pose.pose.position.y = y
+        if self.three_d:
+            observation.pose.pose.position.z = z
         observation.pose.pose.orientation.z = math.sin(yaw / 2)
         observation.pose.pose.orientation.w = math.cos(yaw / 2)
-        planar = self.planar_covariance(message.pose.covariance, position)
-        if planar is None:
+        if self.three_d:
+            propagated = self.three_d_covariance(message.pose.covariance, position)
+            indices = (0, 1, 2, 5)
+            unobserved = (21, 28)
+        else:
+            propagated = self.planar_covariance(message.pose.covariance, position)
+            indices = (0, 1, 5)
+            unobserved = (14, 21, 28)
+        if propagated is None:
             return
         covariance = [0.0] * 36
-        for row, ros_row in enumerate((0, 1, 5)):
-            for column, ros_column in enumerate((0, 1, 5)):
-                covariance[ros_row * 6 + ros_column] = float(planar[row, column])
-        for index in (14, 21, 28):
+        for row, ros_row in enumerate(indices):
+            for column, ros_column in enumerate(indices):
+                covariance[ros_row * 6 + ros_column] = float(propagated[row, column])
+        for index in unobserved:
             covariance[index] = self.covariance_unobserved
         observation.pose.covariance = covariance
         self.last_correction_time = timestamp

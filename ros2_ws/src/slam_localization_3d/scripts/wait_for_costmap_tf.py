@@ -11,9 +11,10 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 
 class CostmapReadiness(Node):
-    def __init__(self):
-        super().__init__("costmap_readiness")
-        self.map_received = False
+    def __init__(self, **kwargs):
+        super().__init__("costmap_readiness", **kwargs)
+        self.require_map = bool(self.declare_parameter("require_map", True).value)
+        self.map_received = not self.require_map
         topics = self.declare_parameter("filter_mask_topics", [""]).value
         self.masks_received = {topic: False for topic in topics if topic}
         mask_qos = QoSProfile(
@@ -27,14 +28,15 @@ class CostmapReadiness(Node):
             )
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
-        self.create_subscription(
-            OccupancyGrid, "map", self.on_map,
-            QoSProfile(
-                depth=1,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                reliability=ReliabilityPolicy.RELIABLE,
-            ),
-        )
+        if self.require_map:
+            self.create_subscription(
+                OccupancyGrid, "map", self.on_map,
+                QoSProfile(
+                    depth=1,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                ),
+            )
 
     def on_map(self, message):
         self.map_received = message.info.width > 0 and message.info.height > 0

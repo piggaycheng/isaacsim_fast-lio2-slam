@@ -46,6 +46,18 @@ else
   exit 1
 fi
 
+if [[ -n "${CUDA_PATH:-}" ]]; then
+  cd "$workspace_dir"
+  colcon build \
+    --packages-select elevation_map_msgs semantic_sensor elevation_mapping_cupy \
+      m20_policy_node m20_jog \
+    "$@" \
+    --cmake-args \
+    -DROS_EDITION=ROS2 \
+    -DDISTRO_ROS=humble
+  exit 0
+fi
+
 # These packages depend on the temporary Livox manifest and PGO patch, so
 # rebuild them from scratch to avoid stale CMake state.
 rm -rf \
@@ -58,7 +70,7 @@ cd "$workspace_dir"
 colcon build \
   --packages-up-to fastlio2 pgo isaac_fastlio_adapter slam_nav \
     slam_localization_2d fast_lio_localization slam_localization_3d slam_bringup \
-    elevation_mapping_cupy m20_policy_node m20_jog \
+    m20_policy_node m20_jog \
   "$@" \
   --cmake-args \
   -DROS_EDITION=ROS2 \
