@@ -750,7 +750,6 @@ class LocalOdometryInputsTest(unittest.TestCase):
         import numpy as np
         sys.path.insert(0, str(PACKAGE / "scripts"))
         sys.path.insert(0, str(PACKAGE.parent / "isaac_fastlio_adapter/scripts"))
-        from floor_maps import sibling_floor_pcds
         from global_pose_adapter import three_d_registration_covariance
         from global_tf_gate import map_to_odom_3d
         from grid_map_to_points import extract_obstacle_points
@@ -771,16 +770,6 @@ class LocalOdometryInputsTest(unittest.TestCase):
         global_pose.orientation.w = 1.0
         _, _, dz, _ = map_to_odom_3d(global_pose, odom_pose)
         self.assertAlmostEqual(dz, -0.05, places=9)
-
-        maps_1f = PACKAGE.parents[2] / "maps/1F/map.pcd"
-        if maps_1f.is_file():
-            siblings = sibling_floor_pcds(maps_1f)
-            self.assertEqual([name for name, _, _ in siblings], ["B1"])
-            _, _, (translation, _) = siblings[0]
-            self.assertAlmostEqual(translation[2], -3.30, places=2)
-        maps_all = PACKAGE.parents[2] / "maps/all/map.pcd"
-        if maps_all.is_file():
-            self.assertEqual(sibling_floor_pcds(maps_all), [])
 
         elevation_nav = yaml.safe_load((CONFIG / "elevation_m20_nav.yaml").read_text())[
             "/elevation_mapping_node"

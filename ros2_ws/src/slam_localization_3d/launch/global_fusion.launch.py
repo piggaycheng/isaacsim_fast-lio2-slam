@@ -387,7 +387,6 @@ def robot_nodes(context, package, nav):
                 "use_sim_time": True,
                 "pcd_map_path": value("map_pcd"),
                 "imu_mount": imu_mount(profile),
-                "merge_floor_maps": three_d,
                 "fov_z": 3.5 if three_d else 0.0,
                 "map_voxel_size": 0.4,
                 "scan_voxel_size": 0.1,

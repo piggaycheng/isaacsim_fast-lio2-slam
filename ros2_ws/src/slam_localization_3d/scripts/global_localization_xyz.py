@@ -21,7 +21,7 @@ from tf_transformations import quaternion_from_matrix
 from slam_localization_3d.srv import LoadLocalizationMap
 from std_srvs.srv import SetBool
 
-from floor_maps import sibling_floor_pcds, validate_initial_pose
+from floor_maps import validate_initial_pose
 from localization_3d_pose import imu_mount_parameter
 from xyz_cloud import make_point_cloud
 
@@ -91,27 +91,11 @@ class XYZGlobalLocalization(upstream_localization_class()):
         cloud = o3d.io.read_point_cloud(str(path))
         if cloud.is_empty() or not np.all(np.isfinite(np.asarray(cloud.points))):
             raise ValueError(f"PCD map is empty or non-finite: {path}")
-        if getattr(self, "merge_floor_maps", False):
-            for floor_name, sibling_path, transform in sibling_floor_pcds(path):
-                sibling = o3d.io.read_point_cloud(sibling_path)
-                if sibling.is_empty() or not np.all(np.isfinite(np.asarray(sibling.points))):
-                    continue
-                (tx, ty, tz), (qx, qy, qz, qw) = transform
-                matrix = self.pose_to_mat(Pose(
-                    position=Point(x=float(tx), y=float(ty), z=float(tz)),
-                    orientation=Quaternion(x=float(qx), y=float(qy), z=float(qz), w=float(qw)),
-                ))
-                sibling.transform(matrix)
-                cloud += sibling
-                self.get_logger().info(f"Merged floor PCD {floor_name} ({sibling_path}) into map frame")
         return self.voxel_down_sample(cloud, self.get_parameter("map_voxel_size").value)
 
     def initialize_global_map(self):
-        if not self.has_parameter("merge_floor_maps"):
-            self.declare_parameter("merge_floor_maps", False)
         if not self.has_parameter("fov_z"):
             self.declare_parameter("fov_z", 0.0)
-        self.merge_floor_maps = bool(self.get_parameter("merge_floor_maps").value)
         self.fov_z = float(self.get_parameter("fov_z").value)
         self.global_map = self.load_pcd_map(self.get_parameter("pcd_map_path").value)
         self.get_logger().info("Global map received.")

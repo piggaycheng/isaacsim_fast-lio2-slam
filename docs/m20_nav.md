@@ -105,7 +105,7 @@ docker compose --profile height_map run --rm height_map build
 - **問題**：原本雖然局部里程計（`odom -> base_link`）已是 3D，但全域定位（`map -> odom`）的 `global_pose_adapter`、`global_ekf` 與 `global_tf_gate` 會將 `z`、`roll`、`pitch` 強制歸零（`two_d_mode: true`），且單層 PCD 加上 `fov_z: 2.5 m` 垂直裁切會在上下樓梯時切掉目標樓層點雲。
 - **修改內容**：
   1. **3D `map -> odom` 鏈路**：在 `m20.yaml` 啟用 `global_localization.three_d: true`（輪式維持 `false`），讓 `lio_odometry.py`（保留 `vz`）、`global_pose_adapter.py`（保留 ICP 完整 `z` 與 3D 姿態）、`global_ekf`（`two_d_mode: false`）與 `global_tf_gate.py` 全程保留 Z 軸高度。
-  2. **多樓層 PCD 自動對齊與合併**：新增 `floor_maps.py` 與 `scripts/merge_floor_pcds.py`。當 M20 啟動 3D 定位時，`global_localization_xyz.py` 可直接載入單一多樓層點雲（如 `--pcd maps/all/map.pcd`），或自動尋找鄰近樓層（如 `maps/1F` 與 `maps/B1`）的 `session.json` 轉換至同一 3D 座標系合併載入，並以 `fov_z: 3.5 m` 的滑動垂直視窗同步裁切 `scan` 與 `submap`（含 `+0.5 m` 邊界裕度），確保在樓梯中段也能穩定收斂。
+  2. **3D 垂直視窗雙向裁切（`fov_z: 3.5 m`）**：搭配以 `--free-fly` 一次掃描完成的多樓層 PCD 地圖（如 `--pcd maps/all/map.pcd`），`global_localization_xyz.py` 以 `fov_z: 3.5 m` 的滑動垂直視窗同步裁切 `scan` 與 `submap`（含 `+0.5 m` 邊界裕度），確保機器人在樓梯中段與上下樓層移動時 ICP 穩定收斂。
 
 ### Module 2：以 GPU 局部高程圖取代平面 RANSAC 障礙物提取（防止樓梯被誤判為牆）
 

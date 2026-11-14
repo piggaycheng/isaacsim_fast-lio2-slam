@@ -1,13 +1,10 @@
 """Validate floor map pairs and the public base_link initial-pose contract."""
 
-import json
 import math
 from pathlib import Path
 import re
 
 import yaml
-
-from localization_3d_pose import body_to_base, compose_pose, inverse_pose
 
 FILTER_KINDS = ("keepout", "speed")
 
@@ -64,66 +61,3 @@ def validate_initial_pose(message):
         raise ValueError("initial_pose covariance must be finite")
     if any(covariance[index] < 0 for index in range(0, 36, 7)):
         raise ValueError("initial_pose covariance diagonal must be nonnegative")
-
-
-def reference_pose(data):
-    position = tuple(float(value) for value in data["position"])
-    quaternion = tuple(float(value) for value in data["orientation_xyzw"])
-    if len(position) != 3 or len(quaternion) != 4:
-        raise ValueError("Reference pose needs position[3] and orientation_xyzw[4]")
-    if not all(math.isfinite(value) for value in (*position, *quaternion)):
-        raise ValueError("Reference pose must be finite")
-    norm = sum(value * value for value in quaternion)
-    if not math.isclose(norm, 1.0, abs_tol=1e-3):
-        raise ValueError("Reference orientation must be a unit quaternion")
-    return position, tuple(value / math.sqrt(norm) for value in quaternion)
-
-
-def session_map_from_world(session_path, expected_floor=None):
-    with Path(session_path).open(encoding="utf-8") as stream:
-        session = json.load(stream)
-    if expected_floor is not None and session.get("floor") != expected_floor:
-        raise ValueError(f"session floor does not match {expected_floor!r}")
-    reference = session.get("reference")
-    if not isinstance(reference, dict):
-        raise ValueError("session has no mapping reference")
-    lio = reference["lio_initial_pose"]
-    chassis = reference["isaac_chassis_pose"]
-    if chassis["frame_id"] != "isaac_world":
-        raise ValueError("Reference chassis pose must be in isaac_world")
-    if lio["frame_id"] != "lidar" or lio["child_frame_id"] != "body":
-        raise ValueError("Reference LIO pose must describe lidar -> body")
-    mount = reference["sensor_frames"]["imu_link"]
-    body_base = body_to_base([float(mount[key]) for key in
-                              ("x", "y", "z", "roll", "pitch", "yaw")])
-    world_base = reference_pose(chassis)
-    map_base = compose_pose(reference_pose(lio), body_base)
-    return compose_pose(map_base, inverse_pose(world_base)), world_base[0][2]
-
-
-def sibling_floor_pcds(pcd_path):
-    """Find sibling floor PCDs and their SE(3) transforms into pcd_path's map frame."""
-    primary = Path(pcd_path)
-    primary_dir = primary.parent
-    primary_session = primary_dir / "session.json"
-    if not primary_session.is_file() or not (primary_dir / "map_2d.yaml").is_file():
-        return []
-    try:
-        primary_from_world, _ = session_map_from_world(primary_session, primary_dir.name)
-    except (ValueError, KeyError, OSError):
-        return []
-    siblings = []
-    for session_file in sorted(primary_dir.parent.glob("*/session.json")):
-        floor_dir = session_file.parent
-        if floor_dir == primary_dir or not (floor_dir / "map_2d.yaml").is_file():
-            continue
-        sibling_pcd = floor_dir / primary.name
-        if not sibling_pcd.is_file():
-            continue
-        try:
-            sibling_from_world, _ = session_map_from_world(session_file, floor_dir.name)
-        except (ValueError, KeyError, OSError):
-            continue
-        transform = compose_pose(primary_from_world, inverse_pose(sibling_from_world))
-        siblings.append((floor_dir.name, str(sibling_pcd), transform))
-    return siblings

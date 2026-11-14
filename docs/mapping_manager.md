@@ -55,12 +55,6 @@ RViz 使用 `/clock` 模擬時間（`use_sim_time=true`），與點雲及 TF 的
 | O | 開／關停靠樓層的電梯門 |
 | L | 切換電梯上下樓層 |
 
-此外，若已有分層掃描且含 `session.json` 的地圖（如 `maps/1F` 與 `maps/B1`），除了 `global_localization_xyz` 會在 M20 3D 模式下自動合併載入外，也可使用以下工具離線合併為單一 PCD 檔：
-
-```bash
-python3 scripts/merge_floor_pcds.py maps/1F/map.pcd -o maps/merged/map.pcd
-```
-
 ## 3. 建立第一層地圖
 
 在第二個終端執行：
