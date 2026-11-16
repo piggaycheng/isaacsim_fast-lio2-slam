@@ -10,7 +10,6 @@ auto_jog=false
 usage() {
   cat <<'EOF'
 Usage: ./scripts/run_slam.sh [OPTIONS]
-       ./scripts/run_mapping.sh [OPTIONS]
 
 Launch the FAST-LIO2 SLAM mapping service and Isaac Sim Office environment.
 
@@ -24,7 +23,6 @@ Options:
 Examples:
   ./scripts/run_slam.sh
   ./scripts/run_slam.sh --free-fly
-  ./scripts/run_mapping.sh --free-fly
 EOF
 }
 

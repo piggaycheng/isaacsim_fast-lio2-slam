@@ -39,8 +39,6 @@ RViz 使用 `/clock` 模擬時間（`use_sim_time=true`），與點雲及 TF 的
 若要以單一 session 直接掃描多層樓與樓梯間（供 M20 3D 跨樓層導航使用），可使用 `--free-fly` 啟動：
 
 ```bash
-./scripts/run_mapping.sh --free-fly
-# 或
 ./scripts/run_slam.sh --free-fly
 ```
 
