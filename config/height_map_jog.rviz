@@ -32,6 +32,24 @@ Visualization Manager:
       Use Rainbow: true
       Show Grid Lines: true
       History Length: 1
+    - Class: grid_map_rviz_plugin/GridMap
+      Name: ElevationMap (inpaint)
+      Enabled: false
+      Topic:
+        Value: /elevation_mapping_node/elevation_map_filter
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Alpha: 1
+      Height Layer: inpaint
+      Height Transformer: GridMapLayer
+      Color Transformer: GridMapLayer
+      Color Layer: inpaint
+      Autocompute Intensity Bounds: true
+      Use Rainbow: true
+      Show Grid Lines: true
+      History Length: 1
     - Class: rviz_default_plugins/PointCloud2
       Name: LIO Cloud (map)
       Enabled: false
